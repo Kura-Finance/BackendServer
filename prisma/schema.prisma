@@ -1,0 +1,229 @@
+// ==========================================
+// 核心設定 (Configuration)
+// ==========================================
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// 1. 核心用戶系統 (User & Auth)
+// ==========================================
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String?  // 顯示名稱
+  avatarUrl String?  // 大頭貼連結
+  bankingAccountOrder String[] @default([])
+  investmentAccountOrder String[] @default([])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 關聯：Dashboard 模組 (金融帳戶)
+  plaidItems     PlaidItem[]
+  web3Wallets    Web3Wallet[]
+
+  // 關聯：Reward Hunter 模組 (獎勵獵人)
+  rewardProfile  RewardProfile?
+  userHunts      UserHunt[]            // 該用戶正在追蹤或已完成的優惠任務
+  rewardLedger   RewardTransaction[]   // 用戶的 Kura 點數異動流水帳
+
+  // 關聯：Forum 模組 (社群論壇)
+  posts          ForumPost[]
+  comments       ForumComment[]
+  postVotes      ForumPostVote[]       // 用戶的文章按讚/倒讚紀錄
+}
+
+
+// ==========================================
+// 2. Dashboard 模組 (Banking & Web3)
+// ==========================================
+
+// 傳統金融綁定 (Plaid 授權紀錄)
+model PlaidItem {
+  id              String   @id @default(uuid())
+  userId          String
+  accessToken     String   @unique // Plaid API 的永久存取權杖
+  itemId          String   @unique // Plaid 的銀行項目 ID
+  institutionName String   // 銀行或券商名稱 (例如: Chase, Robinhood)
+  createdAt       DateTime @default(now())
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// 去中心化錢包綁定 (WalletConnect)
+model Web3Wallet {
+  id              String   @id @default(uuid())
+  userId          String
+  address         String   @unique // 錢包的公鑰地址 (0x...)
+  walletName      String   // 錢包 App 名稱 (例如: MetaMask, Phantom)
+  chain           String   // 該錢包的主力區塊鏈 (例如: Ethereum, Solana)
+  createdAt       DateTime @default(now())
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+
+// ==========================================
+// 3. Reward Hunter 模組 (地理優惠、開卡禮、消費習慣)
+// ==========================================
+
+// 用戶獎勵總覽 (紀錄使用者的 Kura 平台點數與等級)
+model RewardProfile {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  points    Int      @default(0)       // 當前持有的 Kura 點數
+  tier      String   @default("Basic") // 會員等級 (Basic, Pro, Elite 等)
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// 信用卡圖鑑 (Catalog：供系統作為推薦素材)
+model CreditCard {
+  id               String   @id @default(uuid())
+  name             String   // 卡片名稱 (例如: "Chase Sapphire Preferred")
+  issuer           String   // 發卡行 (例如: "Chase", "Amex")
+  network          String   // 發卡組織 (例如: "Visa", "Mastercard")
+  annualFee        Float    @default(0) // 年費 (USD)
+  signOnBonusDesc  String?  // 開卡禮描述 (例如: "Earn 60,000 bonus points")
+  bonusValueUsd    Float?   // 開卡禮估值 (轉換成美金價值，供系統比較與排序)
+  perks            String[] // 卡片權益列表 (例如: ["No foreign transaction fees", "$50 hotel credit"])
+  targetCategories String[] // 主打回饋類別 (例如: ["Dining", "Travel"]，用來比對用戶 Plaid 消費習慣)
+  applyUrl         String?  // 申辦推薦連結 (Affiliate Link，用來賺取佣金)
+  createdAt        DateTime @default(now())
+
+  // 關聯：此卡片對應到的具體優惠任務
+  offers           HunterOffer[] 
+}
+
+// 獵物庫 (系統生成的各種優惠、開卡禮與推薦任務)
+model HunterOffer {
+  id               String   @id @default(uuid())
+  title            String   // 優惠標題 (例如: "10% Cash Back at Starbucks")
+  description      String?  @db.Text
+  type             String   // 優惠類型 (枚舉值：GEO_DEAL 地理優惠, CARD_BONUS 開卡禮, SPEND_PROMO 消費活動)
+  
+  // 價值評估
+  rewardPoints     Int      @default(0) // 完成此狩獵可額外獲得的 Kura 內部點數
+  estimatedValueUsd Float   @default(0) // 預估能為用戶省下或賺取的實際美金價值
+  
+  // LBS 地理位置資訊 (若為 GEO_DEAL，則此區塊有值)
+  merchantName     String?  // 商家名稱
+  latitude         Float?   // 商家緯度
+  longitude        Float?   // 商家經度
+  address          String?  // 實體地址
+
+  // 信用卡資訊 (若為 CARD_BONUS 開卡禮任務，則關聯到具體信用卡)
+  creditCardId     String?
+  creditCard       CreditCard? @relation(fields: [creditCardId], references: [id])
+
+  // 達成條件與限制
+  spendRequirement Float?   // 需消費的門檻金額 (例如: 刷滿 4000 拿開卡禮)
+  timeLimitDays    Int?     // 解鎖任務的天數限制 (例如: 90 天內)
+  expiresAt        DateTime?// 該優惠活動本身的下架/過期時間
+
+  isActive         Boolean  @default(true) // 是否開放給演算法推薦
+  createdAt        DateTime @default(now())
+
+  // 關聯：哪些用戶正在追蹤/完成此優惠
+  userHunts        UserHunt[]
+}
+
+// 狩獵清單 (紀錄用戶與優惠之間的進度狀態)
+model UserHunt {
+  id            String   @id @default(uuid())
+  userId        String
+  offerId       String
+  
+  // 狀態流轉: 
+  // RECOMMENDED (演算法推播) -> SAVED (用戶釘選) -> IN_PROGRESS (解任務中) -> COMPLETED (達標可領取) -> CLAIMED (已結案)
+  status        String   @default("RECOMMENDED") 
+  progressValue Float    @default(0) // 當前進度 (例如已消費了 $1500 / 目標 $4000)
+  completedAt   DateTime?// 達成目標的時間
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  offer         HunterOffer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+
+  // 防呆機制：確保同一用戶對同一個優惠不會重複建立追蹤
+  @@unique([userId, offerId])
+}
+
+// 獎勵流水帳 (Kura 點數的增減紀錄，類似會計的 Ledger)
+model RewardTransaction {
+  id          String   @id @default(uuid())
+  userId      String
+  amount      Int      // 正數為獲得點數，負數為消耗/兌換點數
+  description String   // 交易說明 (例如: "Claimed: Starbucks GEO Deal")
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+
+// ==========================================
+// 4. Forum 模組 (社群交流與情報分享)
+// ==========================================
+
+// 論壇分類板塊
+model ForumCategory {
+  id          String   @id @default(uuid())
+  slug        String   @unique // URL 友善代稱 (例如: "crypto-alpha", "credit-cards")
+  name        String   // 顯示名稱
+  description String?
+  
+  posts       ForumPost[]
+}
+
+// 論壇文章
+model ForumPost {
+  id          String   @id @default(uuid())
+  title       String
+  content     String   @db.Text // 使用 Text 以容納長篇 Markdown 內容
+  authorId    String
+  categoryId  String
+  viewCount   Int      @default(0) // 瀏覽次數
+  upvotes     Int      @default(0) // 總按讚數快取 (提升列表頁讀取效能，不需每次 Count)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  author      User            @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  category    ForumCategory   @relation(fields: [categoryId], references: [id])
+  comments    ForumComment[]
+  votes       ForumPostVote[] // 詳細的投票紀錄表
+}
+
+// 論壇回覆/留言
+model ForumComment {
+  id          String   @id @default(uuid())
+  content     String   @db.Text
+  postId      String
+  authorId    String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  post        ForumPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author      User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+}
+
+// 文章投票紀錄 (按讚/倒讚)
+model ForumPostVote {
+  id        String   @id @default(uuid())
+  postId    String
+  userId    String
+  voteType  Int      // 狀態值: 1 (Upvote), -1 (Downvote)
+  createdAt DateTime @default(now())
+
+  post      ForumPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // 核心防呆：確保同一使用者對同一篇文章只能有一筆有效的投票紀錄
+  @@unique([postId, userId])
+}
