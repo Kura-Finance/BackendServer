@@ -1,6 +1,6 @@
 import { AssetSnapshotData, AssetSnapshotResponse, AssetHistoryResponse } from '../models/types';
 /**
- * Asset Service - Business Logic for Asset Tracking
+ * 資產服務 - 資產追蹤業務邏輯
  */
 export declare class AssetService {
     /**
@@ -25,6 +25,11 @@ export declare class AssetService {
      * 刪除特定資產的歷史記錄
      */
     static deleteAssetHistory(userId: string, assetId: string): Promise<number>;
+    /**
+     * 計算用戶當前各資產最新快照的總資產值
+     * 只取每個 assetId 最新一筆，避免累加歷史數據導致數字膨脹
+     */
+    private static computeCurrentTotalAssets;
     /**
      * 取得用户的所有记录日期 (用于前端日期选择器)
      */

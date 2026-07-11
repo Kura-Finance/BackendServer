@@ -191,11 +191,13 @@ export async function upsertAccountsCache(
     plaidItemId: string;
     accountId: string;
     name: string;
-    balance: number;
+    balance: string;       // AES-256-GCM 加密的餘額
     type: string;
     bucket: string;
     institutionName: string;
     logo?: string;
+    apy?: string | null;   // AES-256-GCM 加密的 APY
+    mask?: string | null;  // AES-256-GCM 加密的末 4 碼
   }>
 ): Promise<number> {
   const prismaAny = prisma as any;
@@ -232,12 +234,30 @@ export async function upsertTransactionsCache(
     type: string;
     date: string;
     month: string;
-  }>
+    personalFinanceCategory?: string;
+    isRecurring?: boolean;
+    recurringFrequency?: string;
+    isSubscription?: boolean;
+    enrichedMerchantName?: string;
+    merchantLogo?: string;
+    merchantCategory?: string;
+    isPending?: boolean;
+  }>,
+  removedTransactionIds: string[] = []
 ): Promise<number> {
   const prismaAny = prisma as any;
 
-  if (transactions.length === 0) {
+  if (transactions.length === 0 && removedTransactionIds.length === 0) {
     return 0;
+  }
+
+  if (removedTransactionIds.length > 0) {
+    await prismaAny.plaidTransactionCache.deleteMany({
+      where: {
+        userId,
+        transactionId: { in: removedTransactionIds },
+      },
+    });
   }
 
   // 对于交易，我们不删除旧的，而是按月份删除，然后插入
@@ -247,6 +267,10 @@ export async function upsertTransactionsCache(
     await prismaAny.plaidTransactionCache.deleteMany({
       where: { userId, month },
     });
+  }
+
+  if (transactions.length === 0) {
+    return 0;
   }
 
   await prismaAny.plaidTransactionCache.createMany({
@@ -300,8 +324,8 @@ export async function upsertInvestmentsCache(
     investmentId: string;
     symbol: string;
     name: string;
-    holdings: number;
-    currentPrice: number;
+    holdings: string;     // AES-256-GCM 加密的持有數量
+    currentPrice: string; // AES-256-GCM 加密的價格
     type: string;
     logo?: string;
   }>

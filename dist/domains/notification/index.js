@@ -1,13 +1,13 @@
 "use strict";
 /**
- * Notification Domain
- * 通知系统主入口
+ * 通知領域
+ * 通知系統主入口
  *
- * 组件：
- * - Models: 类型定义 (types.ts)
- * - Services: 业务逻辑 (notificationService.ts)
- * - Controllers: HTTP处理 (notificationController.ts)
- * - Router: 路由定义 (router.ts)
+ * 組件：
+ * - 模型：型別定義 (types.ts)
+ * - 服務：業務邏輯 (notificationService.ts)
+ * - 控制器：HTTP 處理 (notificationController.ts)
+ * - 路由：路由定義 (router.ts)
  */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -29,6 +29,6 @@ var notificationService_1 = require("./services/notificationService");
 Object.defineProperty(exports, "NotificationService", { enumerable: true, get: function () { return notificationService_1.NotificationService; } });
 var router_1 = require("./router");
 Object.defineProperty(exports, "notificationRouter", { enumerable: true, get: function () { return router_1.notificationRouter; } });
-// Re-export types for convenience
+// 重新匯出型別，方便外部使用
 __exportStar(require("./models/types"), exports);
 //# sourceMappingURL=index.js.map

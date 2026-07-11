@@ -1,9 +1,7 @@
 node_modules
-# Keep environment variables out of version control
 .env*
 docker-compose.yml
-
-/generated/prisma
+dist/
 
 # Logs
 logs/
@@ -15,3 +13,9 @@ yarn-error.log*
 # OS
 .DS_Store
 Thumbs.db
+
+# IDEs
+.idea/
+.vscode/
+.cursor/
+.cursorrules

@@ -8,8 +8,8 @@ const crypto_1 = __importDefault(require("crypto"));
 const logger_1 = require("../../logger");
 const auditLog_1 = require("../../logger/auditLog");
 /**
- * 数据加密工具类
- * 用于加密和解密敏感数据（API Key、Secret、Token 等）
+ * 資料加密工具類別
+ * 用於加密與解密敏感資料（API Key、Secret、Token 等）
  */
 class EncryptionUtil {
     static ALGORITHM = 'aes-256-gcm';
@@ -17,23 +17,23 @@ class EncryptionUtil {
     static AUTH_TAG_LENGTH = 16;
     static IV_LENGTH = 12;
     /**
-     * 初始化加密密钥
+     * 初始化加密金鑰
      */
     static getEncryptionKey() {
         const key = process.env.ENCRYPTION_KEY;
         if (!key) {
             throw new Error('ENCRYPTION_KEY environment variable is not set');
         }
-        // Key 应该是 32 字节的十六进制字符串（用于 AES-256）
+        // Key 應為 32 位元組的十六進位字串（用於 AES-256）
         if (key.length !== 64) {
             throw new Error('ENCRYPTION_KEY must be 64 hex characters (32 bytes)');
         }
         return Buffer.from(key, 'hex');
     }
     /**
-     * 加密敏感数据
-     * @param plaintext 要加密的明文字符串
-     * @returns 加密后的字符串（格式：iv:authTag:encryptedData）
+     * 加密敏感資料
+     * @param plaintext 要加密的明文字串
+     * @returns 加密後的字串（格式：iv:authTag:encryptedData）
      */
     static encrypt(plaintext) {
         const startTime = Date.now();
@@ -53,7 +53,7 @@ class EncryptionUtil {
                 dataLength: plaintext.length,
                 duration,
             });
-            // 记录审计日志（成功）
+            // 記錄稽核日誌（成功）
             auditLog_1.AuditLogger.logKeyAccess('SUCCESS', 'ENCRYPT', {
                 algorithm: this.ALGORITHM,
                 dataLength: plaintext.length,
@@ -64,7 +64,7 @@ class EncryptionUtil {
             const duration = Date.now() - startTime;
             const errorMsg = error instanceof Error ? error.message : String(error);
             (0, logger_1.logError)('Encryption failed', error);
-            // 记录审计日志（失败）
+            // 記錄稽核日誌（失敗）
             auditLog_1.AuditLogger.logKeyAccess('FAILURE', 'ENCRYPT', {
                 algorithm: this.ALGORITHM,
                 dataLength: plaintext.length,
@@ -73,9 +73,9 @@ class EncryptionUtil {
         }
     }
     /**
-     * 解密敏感数据
-     * @param encrypted 加密后的字符串（格式：iv:authTag:encryptedData）
-     * @returns 解密后的明文字符串
+     * 解密敏感資料
+     * @param encrypted 加密後的字串（格式：iv:authTag:encryptedData）
+     * @returns 解密後的明文字串
      */
     static decrypt(encrypted) {
         const startTime = Date.now();
@@ -83,10 +83,10 @@ class EncryptionUtil {
             const key = this.getEncryptionKey();
             // 解析格式：iv:authTag:encryptedData
             const parts = encrypted.split(':');
-            // 向后兼容：检查是否是旧的未加密数据（没有冒号分隔符）
+            // 向後相容：檢查是否為舊版未加密資料（沒有冒號分隔符）
             if (parts.length !== 3) {
-                // 假设这是未加密的遗留数据，返回原始值
-                // 并记录警告日志进行审计
+                // 假設這是未加密的舊資料，回傳原始值
+                // 並記錄警告日誌以利稽核
                 (0, logger_1.logDebug)('Legacy unencrypted data detected - returning as-is', {
                     dataLength: encrypted.length,
                     note: 'Please migrate this data by re-encrypting',
@@ -95,7 +95,7 @@ class EncryptionUtil {
                     algorithm: 'NONE (legacy unencrypted)',
                     dataLength: encrypted.length,
                 }, 'Legacy data - not encrypted');
-                return encrypted; // 返回原始值
+                return encrypted; // 回傳原始值
             }
             const ivHex = parts[0];
             const authTagHex = parts[1];
@@ -121,7 +121,7 @@ class EncryptionUtil {
                 algorithm: this.ALGORITHM,
                 duration,
             });
-            // 记录审计日志（成功）
+            // 記錄稽核日誌（成功）
             auditLog_1.AuditLogger.logKeyAccess('SUCCESS', 'DECRYPT', {
                 algorithm: this.ALGORITHM,
             }, undefined);
@@ -131,7 +131,7 @@ class EncryptionUtil {
             const duration = Date.now() - startTime;
             const errorMsg = error instanceof Error ? error.message : String(error);
             (0, logger_1.logError)('Decryption failed', error);
-            // 记录审计日志（失败）
+            // 記錄稽核日誌（失敗）
             auditLog_1.AuditLogger.logKeyAccess('FAILURE', 'DECRYPT', {
                 algorithm: this.ALGORITHM,
             }, errorMsg);
@@ -139,15 +139,15 @@ class EncryptionUtil {
         }
     }
     /**
-     * 生成随机的加密密钥（用于初始化）
-     * 返回 32 字节的密钥作为 64 字符的十六进制字符串
+     * 生成隨機加密金鑰（用於初始化）
+     * 回傳 32 位元組金鑰（以 64 字元十六進位字串表示）
      */
     static generateEncryptionKey() {
         const key = crypto_1.default.randomBytes(32);
         return key.toString('hex');
     }
     /**
-     * 验证加密密钥格式是否正确
+     * 驗證加密金鑰格式是否正確
      */
     static validateEncryptionKey(key) {
         if (!key || typeof key !== 'string') {

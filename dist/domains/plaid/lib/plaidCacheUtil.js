@@ -190,10 +190,18 @@ async function upsertAccountsCache(userId, accounts) {
 /**
  * 批量插入或更新交易缓存
  */
-async function upsertTransactionsCache(userId, transactions) {
+async function upsertTransactionsCache(userId, transactions, removedTransactionIds = []) {
     const prismaAny = prisma_1.prisma;
-    if (transactions.length === 0) {
+    if (transactions.length === 0 && removedTransactionIds.length === 0) {
         return 0;
+    }
+    if (removedTransactionIds.length > 0) {
+        await prismaAny.plaidTransactionCache.deleteMany({
+            where: {
+                userId,
+                transactionId: { in: removedTransactionIds },
+            },
+        });
     }
     // 对于交易，我们不删除旧的，而是按月份删除，然后插入
     const months = new Set(transactions.map((t) => t.month));
@@ -201,6 +209,9 @@ async function upsertTransactionsCache(userId, transactions) {
         await prismaAny.plaidTransactionCache.deleteMany({
             where: { userId, month },
         });
+    }
+    if (transactions.length === 0) {
+        return 0;
     }
     await prismaAny.plaidTransactionCache.createMany({
         data: transactions.map((tx) => ({

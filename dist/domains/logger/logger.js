@@ -20,7 +20,7 @@ if (!isProduction) {
             fs_1.default.mkdirSync(logsDir, { recursive: true });
         }
         catch (error) {
-            console.warn('⚠️ 无法创建 logs 目录，日志将输出到 stdout');
+            console.warn('⚠️ Unable to create logs directory. Logs will be written to stdout.');
             logsDir = null;
         }
     }

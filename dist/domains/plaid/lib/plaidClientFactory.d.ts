@@ -11,4 +11,6 @@ export declare function getPlaidEnvironmentByUserId(userId: string): 'sandbox' |
  * @returns 配置好的 PlaidApi 實例
  */
 export declare function createPlaidClientForUser(userId: string): PlaidApi;
+export declare function createPlaidClient(environment: 'sandbox' | 'production'): PlaidApi;
+export declare function createPlaidWebhookClient(): PlaidApi;
 //# sourceMappingURL=plaidClientFactory.d.ts.map

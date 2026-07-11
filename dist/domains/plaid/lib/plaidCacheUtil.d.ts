@@ -50,11 +50,13 @@ export declare function upsertAccountsCache(userId: string, accounts: Array<{
     plaidItemId: string;
     accountId: string;
     name: string;
-    balance: number;
+    balance: string;
     type: string;
     bucket: string;
     institutionName: string;
     logo?: string;
+    apy?: string | null;
+    mask?: string | null;
 }>): Promise<number>;
 /**
  * 批量插入或更新交易缓存
@@ -68,7 +70,15 @@ export declare function upsertTransactionsCache(userId: string, transactions: Ar
     type: string;
     date: string;
     month: string;
-}>): Promise<number>;
+    personalFinanceCategory?: string;
+    isRecurring?: boolean;
+    recurringFrequency?: string;
+    isSubscription?: boolean;
+    enrichedMerchantName?: string;
+    merchantLogo?: string;
+    merchantCategory?: string;
+    isPending?: boolean;
+}>, removedTransactionIds?: string[]): Promise<number>;
 /**
  * 批量插入或更新投资账户缓存
  */
@@ -86,8 +96,8 @@ export declare function upsertInvestmentsCache(userId: string, investments: Arra
     investmentId: string;
     symbol: string;
     name: string;
-    holdings: number;
-    currentPrice: number;
+    holdings: string;
+    currentPrice: string;
     type: string;
     logo?: string;
 }>): Promise<number>;

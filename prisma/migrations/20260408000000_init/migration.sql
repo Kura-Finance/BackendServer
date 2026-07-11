@@ -8,8 +8,6 @@ CREATE TABLE "public"."User" (
     "password" TEXT NOT NULL,
     "name" TEXT,
     "avatarUrl" TEXT,
-    "bankingAccountOrder" TEXT[] DEFAULT ARRAY[]::TEXT[],
-    "investmentAccountOrder" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 

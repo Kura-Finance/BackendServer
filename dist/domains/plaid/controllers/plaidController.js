@@ -1,48 +1,20 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.handlePlaidWebhook = exports.getCacheInfo = exports.clearPlaidCache = exports.refreshPlaidCache = exports.getFinanceSnapshotOptimized = exports.getFinanceSnapshot = exports.disconnectPlaidAccount = exports.exchangePublicToken = exports.createLinkToken = exports.updatePlaidAccountOrder = void 0;
+exports.handlePlaidWebhook = exports.getCacheInfo = exports.clearPlaidCache = exports.refreshPlaidCache = exports.getFinanceSnapshotOptimized = exports.getFinanceSnapshot = exports.disconnectPlaidItem = exports.exchangePublicToken = exports.createLinkToken = void 0;
 const plaidService_1 = require("../services/plaidService");
 const logger_1 = require("../../logger");
 const plaidCacheUtil_1 = require("../lib/plaidCacheUtil");
+const webhookVerification_1 = require("../lib/webhookVerification");
 const prisma_1 = require("../../shared/lib/prisma");
-const updatePlaidAccountOrder = async (req, res) => {
-    try {
-        if (!req.userId) {
-            res.status(401).json({ error: '未登入' });
-            return;
-        }
-        const { accountIds, investmentAccountIds } = req.body;
-        if (accountIds === undefined && investmentAccountIds === undefined) {
-            res.status(400).json({ error: 'accountIds or investmentAccountIds is required' });
-            return;
-        }
-        const payload = {};
-        if (accountIds !== undefined) {
-            payload.accountIds = accountIds;
-        }
-        if (investmentAccountIds !== undefined) {
-            payload.investmentAccountIds = investmentAccountIds;
-        }
-        await plaidService_1.PlaidService.updateAccountOrder(req.userId, payload);
-        res.json({ status: 'success', message: 'Account order updated successfully.' });
-    }
-    catch (error) {
-        (0, logger_1.logError)('Update account order failed', error, {
-            userId: req.userId,
-            errorData: error.response?.data,
-        });
-        res.status(500).json({ error: '無法更新卡片排序' });
-    }
-};
-exports.updatePlaidAccountOrder = updatePlaidAccountOrder;
+const apiResponse_1 = require("../../shared/lib/apiResponse");
 const createLinkToken = async (req, res) => {
     try {
         if (!req.userId) {
-            res.status(401).json({ error: '未登入' });
+            (0, apiResponse_1.sendError)(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
             return;
         }
         const linkToken = await plaidService_1.PlaidService.createLinkToken(req.userId);
-        res.json({ link_token: linkToken });
+        (0, apiResponse_1.sendSuccess)(res, { link_token: linkToken });
     }
     catch (error) {
         const errorCode = error.response?.data?.error_code;
@@ -52,17 +24,19 @@ const createLinkToken = async (req, res) => {
         // 如果是配置錯誤，傳遞詳細的錯誤訊息供調試
         const message = error.message?.includes('Plaid ')
             ? error.message
-            : '無法產生 Plaid Link Token';
+            : 'Unable to create Plaid Link Token';
         (0, logger_1.logError)('Create Plaid link token failed', error, {
             userId: req.userId,
             errorData: error.response?.data,
             errorCode,
             statusCode,
         });
-        res.status(statusCode).json({
-            error: message,
-            errorCode: errorCode || 'UNKNOWN_ERROR',
-            requestId: error.response?.data?.request_id,
+        (0, apiResponse_1.sendError)(res, statusCode, {
+            code: errorCode || 'UNKNOWN_ERROR',
+            message,
+            details: {
+                requestId: error.response?.data?.request_id,
+            },
         });
     }
 };
@@ -70,116 +44,210 @@ exports.createLinkToken = createLinkToken;
 const exchangePublicToken = async (req, res) => {
     try {
         if (!req.userId) {
-            res.status(401).json({ error: '未登入' });
+            (0, apiResponse_1.sendError)(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
             return;
         }
         const { public_token, institution_name } = req.body;
         await plaidService_1.PlaidService.exchangePublicToken(req.userId, public_token, institution_name);
-        res.json({ status: 'success', message: '銀行帳戶已成功連結' });
+        // 第一次連接時取得財務快照（isManualRefresh=false，不受限制）
+        try {
+            const snapshot = await plaidService_1.PlaidService.getFinanceSnapshotOptimized(req.userId, false);
+            (0, apiResponse_1.sendSuccess)(res, {
+                message: 'Bank account linked successfully',
+                snapshot,
+            });
+        }
+        catch (snapshotError) {
+            // 即使快照失敗，也不影響連結成功狀態
+            (0, logger_1.logDebug)('Failed to fetch initial snapshot after successful connection', snapshotError?.message || snapshotError);
+            (0, apiResponse_1.sendSuccess)(res, {
+                message: 'Bank account linked successfully'
+            });
+        }
     }
     catch (error) {
         (0, logger_1.logError)('Exchange Plaid public token failed', error, {
             userId: req.userId,
             errorData: error.response?.data,
         });
-        res.status(500).json({ error: 'Token 交換失敗' });
+        (0, apiResponse_1.sendError)(res, 500, { code: 'INTERNAL_ERROR', message: 'Public token exchange failed' });
     }
 };
 exports.exchangePublicToken = exchangePublicToken;
-const disconnectPlaidAccount = async (req, res) => {
+const disconnectPlaidItem = async (req, res) => {
     try {
         if (!req.userId) {
-            res.status(401).json({ error: '未登入' });
+            (0, apiResponse_1.sendError)(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
             return;
         }
         const { accountId } = req.body;
-        if (!accountId) {
-            res.status(400).json({ error: 'accountId is required' });
-            return;
-        }
-        await plaidService_1.PlaidService.disconnectAccount(req.userId, accountId);
-        res.json({ status: 'success', message: 'Account disconnected successfully.' });
+        const disconnectResult = await plaidService_1.PlaidService.disconnectItemByAccountId(req.userId, accountId);
+        (0, apiResponse_1.sendSuccess)(res, {
+            message: 'Plaid item disconnected successfully.',
+            data: {
+                matchedAccountId: disconnectResult.accountId,
+                disconnectedItemId: disconnectResult.disconnectedItemId,
+                institution: disconnectResult.institution,
+                plaidRequestId: disconnectResult.plaidRequestId,
+            },
+        });
     }
     catch (error) {
-        (0, logger_1.logError)('Disconnect Plaid account failed', error, {
+        (0, logger_1.logError)('Disconnect Plaid item failed', error, {
             userId: req.userId,
             errorData: error.response?.data,
         });
-        res.status(500).json({ error: '無法解除連結銀行帳戶' });
+        (0, apiResponse_1.sendError)(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to disconnect Plaid item' });
     }
 };
-exports.disconnectPlaidAccount = disconnectPlaidAccount;
+exports.disconnectPlaidItem = disconnectPlaidItem;
 const getFinanceSnapshot = async (req, res) => {
     try {
         if (!req.userId) {
-            res.status(401).json({ error: '未登入' });
+            (0, apiResponse_1.sendError)(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
             return;
         }
         const snapshot = await plaidService_1.PlaidService.getFinanceSnapshot(req.userId);
-        res.json(snapshot);
+        (0, apiResponse_1.sendSuccess)(res, snapshot);
     }
     catch (error) {
         (0, logger_1.logError)('Get finance snapshot failed', error, {
             userId: req.userId,
             errorData: error.response?.data,
         });
-        res.status(500).json({ error: '無法取得 Plaid 金融資料' });
+        (0, apiResponse_1.sendError)(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to fetch Plaid financial data' });
     }
 };
 exports.getFinanceSnapshot = getFinanceSnapshot;
 /**
- * 獲取財務快照（使用緩存，避免過度 API 調用）
+ * 獲取財務快照（仅使用緩存架構）
+ * - API 層面只返回數據庫內容，Server 通過 Webhooks 自動更新數據庫
+ * - 用戶可通過 ?refresh=true 參數強制更新，但受每日次數限制（基於訂閱等級）
+ * - 達到限制時返回緩存數據
+ * - Basic: 1次/天, Pro: 5次/天, Ultimate: 20次/天, VIP: 無限
  */
 const getFinanceSnapshotOptimized = async (req, res) => {
     try {
         if (!req.userId) {
-            res.status(401).json({ error: '未登入' });
+            (0, apiResponse_1.sendError)(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
             return;
         }
-        const forceRefresh = req.query.refresh === 'true' || req.body?.forceRefresh === true;
-        const snapshot = await plaidService_1.PlaidService.getFinanceSnapshotOptimized(req.userId, forceRefresh);
-        res.json({
-            ...snapshot,
-            _cacheHint: forceRefresh ? '強制刷新，來自 Plaid API' : '可能來自緩存',
-        });
+        // 只有當用戶明確請求 refresh=true 時才是手動刷新，受每日限制
+        const { refresh } = req.query;
+        const isManualRefresh = refresh === true || req.body?.isManualRefresh === true;
+        try {
+            const snapshot = await plaidService_1.PlaidService.getFinanceSnapshotOptimized(req.userId, isManualRefresh);
+            (0, apiResponse_1.sendSuccess)(res, {
+                ...snapshot,
+                _cacheSource: isManualRefresh ? 'Forced refresh from Plaid API' : 'From cache',
+            });
+        }
+        catch (error) {
+            // 處理刷新限制錯誤 - 達到限制時返回緩存數據
+            if (error.statusCode === 429 && isManualRefresh) {
+                try {
+                    (0, logger_1.logDebug)('Refresh limit reached, returning cached data', { userId: req.userId });
+                    const cachedSnapshot = await plaidService_1.PlaidService.getFinanceSnapshotOptimized(req.userId, false); // 獲取緩存不受限制
+                    (0, apiResponse_1.sendSuccess)(res, {
+                        ...cachedSnapshot,
+                        _cacheSource: 'Daily refresh limit reached, showing last synced data',
+                        _limitReached: true,
+                        _message: error.message,
+                    });
+                    return;
+                }
+                catch (cacheError) {
+                    // 如果無法獲取緩存數據，返回錯誤
+                    (0, apiResponse_1.sendError)(res, 429, {
+                        code: 'RATE_LIMITED',
+                        message: error.message,
+                        details: {
+                            refreshLimit: error.refreshLimit,
+                            refreshCountRemaining: error.refreshCountRemaining,
+                            upgrade: process.env.APP_UPGRADE_URL || 'https://kura-finance.com/pricing',
+                            retryAfter: 86400,
+                        },
+                    });
+                    return;
+                }
+            }
+            throw error;
+        }
     }
     catch (error) {
-        (0, logger_1.logError)('Get finance snapshot optimized failed', error, {
+        (0, logger_1.logError)('Get finance snapshot failed', error, {
             userId: req.userId,
             errorData: error.response?.data,
         });
-        res.status(500).json({ error: '無法取得金融資料' });
+        (0, apiResponse_1.sendError)(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to fetch financial snapshot' });
     }
 };
 exports.getFinanceSnapshotOptimized = getFinanceSnapshotOptimized;
 /**
  * 手動刷新 Plaid 緩存
+ * 達到限制時返回緩存數據
  */
 const refreshPlaidCache = async (req, res) => {
     try {
         if (!req.userId) {
-            res.status(401).json({ error: '未登入' });
+            (0, apiResponse_1.sendError)(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
             return;
         }
-        // 手動刷新，強制從 API 獲取數據
-        const snapshot = await plaidService_1.PlaidService.getFinanceSnapshotOptimized(req.userId, true);
-        res.json({
-            status: 'success',
-            message: '緩存已刷新',
-            dataRefreshed: {
-                accounts: snapshot.accounts.length,
-                transactions: snapshot.transactions.length,
-                investmentAccounts: snapshot.investmentAccounts.length,
-                investments: snapshot.investments.length,
-            },
-        });
+        try {
+            // 手動刷新，強制從 API 獲取數據
+            const snapshot = await plaidService_1.PlaidService.getFinanceSnapshotOptimized(req.userId, true);
+            (0, apiResponse_1.sendSuccess)(res, {
+                message: 'Cache refreshed successfully',
+                dataRefreshed: {
+                    accounts: snapshot.accounts.length,
+                    transactions: snapshot.transactions.length,
+                    investmentAccounts: snapshot.investmentAccounts.length,
+                    investments: snapshot.investments.length,
+                },
+            });
+        }
+        catch (error) {
+            // 處理刷新限制錯誤 - 達到限制時返回緩存數據
+            if (error.statusCode === 429) {
+                try {
+                    (0, logger_1.logDebug)('Refresh limit reached, returning cached data', { userId: req.userId });
+                    const cachedSnapshot = await plaidService_1.PlaidService.getFinanceSnapshotOptimized(req.userId, false);
+                    (0, apiResponse_1.sendSuccess)(res, {
+                        status: 'cache_limit_reached',
+                        message: 'Daily refresh limit reached, returning last synced data',
+                        limitMessage: error.message,
+                        dataRefreshed: {
+                            accounts: cachedSnapshot.accounts.length,
+                            transactions: cachedSnapshot.transactions.length,
+                            investmentAccounts: cachedSnapshot.investmentAccounts.length,
+                            investments: cachedSnapshot.investments.length,
+                        },
+                        _limitReached: true,
+                    });
+                    return;
+                }
+                catch (cacheError) {
+                    // 如果無法獲取緩存數據，返回錯誤
+                    (0, apiResponse_1.sendError)(res, 429, {
+                        code: 'RATE_LIMITED',
+                        message: 'Daily refresh limit reached and no cached data is available',
+                        details: {
+                            limitMessage: error.message,
+                            retryAfter: 86400,
+                        },
+                    });
+                    return;
+                }
+            }
+            throw error;
+        }
     }
     catch (error) {
         (0, logger_1.logError)('Refresh Plaid cache failed', error, {
             userId: req.userId,
             errorData: error.response?.data,
         });
-        res.status(500).json({ error: '無法刷新緩存' });
+        (0, apiResponse_1.sendError)(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to refresh cache' });
     }
 };
 exports.refreshPlaidCache = refreshPlaidCache;
@@ -189,20 +257,19 @@ exports.refreshPlaidCache = refreshPlaidCache;
 const clearPlaidCache = async (req, res) => {
     try {
         if (!req.userId) {
-            res.status(401).json({ error: '未登入' });
+            (0, apiResponse_1.sendError)(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
             return;
         }
         await (0, plaidCacheUtil_1.clearAllPlaidCache)(req.userId);
-        res.json({
-            status: 'success',
-            message: '所有 Plaid 緩存已清除',
+        (0, apiResponse_1.sendSuccess)(res, {
+            message: 'All Plaid cache cleared',
         });
     }
     catch (error) {
         (0, logger_1.logError)('Clear Plaid cache failed', error, {
             userId: req.userId,
         });
-        res.status(500).json({ error: '無法清除緩存' });
+        (0, apiResponse_1.sendError)(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to clear cache' });
     }
 };
 exports.clearPlaidCache = clearPlaidCache;
@@ -212,12 +279,11 @@ exports.clearPlaidCache = clearPlaidCache;
 const getCacheInfo = async (req, res) => {
     try {
         if (!req.userId) {
-            res.status(401).json({ error: '未登入' });
+            (0, apiResponse_1.sendError)(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
             return;
         }
         const stats = await (0, plaidCacheUtil_1.getCacheStats)(req.userId);
-        res.json({
-            status: 'success',
+        (0, apiResponse_1.sendSuccess)(res, {
             cacheStats: {
                 cachedAccounts: stats.accounts,
                 cachedTransactions: stats.transactions,
@@ -234,7 +300,7 @@ const getCacheInfo = async (req, res) => {
         (0, logger_1.logError)('Get cache info failed', error, {
             userId: req.userId,
         });
-        res.status(500).json({ error: '無法獲取緩存信息' });
+        (0, apiResponse_1.sendError)(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to fetch cache info' });
     }
 };
 exports.getCacheInfo = getCacheInfo;
@@ -244,21 +310,23 @@ exports.getCacheInfo = getCacheInfo;
  */
 const handlePlaidWebhook = async (req, res) => {
     try {
+        const verification = await (0, webhookVerification_1.verifyPlaidWebhook)(req);
+        if (!verification.isValid) {
+            (0, logger_1.logDebug)('Rejected Plaid webhook: signature validation failed', {
+                reason: verification.reason,
+            });
+            (0, apiResponse_1.sendError)(res, 401, { code: 'INVALID_SIGNATURE', message: 'Invalid Plaid webhook signature' });
+            return;
+        }
         const { webhook_type, webhook_code, item_id, error } = req.body;
         (0, logger_1.logDebug)('Plaid webhook received', {
             webhook_type,
             webhook_code,
             item_id,
         });
-        // 驗證 webhook（可選但推薦）
-        // const isValid = verifyPlaidWebhook(req);
-        // if (!isValid) {
-        //   logWarn('Invalid Plaid webhook signature', { webhook_type });
-        //   return res.status(401).json({ error: 'Invalid webhook' });
-        // }
         // 立即返回 200，確認已收到（非回應式處理）
-        res.status(200).json({ webhook_received: true });
-        // 異步處理 webhook
+        (0, apiResponse_1.sendSuccess)(res, { webhook_received: true }, 200);
+        // 非同步處理 Webhook
         processPlaidWebhook(webhook_type, webhook_code, item_id, error).catch((err) => {
             (0, logger_1.logError)('Error processing Plaid webhook', err, {
                 webhook_type,
@@ -268,7 +336,7 @@ const handlePlaidWebhook = async (req, res) => {
     }
     catch (error) {
         (0, logger_1.logError)('Webhook receiver error', error);
-        res.status(500).json({ error: 'Webhook processing failed' });
+        (0, apiResponse_1.sendError)(res, 500, { code: 'INTERNAL_ERROR', message: 'Webhook processing failed' });
     }
 };
 exports.handlePlaidWebhook = handlePlaidWebhook;
@@ -308,7 +376,7 @@ async function handleItemWebhook(webhook_code, item_id, error) {
     try {
         switch (webhook_code) {
             case 'ERROR':
-                // Item 發生錯誤
+                // Plaid Item 發生錯誤
                 (0, logger_1.logError)('Plaid item error', new Error(error?.error_message || 'Unknown item error'), {
                     item_id,
                     error: error?.error_message,
@@ -316,7 +384,7 @@ async function handleItemWebhook(webhook_code, item_id, error) {
                 // TODO: 將錯誤狀態保存到數據庫或通知用戶
                 break;
             case 'PENDING_EXPIRATION':
-                // Item 的授權即將過期
+                // Plaid Item 的授權即將過期
                 (0, logger_1.logDebug)('Plaid item pending expiration', { item_id });
                 // TODO: 提醒用戶重新驗證
                 break;

@@ -4,7 +4,6 @@ exports.prisma = void 0;
 exports.initializeDatabase = initializeDatabase;
 exports.closeDatabase = closeDatabase;
 const client_1 = require("@prisma/client");
-const child_process_1 = require("child_process");
 const logger_1 = require("../../logger");
 /**
  * Prisma Client 單一實例
@@ -13,43 +12,17 @@ const logger_1 = require("../../logger");
  */
 exports.prisma = new client_1.PrismaClient();
 /**
- * 初始化數據庫連接並同步 Schema
- * - 執行 Prisma 遷移 (自動建表)
+ * 初始化資料庫連線
+ * - Migration 必須由 CI/CD 或部署流程執行 (prisma migrate deploy)
  * - 測試連接
  * - 記錄連接狀態
  */
 async function initializeDatabase() {
     try {
-        (0, logger_1.logDebug)('Initializing database connection and syncing schema...');
-        // 執行 Prisma 遷移來同步 Schema (如果表不存在就建表)
-        try {
-            console.log('🔄 Running Prisma migrations to sync database schema...');
-            (0, child_process_1.execSync)('npx prisma migrate deploy', {
-                cwd: process.cwd(),
-                stdio: 'inherit',
-                env: { ...process.env },
-            });
-            console.log('✅ Database schema synced successfully');
-        }
-        catch (migrateError) {
-            // 如果遷移失敗，嘗試 db push (用於開發環境或新數據庫)
-            (0, logger_1.logDebug)('Prisma migrate deploy failed, trying db push...', { error: migrateError });
-            console.log('⚠️ Running prisma db push as fallback...');
-            try {
-                (0, child_process_1.execSync)('npx prisma db push --skip-generate', {
-                    cwd: process.cwd(),
-                    stdio: 'inherit',
-                    env: { ...process.env },
-                });
-                console.log('✅ Database schema synced with db push');
-            }
-            catch (dbPushError) {
-                (0, logger_1.logError)('Both Prisma migrate deploy and db push failed', dbPushError);
-                throw dbPushError;
-            }
-        }
+        (0, logger_1.logDebug)('Initializing database connection...');
         const startTime = Date.now();
-        // 測試連接
+        // 建立連線並測試可用性
+        await exports.prisma.$connect();
         await exports.prisma.$executeRaw `SELECT 1`;
         const duration = Date.now() - startTime;
         (0, logger_1.logDatabaseOperation)('Connection Test', 'system', duration, true);

@@ -1,5 +1,5 @@
 /**
- * Auth Domain Model Types
+ * Auth 領域模型型別
  */
 export interface PlaidCacheInfo {
     accounts: number;
@@ -19,21 +19,9 @@ export interface UserProfile {
     membershipLabel: string;
     plaidCache?: PlaidCacheInfo;
 }
-export interface RegisterPayload {
-    email: string;
-    password: string;
-}
-export interface LoginPayload {
-    email: string;
-    password: string;
-}
 export interface UpdateProfilePayload {
     displayName?: string;
     avatarUrl?: string;
     avatarBase64?: string;
-}
-export interface AuthResponse {
-    token: string;
-    user: UserProfile;
 }
 //# sourceMappingURL=types.d.ts.map

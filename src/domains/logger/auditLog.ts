@@ -97,7 +97,7 @@ export class AuditLogger {
       status,
     };
 
-    // Add optional fields only if they are defined
+    // 只在可選欄位有值時才加入
     if (options?.resourceType) entry.resourceType = options.resourceType;
     if (options?.resourceId) entry.resourceId = options.resourceId;
     if (options?.duration) entry.duration = options.duration;

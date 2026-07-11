@@ -1,5 +1,5 @@
 /**
- * Notification Domain Model Types
+ * Notification 領域模型型別
  */
 export type NotificationType = 'email' | 'push' | 'in_app';
 export type NotificationCategory = 'price_alert' | 'account_activity' | 'transaction' | 'system_alert' | 'security';

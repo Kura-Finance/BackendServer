@@ -1,19 +1,18 @@
-// Router
+// 路由
 export { default as plaidRouter } from './router';
 
-// Service
+// 服務
 export { PlaidService } from './services/plaidService';
 
-// Controllers
+// 控制器
 export {
-  updatePlaidAccountOrder,
   createLinkToken,
   exchangePublicToken,
-  disconnectPlaidAccount,
+  disconnectPlaidItem,
   getFinanceSnapshotOptimized,
 } from './controllers/plaidController';
 
-// Types & Interfaces
+// 型別與介面
 export type {
   BankingAccountType,
   TransactionType,
@@ -24,6 +23,5 @@ export type {
   PlaidTransactionPayload,
   PlaidInvestmentAccountPayload,
   PlaidInvestmentPayload,
-  StoredAccountOrderPayload,
   FinanceSnapshot,
 } from './models/types';

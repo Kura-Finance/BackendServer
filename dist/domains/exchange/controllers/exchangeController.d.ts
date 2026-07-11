@@ -2,11 +2,13 @@ import { Response } from 'express';
 import { AuthRequest } from '../../auth/middleware/auth';
 /**
  * 連結交易所帳戶
+ * 受用戶等級限制：每天最多連接次數
  */
 export declare const connectExchange: (req: AuthRequest, res: Response) => Promise<void>;
 /**
  * 獲取交易所餘額和資產 (合併端點)
- * 返回簡化的 JSON 結構: { account, balances, assets, timestamp }
+ * 達到查詢上限時返回數據庫緩存內容
+ * 受用戶等級限制：每天最多查詢次數
  */
 export declare const getExchangeBalances: (req: AuthRequest, res: Response) => Promise<void>;
 /**

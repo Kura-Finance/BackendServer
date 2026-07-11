@@ -9,7 +9,7 @@ exports.initializeEnv = initializeEnv;
 const dotenv_1 = __importDefault(require("dotenv"));
 /**
  * 環境變數配置
- * 參考 saori 的做法，集中管理環境變數加載和驗證
+ * 集中管理環境變數加載和驗證
  */
 // 如果 NODE_ENV 未設置，預設為 development
 if (!process.env.NODE_ENV) {
@@ -29,7 +29,7 @@ if (!isProduction && !process.env.DB_HOST) {
 function buildDatabaseUrl() {
     const dbUser = process.env.DB_USER || 'postgres';
     const rawPassword = process.env.DB_PASSWORD || '';
-    // URL encode password only for special characters
+    // 只在密碼含特殊字元時進行 URL 編碼
     const dbPassword = encodeURIComponent(rawPassword);
     const dbName = process.env.DB_NAME || 'kura_db';
     const dbSchema = process.env.DB_SCHEMA || 'public';
@@ -39,9 +39,9 @@ function buildDatabaseUrl() {
     // 生產環境：使用 Unix Socket（Cloud SQL Proxy）
     if (isProduction && dbHost.startsWith('/cloudsql/')) {
         console.log('🔌 Using Cloud SQL Proxy Unix Socket');
-        // For Unix sockets with Prisma: hostname must be specified (localhost)
-        // The actual socket path goes in the ?host parameter
-        // Format: postgresql://user:password@localhost/dbname?host=/path/to/socket&schema=public
+        // 使用 Prisma 連線 Unix socket 時，hostname 必須指定為 localhost
+        // 實際 socket 路徑放在 ?host 參數中
+        // 格式：postgresql://user:password@localhost/dbname?host=/path/to/socket&schema=public
         const url = `postgresql://${dbUser}:${dbPassword}@localhost/${dbName}?host=${dbHost}&schema=${dbSchema}`;
         console.log(`✅ Constructed Unix socket URL with localhost hostname override`);
         return url;
@@ -75,6 +75,15 @@ function validateEnvironment() {
     if (missingPlaidVars.length > 0) {
         console.error(`❌ Plaid API not fully configured: ${missingPlaidVars.join(', ')}`);
         console.error('💡 Set PLAID_CLIENT_ID, PLAID_SANDBOX_SECRET, and PLAID_PRODUCTION_SECRET environment variables');
+        if (isProduction)
+            process.exit(1);
+    }
+    // 驗證 Stripe API 配置
+    const stripeVars = ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'];
+    const missingStripeVars = stripeVars.filter((key) => !process.env[key]);
+    if (missingStripeVars.length > 0) {
+        console.error(`❌ Stripe API not fully configured: ${missingStripeVars.join(', ')}`);
+        console.error('💡 Set STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET environment variables');
         if (isProduction)
             process.exit(1);
     }

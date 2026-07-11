@@ -1,0 +1,99 @@
+import { Request, Response, NextFunction } from 'express';
+
+/**
+ * 簡單的記憶體型速率限制（Rate Limiter）中間件
+ * 使用 IP 位址進行限流，防止 API 被濫用或攻擊
+ */
+
+interface RateLimitStore {
+  [ip: string]: {
+    count: number;
+    resetTime: number;
+  };
+}
+
+const store: RateLimitStore = {};
+
+// 預設配置
+export interface RateLimiterConfig {
+  windowMs?: number; // 時間窗口（毫秒）, 預設 15 分鐘
+  maxRequests?: number; // 時間窗口內最大請求數, 預設 100
+}
+
+/**
+ * 創建速率限制中間件
+ * @param config 配置選項
+ * @returns Express 中間件函數
+ */
+export function createRateLimiter(config: RateLimiterConfig = {}) {
+  const windowMs = config.windowMs || 15 * 60 * 1000; // 預設 15 分鐘
+  const maxRequests = config.maxRequests || 100; // 預設 100 次請求
+
+  return (req: Request, res: Response, next: NextFunction) => {
+    // 取得客戶端 IP 位址
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+
+    const now = Date.now();
+
+    // 初始化或重設此 IP 的存取紀錄
+    if (!store[ip] || now > store[ip].resetTime) {
+      store[ip] = {
+        count: 1,
+        resetTime: now + windowMs,
+      };
+      return next();
+    }
+
+    // 增加計數
+    store[ip].count++;
+
+    // 設定 RateLimit 相關標頭
+    res.setHeader('RateLimit-Limit', maxRequests.toString());
+    res.setHeader('RateLimit-Remaining', Math.max(0, (maxRequests - store[ip].count)).toString());
+    res.setHeader('RateLimit-Reset', new Date(store[ip].resetTime).toISOString());
+
+    // 檢查是否超過限制
+    if (store[ip].count > maxRequests) {
+      return res.status(429).json({
+        error: 'Too Many Requests',
+        message: 'Too many requests. Please try again later.',
+        retryAfter: Math.ceil((store[ip].resetTime - now) / 1000),
+      });
+    }
+
+    next();
+  };
+}
+
+/**
+ * 默認的速率限制中間件
+ * 15 分鐘內最多 100 次請求
+ */
+export const rateLimiter = createRateLimiter();
+
+/**
+ * 認證相關速率限制（用於註冊、登入、密碼重置等）
+ * 15 分鐘內最多 50 次請求 - 允許用戶多次重試
+ */
+export const authRateLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  maxRequests: 50,
+});
+
+/**
+ * 嚴格的速率限制（用於 API 端點）
+ * 5 分鐘內最多 20 次請求 - 用於防止數據挖掘
+ */
+export const strictRateLimiter = createRateLimiter({
+  windowMs: 5 * 60 * 1000,
+  maxRequests: 20,
+});
+
+/**
+ * 寬鬆的速率限制（用於健康檢查等）
+ * 1 分鐘內最多 100 次請求
+ */
+export const lenientRateLimiter = createRateLimiter({
+  windowMs: 1 * 60 * 1000,
+  maxRequests: 100,
+});

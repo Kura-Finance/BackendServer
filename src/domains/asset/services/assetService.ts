@@ -4,9 +4,10 @@ import {
   AssetSnapshotResponse,
   AssetHistoryResponse,
 } from '../models/types';
+import { FieldEncryption } from '../../shared/lib/fieldEncryption';
 
 /**
- * Asset Service - Business Logic for Asset Tracking
+ * 資產服務 - 資產追蹤業務邏輯
  */
 
 export class AssetService {
@@ -25,30 +26,19 @@ export class AssetService {
         assetId: snapshot.assetId,
         name: snapshot.name,
         type: snapshot.type,
-        value: snapshot.value,
+        value: FieldEncryption.encryptNumber(snapshot.value),
         currency: snapshot.currency || 'USD',
         recordedAt,
       },
     });
 
-    // 更新 AssetPerformance 記錄
-    const allSnapshots = await prisma.assetSnapshot.findMany({
-      where: { userId },
-    });
-
-    const totalAssets = allSnapshots.reduce((sum: number, s: any) => sum + s.value, 0);
+    // 更新 AssetPerformance：只取各 assetId 最新一筆加總，避免多次記錄後數字膨脹
+    const totalAssets = await AssetService.computeCurrentTotalAssets(userId);
 
     await prisma.assetPerformance.upsert({
       where: { userId },
-      update: {
-        totalAssets,
-        lastRecordedTime: recordedAt,
-      },
-      create: {
-        userId,
-        totalAssets,
-        lastRecordedTime: recordedAt,
-      },
+      update: { totalAssets: FieldEncryption.encryptNumber(totalAssets), lastRecordedTime: recordedAt },
+      create: { userId, totalAssets: FieldEncryption.encryptNumber(totalAssets), lastRecordedTime: recordedAt },
     });
 
     return this.formatSnapshot(assetSnapshot);
@@ -71,7 +61,7 @@ export class AssetService {
             assetId: snapshot.assetId,
             name: snapshot.name,
             type: snapshot.type,
-            value: snapshot.value,
+            value: FieldEncryption.encryptNumber(snapshot.value),
             currency: snapshot.currency || 'USD',
             recordedAt,
           },
@@ -79,24 +69,13 @@ export class AssetService {
       )
     );
 
-    // 更新 AssetPerformance 記錄
-    const allSnapshots = await prisma.assetSnapshot.findMany({
-      where: { userId },
-    });
-
-    const totalAssets = allSnapshots.reduce((sum: number, s: any) => sum + s.value, 0);
+    // 更新 AssetPerformance：只取各 assetId 最新一筆加總，避免多次記錄後數字膨脹
+    const totalAssets = await AssetService.computeCurrentTotalAssets(userId);
 
     await prisma.assetPerformance.upsert({
       where: { userId },
-      update: {
-        totalAssets,
-        lastRecordedTime: recordedAt,
-      },
-      create: {
-        userId,
-        totalAssets,
-        lastRecordedTime: recordedAt,
-      },
+      update: { totalAssets: FieldEncryption.encryptNumber(totalAssets), lastRecordedTime: recordedAt },
+      create: { userId, totalAssets: FieldEncryption.encryptNumber(totalAssets), lastRecordedTime: recordedAt },
     });
 
     return createdSnapshots.map(this.formatSnapshot);
@@ -149,29 +128,32 @@ export class AssetService {
       where: { userId },
     });
 
-    // 構建時間序列數據（按時間聚合）
-    const historyMap = new Map<string, number>();
-    const assetMap = new Map<string, { name: string; type: string }>();
+    // 構建時間序列數據
+    // 以「整點小時」為 bucket key，將同一批次寫入的多個帳戶快照合併成一個總資產數據點
+    const historyMap = new Map<string, { value: number; ts: Date }>();
 
     snapshots.forEach((snapshot: any) => {
-      const timestamp = snapshot.recordedAt.toISOString();
-      const currentValue = historyMap.get(timestamp) || 0;
-      historyMap.set(timestamp, currentValue + snapshot.value);
-
-      assetMap.set(snapshot.assetId, {
-        name: snapshot.name,
-        type: snapshot.type,
+      const d = new Date(snapshot.recordedAt);
+      d.setMinutes(0, 0, 0);
+      const bucketKey = d.toISOString();
+      const decryptedValue = FieldEncryption.decryptNumber(snapshot.value);
+      const existing = historyMap.get(bucketKey);
+      historyMap.set(bucketKey, {
+        value: (existing?.value ?? 0) + decryptedValue,
+        ts: existing?.ts ?? d,
       });
     });
 
-    // 轉換為陣列格式
-    const history = Array.from(historyMap.entries()).map(([timestamp, value]) => ({
-      timestamp: new Date(timestamp),
-      value,
-      assetId: '',
-      name: '總資產',
-      type: 'total',
-    }));
+    // 轉換為陣列格式，按時間升序排列
+    const history = Array.from(historyMap.values())
+      .sort((a, b) => a.ts.getTime() - b.ts.getTime())
+      .map(({ ts, value }) => ({
+        timestamp: ts,
+        value,
+        assetId: '',
+        name: 'Total Assets',
+        type: 'total',
+      }));
 
     // 計算統計數據
     const values = history.map((h: any) => h.value);
@@ -185,7 +167,7 @@ export class AssetService {
 
     return {
       userId,
-      totalAssets: performance?.totalAssets || 0,
+      totalAssets: performance?.totalAssets ? FieldEncryption.decryptNumber(performance.totalAssets) : 0,
       lastRecordedTime: performance?.lastRecordedTime || null,
       history,
       summary: {
@@ -214,7 +196,7 @@ export class AssetService {
       where: { userId },
     });
 
-    const totalAssets = allSnapshots.reduce((sum: number, s: any) => sum + s.value, 0);
+    const totalAssets = allSnapshots.reduce((sum: number, s: any) => sum + FieldEncryption.decryptNumber(s.value), 0);
     const lastRecordedTime =
       allSnapshots.length > 0
         ? new Date(Math.max(...allSnapshots.map((s: any) => s.recordedAt.getTime())))
@@ -223,17 +205,30 @@ export class AssetService {
     await prisma.assetPerformance.upsert({
       where: { userId },
       update: {
-        totalAssets,
+        totalAssets: FieldEncryption.encryptNumber(totalAssets),
         lastRecordedTime,
       },
       create: {
         userId,
-        totalAssets,
+        totalAssets: FieldEncryption.encryptNumber(totalAssets),
         lastRecordedTime,
       },
     });
 
     return result.count;
+  }
+
+  /**
+   * 計算用戶當前各資產最新快照的總資產值
+   * 只取每個 assetId 最新一筆，避免累加歷史數據導致數字膨脹
+   */
+  private static async computeCurrentTotalAssets(userId: string): Promise<number> {
+    const latestPerAsset = await prisma.assetSnapshot.findMany({
+      where: { userId },
+      orderBy: { recordedAt: 'desc' },
+      distinct: ['assetId'],
+    });
+    return latestPerAsset.reduce((sum: number, s: any) => sum + FieldEncryption.decryptNumber(s.value), 0);
   }
 
   /**
@@ -249,7 +244,7 @@ export class AssetService {
     return snapshots.map((s: any) => s.recordedAt);
   }
 
-  // Helper method
+  // 輔助方法
   private static formatSnapshot(snapshot: any) {
     return {
       id: snapshot.id,

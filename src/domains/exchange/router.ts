@@ -1,6 +1,11 @@
 import { Router, Request, Response } from 'express';
 import { requireAuth } from '../auth/middleware/auth';
 import * as ExchangeController from './controllers/exchangeController';
+import { validateRequest } from '../shared/middleware/validateRequest';
+import {
+  connectExchangeBodySchema,
+  exchangeAccountIdParamsSchema,
+} from './schemas/exchangeSchemas';
 
 const router = Router();
 
@@ -18,7 +23,7 @@ router.get('/supported', ExchangeController.getSupportedExchanges);
  * 連結新的交易所帳戶
  * Body: { exchange, apiKey, apiSecret, passphrase? }
  */
-router.post('/connect', ExchangeController.connectExchange);
+router.post('/connect', validateRequest({ body: connectExchangeBodySchema }), ExchangeController.connectExchange);
 
 /**
  * GET /api/exchange/accounts
@@ -31,12 +36,20 @@ router.get('/accounts', ExchangeController.getUserExchangeAccounts);
  * 獲取特定交易所帳戶的餘額和資產 (合併端點)
  * 返回: { account, balances[], assets[], timestamp }
  */
-router.get('/:exchangeAccountId/balances', ExchangeController.getExchangeBalances);
+router.get(
+  '/:exchangeAccountId/balances',
+  validateRequest({ params: exchangeAccountIdParamsSchema }),
+  ExchangeController.getExchangeBalances,
+);
 
 /**
  * DELETE /api/exchange/:exchangeAccountId
  * 斷開交易所連接
  */
-router.delete('/:exchangeAccountId', ExchangeController.disconnectExchange);
+router.delete(
+  '/:exchangeAccountId',
+  validateRequest({ params: exchangeAccountIdParamsSchema }),
+  ExchangeController.disconnectExchange,
+);
 
 export default router;

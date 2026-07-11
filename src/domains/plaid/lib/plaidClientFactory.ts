@@ -37,6 +37,10 @@ function getPlaidSecret(environment: 'sandbox' | 'production'): string {
  */
 export function createPlaidClientForUser(userId: string): PlaidApi {
   const environment = getPlaidEnvironmentByUserId(userId);
+  return createPlaidClient(environment);
+}
+
+export function createPlaidClient(environment: 'sandbox' | 'production'): PlaidApi {
   const basePath = PlaidEnvironments[environment];
 
   if (!basePath) {
@@ -61,4 +65,10 @@ export function createPlaidClientForUser(userId: string): PlaidApi {
   });
 
   return new PlaidApi(configuration);
+}
+
+export function createPlaidWebhookClient(): PlaidApi {
+  const env = (process.env.PLAID_ENV || 'sandbox').toLowerCase();
+  const environment: 'sandbox' | 'production' = env === 'production' ? 'production' : 'sandbox';
+  return createPlaidClient(environment);
 }

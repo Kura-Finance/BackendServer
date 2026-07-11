@@ -4,12 +4,12 @@ exports.EmailService = void 0;
 const resend_1 = require("resend");
 const logger_1 = require("../logger");
 /**
- * Email Service - Handles all email sending via Resend API
+ * 郵件服務 - 透過 Resend API 處理所有郵件發送
  */
 class EmailService {
     static resend = null;
     /**
-     * Initialize Resend instance with API key
+     * 使用 API key 初始化 Resend 實例
      */
     static initializeResend() {
         if (this.resend) {
@@ -30,15 +30,15 @@ class EmailService {
         }
     }
     /**
-     * Send email verification code to user
+     * 發送郵箱驗證碼給使用者
      */
     static async sendVerificationEmail(email, verificationCode, userName) {
         try {
-            // Development mode: skip email sending if API key is not configured
+            // 開發模式：若未設定 API key，略過郵件發送
             const apiKey = process.env.RESEND_API_KEY;
             if (!apiKey || apiKey.trim() === '') {
                 (0, logger_1.logDebug)('Email verification skipped - RESEND_API_KEY not configured (development mode)', { email, verificationCode });
-                return true; // Return success to allow development flow
+                return true; // 回傳成功，讓開發流程可持續進行
             }
             const resend = this.initializeResend();
             const fromEmail = process.env.RESEND_FROM_EMAIL;
@@ -47,7 +47,7 @@ class EmailService {
             if (!fromEmail || !appUrl) {
                 throw new Error('Missing required environment variables: RESEND_FROM_EMAIL and APP_URL must be set');
             }
-            // Create email HTML content
+            // 建立郵件 HTML 內容
             const htmlContent = `
         <!DOCTYPE html>
         <html>
@@ -125,15 +125,15 @@ If you didn't request this verification code, please ignore this email.
         }
     }
     /**
-     * Send password reset email with verification code
+     * 發送含驗證碼的密碼重設郵件
      */
     static async sendPasswordResetEmail(email, resetCode, userName) {
         try {
-            // Development mode: skip email sending if API key is not configured
+            // 開發模式：若未設定 API key，略過郵件發送
             const apiKey = process.env.RESEND_API_KEY;
             if (!apiKey || apiKey.trim() === '') {
                 (0, logger_1.logDebug)('Password reset email skipped - RESEND_API_KEY not configured (development mode)', { email, resetCode });
-                return true; // Return success to allow development flow
+                return true; // 回傳成功，讓開發流程可持續進行
             }
             const resend = this.initializeResend();
             const fromEmail = process.env.RESEND_FROM_EMAIL;
@@ -216,6 +216,77 @@ If you didn't request this password reset, please ignore this email and your pas
         }
         catch (error) {
             (0, logger_1.logError)('Failed to send password reset email', error, { email });
+            return false;
+        }
+    }
+    /**
+     * 發送管理操作通知郵件
+     */
+    static async sendAdminOperationEmail(operationType, operationDetails) {
+        try {
+            const apiKey = process.env.RESEND_API_KEY;
+            if (!apiKey || apiKey.trim() === '') {
+                (0, logger_1.logDebug)('Admin operation email skipped - RESEND_API_KEY not configured (development mode)', { operationType, operationDetails });
+                return true;
+            }
+            const resend = this.initializeResend();
+            const fromEmail = process.env.RESEND_FROM_EMAIL;
+            const appName = process.env.APP_NAME || 'Kura';
+            const adminEmail = 'admin@kura-finance.com';
+            if (!fromEmail) {
+                throw new Error('Missing required environment variable: RESEND_FROM_EMAIL');
+            }
+            // 建立操作詳情的 HTML
+            let detailsHtml = '';
+            for (const [key, value] of Object.entries(operationDetails)) {
+                detailsHtml += `<tr><td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>${key}:</strong></td><td style="padding: 8px; border-bottom: 1px solid #eee;">${value}</td></tr>`;
+            }
+            const htmlContent = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px;">
+            🔔 Admin Operation Notice - ${appName}
+          </h2>
+          <p style="color: #666; font-size: 14px;">
+            Time: <strong>${new Date().toLocaleString('en-US')}</strong>
+          </p>
+          <p style="color: #666; font-size: 14px;">
+            Operation Type: <strong style="color: #007bff;">${operationType}</strong>
+          </p>
+          
+          <h3 style="color: #333; margin-top: 20px;">Operation Details</h3>
+          <table style="width: 100%; border-collapse: collapse; background-color: #f9f9f9;">
+            ${detailsHtml}
+          </table>
+          
+          <p style="color: #999; font-size: 12px; margin-top: 20px; padding-top: 10px; border-top: 1px solid #eee;">
+            This is an automated email. Please do not reply. Contact your system administrator for questions.
+          </p>
+        </div>
+      `.trim();
+            const textContent = `
+        Admin Operation Notice - ${appName}
+        
+        Time: ${new Date().toLocaleString('en-US')}
+        Operation Type: ${operationType}
+        
+        Operation Details:
+        ${Object.entries(operationDetails)
+                .map(([key, value]) => `${key}: ${value}`)
+                .join('\n')}
+      `.trim();
+            (0, logger_1.logDebug)('Sending admin operation email', { operationType, adminEmail });
+            const response = await resend.emails.send({
+                from: fromEmail,
+                to: adminEmail,
+                subject: `[${appName}] Admin Operation Notice - ${operationType}`,
+                html: htmlContent,
+                text: textContent,
+            });
+            (0, logger_1.logBusinessEvent)('admin_operation_email_sent', 'system', { operationType, messageId: response.data?.id || 'unknown' });
+            return true;
+        }
+        catch (error) {
+            (0, logger_1.logError)('Failed to send admin operation email', error, { operationType });
             return false;
         }
     }

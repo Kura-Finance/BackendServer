@@ -16,21 +16,24 @@ datasource db {
 model User {
   id                         String    @id @default(uuid())
   email                      String    @unique
-  password                   String
-  name                       String? // 顯示名稱
-  avatarUrl                  String? // 大頭貼 (支援 URL 或 Base64 編碼的圖片數據)
-  bankingAccountOrder        String[]  @default([])
-  investmentAccountOrder     String[]  @default([])
-  emailVerified              Boolean   @default(false) // 郵件已驗證
-  emailVerificationCode      String? // 郵件驗證碼 (已棄用，保留向後相容)
-  emailVerificationExpiresAt DateTime? // 郵件驗證碼過期時間 (已棄用)
-  pendingEmailChange         String? // 待驗證的新郵箱 (已棄用，改用 VerificationCode 表)
-  emailChangeCode            String? // 郵箱修改驗證碼 (已棄用)
-  emailChangeExpiresAt       DateTime? // 郵箱修改驗證碼過期時間 (已棄用)
-  passwordResetCode          String? // 密碼重置驗證碼 (已棄用)
-  passwordResetExpiresAt     DateTime? // 密碼重置碼過期時間 (已棄用)
-  resetToken                 String? // 舊版密碼重置令牌 (已棄用，保留向後相容)
-  resetTokenExpiry           DateTime? // 舊版重置令牌過期時間 (已棄用)
+  stripeCustomerId           String?   @unique
+
+  // ── SRP 零知識認證 (Phase 2) ──────────────────────────────
+  // SRP 不傳遞密碼到伺服器；伺服器只存 verifier（無法反推密碼）
+  srpSalt                    String?   // Argon2id salt (hex)，用於 client-side key derivation
+  srpVerifier                String?   // SRP verifier (hex)，取代 bcrypt password
+
+  // ── Per-user Data Key (Phase 2) ───────────────────────────
+  // Data Key 由後端隨機生成，用 client 推導的 KEK 加密後存放
+  // 後端永遠不知道 KEK，因此永遠無法解密 encryptedDataKey
+  encryptedDataKey           String?   // AES-GCM(DataKey, KEK)，只有 client 能解密
+  kekSalt                    String?   // Argon2id salt for KEK derivation (可與 srpSalt 不同)
+
+  name                       String?
+  avatarUrl                  String?
+  emailVerified              Boolean   @default(false)
+  tier                       String    @default("Basic")
+  points                     Int       @default(0)
   createdAt                  DateTime  @default(now())
   updatedAt                  DateTime  @updatedAt
 
@@ -49,20 +52,13 @@ model User {
   plaidSyncLog                PlaidSyncLog?
   plaidRefreshLog             PlaidRefreshLog[]
 
+  // 關聯：API 操作限制 (限制用戶 API 調用頻率)
+  apiOperationLogs ApiOperationLog[]
+
   // 關聯：交易所快取模組 (交易所餘額與資產)
   exchangeBalanceCache ExchangeBalanceCache[]
   exchangeAssetCache   ExchangeAssetCache[]
   exchangeSyncLog      ExchangeSyncLog?
-
-  // 關聯：Reward Hunter 模組 (獎勵獵人)
-  rewardProfile RewardProfile?
-  userHunts     UserHunt[] // 該用戶正在追蹤或已完成的優惠任務
-  rewardLedger  RewardTransaction[] // 用戶的 Kura 點數異動流水帳
-
-  // 關聯：Forum 模組 (社群論壇)
-  posts     ForumPost[]
-  comments  ForumComment[]
-  postVotes ForumPostVote[] // 用戶的文章按讚/倒讚紀錄
 
   // 關聯：Asset Performance 模組 (資產績效追蹤)
   assetSnapshots   AssetSnapshot[]
@@ -71,6 +67,9 @@ model User {
   // 關聯：通知系統 (Notification System)
   notifications           Notification[]
   notificationPreferences NotificationPreferences?
+  debankProtocolCache     DeBankProtocolCache[]
+  debankTokenCache        DeBankTokenCache[]
+  stripeSubscriptions     StripeSubscription[]
 }
 
 // ==========================================
@@ -83,6 +82,7 @@ model PlaidItem {
   userId          String
   accessToken     String   @unique // Plaid API 的永久存取權杖
   itemId          String   @unique // Plaid 的銀行項目 ID
+  transactionsCursor String? // transactions/sync cursor（每個 Plaid item 獨立維護）
   institutionName String // 銀行或券商名稱 (例如: Chase, Robinhood)
   createdAt       DateTime @default(now())
 
@@ -90,7 +90,6 @@ model PlaidItem {
 }
 
 // ==========================================
-// 2.5 加密貨幣交易所 (Exchange via CCXT)
 // 2.5 加密貨幣交易所 (Exchange via CCXT)
 // ==========================================
 
@@ -185,165 +184,7 @@ model ExchangeSyncLog {
 }
 
 // ==========================================
-// 3. Reward Hunter 模組 (地理優惠、開卡禮、消費習慣)
-// ==========================================
-
-// 用戶獎勵總覽 (紀錄使用者的 Kura 平台點數與等級)
-model RewardProfile {
-  id     String @id @default(uuid())
-  userId String @unique
-  points Int    @default(0) // 當前持有的 Kura 點數
-  tier   String @default("Basic") // 會員等級 (Basic, Pro, Elite 等)
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-// 信用卡圖鑑 (Catalog：供系統作為推薦素材)
-model CreditCard {
-  id               String   @id @default(uuid())
-  name             String // 卡片名稱 (例如: "Chase Sapphire Preferred")
-  issuer           String // 發卡行 (例如: "Chase", "Amex")
-  network          String // 發卡組織 (例如: "Visa", "Mastercard")
-  annualFee        Float    @default(0) // 年費 (USD)
-  signOnBonusDesc  String? // 開卡禮描述 (例如: "Earn 60,000 bonus points")
-  bonusValueUsd    Float? // 開卡禮估值 (轉換成美金價值，供系統比較與排序)
-  perks            String[] // 卡片權益列表 (例如: ["No foreign transaction fees", "$50 hotel credit"])
-  targetCategories String[] // 主打回饋類別 (例如: ["Dining", "Travel"]，用來比對用戶 Plaid 消費習慣)
-  applyUrl         String? // 申辦推薦連結 (Affiliate Link，用來賺取佣金)
-  createdAt        DateTime @default(now())
-
-  // 關聯：此卡片對應到的具體優惠任務
-  offers HunterOffer[]
-}
-
-// 獵物庫 (系統生成的各種優惠、開卡禮與推薦任務)
-model HunterOffer {
-  id          String  @id @default(uuid())
-  title       String // 優惠標題 (例如: "10% Cash Back at Starbucks")
-  description String? @db.Text
-  type        String // 優惠類型 (枚舉值：GEO_DEAL 地理優惠, CARD_BONUS 開卡禮, SPEND_PROMO 消費活動)
-
-  // 價值評估
-  rewardPoints      Int   @default(0) // 完成此狩獵可額外獲得的 Kura 內部點數
-  estimatedValueUsd Float @default(0) // 預估能為用戶省下或賺取的實際美金價值
-
-  // LBS 地理位置資訊 (若為 GEO_DEAL，則此區塊有值)
-  merchantName String? // 商家名稱
-  latitude     Float? // 商家緯度
-  longitude    Float? // 商家經度
-  address      String? // 實體地址
-
-  // 信用卡資訊 (若為 CARD_BONUS 開卡禮任務，則關聯到具體信用卡)
-  creditCardId String?
-  creditCard   CreditCard? @relation(fields: [creditCardId], references: [id])
-
-  // 達成條件與限制
-  spendRequirement Float? // 需消費的門檻金額 (例如: 刷滿 4000 拿開卡禮)
-  timeLimitDays    Int? // 解鎖任務的天數限制 (例如: 90 天內)
-  expiresAt        DateTime? // 該優惠活動本身的下架/過期時間
-
-  isActive  Boolean  @default(true) // 是否開放給演算法推薦
-  createdAt DateTime @default(now())
-
-  // 關聯：哪些用戶正在追蹤/完成此優惠
-  userHunts UserHunt[]
-}
-
-// 狩獵清單 (紀錄用戶與優惠之間的進度狀態)
-model UserHunt {
-  id      String @id @default(uuid())
-  userId  String
-  offerId String
-
-  // 狀態流轉: 
-  // RECOMMENDED (演算法推播) -> SAVED (用戶釘選) -> IN_PROGRESS (解任務中) -> COMPLETED (達標可領取) -> CLAIMED (已結案)
-  status        String    @default("RECOMMENDED")
-  progressValue Float     @default(0) // 當前進度 (例如已消費了 $1500 / 目標 $4000)
-  completedAt   DateTime? // 達成目標的時間
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  offer HunterOffer @relation(fields: [offerId], references: [id], onDelete: Cascade)
-
-  // 防呆機制：確保同一用戶對同一個優惠不會重複建立追蹤
-  @@unique([userId, offerId])
-}
-
-// 獎勵流水帳 (Kura 點數的增減紀錄，類似會計的 Ledger)
-model RewardTransaction {
-  id          String   @id @default(uuid())
-  userId      String
-  amount      Int // 正數為獲得點數，負數為消耗/兌換點數
-  description String // 交易說明 (例如: "Claimed: Starbucks GEO Deal")
-  createdAt   DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-// ==========================================
-// 4. Forum 模組 (社群交流與情報分享)
-// ==========================================
-
-// 論壇分類板塊
-model ForumCategory {
-  id          String  @id @default(uuid())
-  slug        String  @unique // URL 友善代稱 (例如: "crypto-alpha", "credit-cards")
-  name        String // 顯示名稱
-  description String?
-
-  posts ForumPost[]
-}
-
-// 論壇文章
-model ForumPost {
-  id         String   @id @default(uuid())
-  title      String
-  content    String   @db.Text // 使用 Text 以容納長篇 Markdown 內容
-  authorId   String
-  categoryId String
-  viewCount  Int      @default(0) // 瀏覽次數
-  upvotes    Int      @default(0) // 總按讚數快取 (提升列表頁讀取效能，不需每次 Count)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  author   User            @relation(fields: [authorId], references: [id], onDelete: Cascade)
-  category ForumCategory   @relation(fields: [categoryId], references: [id])
-  comments ForumComment[]
-  votes    ForumPostVote[] // 詳細的投票紀錄表
-}
-
-// 論壇回覆/留言
-model ForumComment {
-  id        String   @id @default(uuid())
-  content   String   @db.Text
-  postId    String
-  authorId  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  post   ForumPost @relation(fields: [postId], references: [id], onDelete: Cascade)
-  author User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
-}
-
-// 文章投票紀錄 (按讚/倒讚)
-model ForumPostVote {
-  id        String   @id @default(uuid())
-  postId    String
-  userId    String
-  voteType  Int // 狀態值: 1 (Upvote), -1 (Downvote)
-  createdAt DateTime @default(now())
-
-  post ForumPost @relation(fields: [postId], references: [id], onDelete: Cascade)
-  user User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  // 核心防呆：確保同一使用者對同一篇文章只能有一筆有效的投票紀錄
-  @@unique([postId, userId])
-}
-
-// ==========================================
-// 5. Asset Performance 模組 (資產績效追蹤)
+// 3. Asset Performance 模組 (資產績效追蹤)
 // ==========================================
 
 // 資產快照 (記錄某個時間點的資產狀況，用於繪製資產曲線圖)
@@ -353,7 +194,7 @@ model AssetSnapshot {
   assetId  String // 資產標識 (例如: account-id 或 investment-id)
   name     String // 資產名稱 (例如: "Checking Account", "VTSAX Portfolio")
   type     String // 資產類型 (bank_account, investment, crypto_wallet)
-  value    Float // 當前資產價值 (USD)
+  value    String   // AES-256-GCM 加密的資產價值 (USD)
   currency String @default("USD")
 
   // 記錄時間戳
@@ -372,7 +213,7 @@ model AssetPerformance {
   userId String @unique
 
   // 總資產
-  totalAssets      Float     @default(0) // 所有資產的總價值 (USD)
+  totalAssets      String    @default("") // AES-256-GCM 加密的總資產價值
   lastRecordedTime DateTime? // 上次記錄時間
 
   createdAt DateTime @default(now())
@@ -382,7 +223,7 @@ model AssetPerformance {
 }
 
 // ==========================================
-// 6. Plaid 快取模組 (減少 API 調用，降低成本)
+// 4. Plaid 快取模組 (減少 API 調用，降低成本)
 // ==========================================
 
 // Plaid 帳戶快取 (銀行帳戶與投資帳戶基本資訊)
@@ -392,11 +233,13 @@ model PlaidAccountCache {
   plaidItemId     String // 所屬的 Plaid Item
   accountId       String // Plaid 的帳戶 ID
   name            String // 帳戶名稱 (例如: "Chase Checking")
-  balance         Float // 帳戶餘額 (僅針對銀行帳戶)
+  balance         String   // AES-256-GCM 加密的帳戶餘額
   type            String // 帳戶類型 (checking, saving, credit, investment)
   bucket          String // 帳戶分類 (banking, investment)
   institutionName String // 銀行/券商名稱
   logo            String @default("https://www.google.com/s2/favicons?domain=plaid.com&sz=128")
+  apy             String?  // AES-256-GCM 加密的年化報酬率
+  mask            String?  // AES-256-GCM 加密的帳號末 4 碼
 
   cachedAt  DateTime @default(now()) // 快取時間
   updatedAt DateTime @updatedAt
@@ -416,10 +259,25 @@ model PlaidTransactionCache {
   transactionId String // Plaid 交易 ID
   merchant      String // 商家名稱
   amount        String // 交易金額
-  category      String // 交易分類
+  category      String // 交易分類 (基礎分類)
   type          String // 交易類型 (deposit, credit, transfer)
   date          String // 交易日期 (YYYY-MM-DD)
   month         String // 快取月份 (YYYY-MM)，用於快速查詢
+
+  // ===== 進階交易信息 (Plaid Personal Finance Category 及其他增強) =====
+  personalFinanceCategory String? // 個人財務類別 (例: SALARY, SUBSCRIPTION_PAYMENT, TRANSFER_OUT 等)
+  isRecurring             Boolean  @default(false) // 是否為定期交易
+  recurringFrequency      String?  // 重複頻率 (WEEKLY, MONTHLY, YEARLY, SEMI_MONTHLY, BI_WEEKLY)
+  isSubscription          Boolean  @default(false) // 是否為訂閱交易
+  
+  // 交易增強信息
+  enrichedMerchantName    String?  // Plaid 增強的商家名稱 (官方名稱)
+  merchantLogo            String?  // 商家 LOGO URL
+  merchantCategory        String?  // 商家分類
+  
+  // Webhook 和同步信息
+  lastWebhookUpdate       DateTime? // 上次 webhook 更新時間
+  isPending               Boolean  @default(false) // 是否為待處理交易
 
   cachedAt DateTime @default(now())
 
@@ -429,6 +287,9 @@ model PlaidTransactionCache {
   @@index([userId])
   @@index([userId, month])
   @@index([userId, accountId])
+  @@index([userId, isRecurring]) // 快速查詢定期交易
+  @@index([userId, isSubscription]) // 快速查詢訂閱交易
+  @@index([userId, personalFinanceCategory]) // 按 PFC 分類查詢
 }
 
 // Plaid 投資帳戶快取
@@ -457,8 +318,8 @@ model PlaidInvestmentCache {
   investmentId String // 投資 ID (accountId-securityId)
   symbol       String // 股票代碼或名稱
   name         String // 資產名稱
-  holdings     Float // 持有數量
-  currentPrice Float // 當前價格
+  holdings     String // AES-256-GCM 加密的持有數量
+  currentPrice String // AES-256-GCM 加密的當前價格
   type         String // 資產類型 (stock, crypto, 等)
   logo         String @default("https://www.google.com/s2/favicons?domain=plaid.com&sz=128")
 
@@ -516,8 +377,72 @@ model PlaidRefreshLog {
   @@index([refreshDate])
 }
 
+// DeBank 協議快取（按地址保存使用者協議持倉，降低上游 API 壓力）
+model DeBankProtocolCache {
+  id         String   @id @default(uuid())
+  userId     String
+  address    String // EVM 錢包地址（0x...）
+  protocolId String // DeBank 協議 ID（若缺失則由後端生成穩定 ID）
+  chain      String // 鏈名稱（例如：eth、bsc、arb）
+  name       String // 協議名稱
+  rawData    Json // DeBank 原始協議資料
+
+  cacheTtl  Int      @default(300) // 快取 TTL（秒）
+  cachedAt  DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, address, protocolId])
+  @@index([userId])
+  @@index([userId, address])
+  @@index([cachedAt])
+}
+
+// DeBank Token 快取（按地址保存使用者 EVM Token 持倉，與 DeFi protocol 分離）
+model DeBankTokenCache {
+  id        String @id @default(uuid())
+  userId    String
+  address   String // EVM 錢包地址（0x...）
+  chain     String // 鏈名稱（例如：eth、bsc、arb）
+  tokenId   String // DeBank token ID（若缺失則由後端生成穩定 ID）
+  symbol    String // Token symbol（例如：ETH、USDC）
+  name      String // Token 名稱
+  rawData   Json // DeBank 原始 token 資料
+
+  cacheTtl  Int      @default(300) // 快取 TTL（秒）
+  cachedAt  DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, address, chain, tokenId])
+  @@index([userId])
+  @@index([userId, address])
+  @@index([cachedAt])
+}
+
+// API 操作限制日誌 (追蹤用戶每日的 API 操作次數，支持多種操作類型)
+model ApiOperationLog {
+  id            String @id @default(uuid())
+  userId        String
+  operationType String // 操作類型: 'exchange_connect', 'exchange_balance', 'plaid_refresh'
+  date          String // YYYY-MM-DD 格式，用於按日期查詢
+  count         Int    @default(0) // 該天的操作次數
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, operationType, date]) // 每個用戶每天每種操作類型只有一條記錄
+  @@index([userId])
+  @@index([date])
+  @@index([operationType])
+}
+
 // ==========================================
-// 7. 統一驗證碼管理
+// 5. 統一驗證碼管理
 // ==========================================
 
 // 驗證碼表 (統一管理所有驗證場景: 註冊、密碼重置、郵箱修改等)
@@ -540,7 +465,7 @@ model VerificationCode {
 }
 
 // ==========================================
-// 8. 通知系統 (Notification System)
+// 6. 通知系統 (Notification System)
 // ==========================================
 
 // 通知記錄表
@@ -591,4 +516,56 @@ model NotificationPreferences {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+// ==========================================
+// 7. Admin 管理員系統
+// ==========================================
+model Admin {
+  id        String   @id @default(uuid())
+  email     String   @unique // 管理員郵箱
+  password  String // 加密的密碼
+  name      String? // 管理員名稱
+  role      String   @default("admin") // 角色 (admin, super_admin 等)
+  isActive  Boolean  @default(true) // 是否啟用此帳戶
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+  @@index([isActive])
+}
+
+// ==========================================
+// 8. Billing 訂閱系統 (Stripe)
+// ==========================================
+model StripeSubscription {
+  id                   String   @id @default(uuid())
+  userId               String
+  stripeCustomerId     String
+  stripeSubscriptionId String   @unique
+  stripePriceId        String?
+  status               String
+  currentPeriodStart   DateTime?
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean  @default(false)
+  canceledAt           DateTime?
+  metadata             Json?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([stripeCustomerId])
+}
+
+model StripeWebhookEvent {
+  id            String   @id @default(uuid())
+  stripeEventId String   @unique
+  type          String
+  payload       Json?
+  processedAt   DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  @@index([type])
 }

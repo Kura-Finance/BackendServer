@@ -17,7 +17,7 @@ class AuditLogger {
             userId: userId || 'system',
             status,
         };
-        // Add optional fields only if they are defined
+        // 只在可選欄位有值時才加入
         if (options?.resourceType)
             entry.resourceType = options.resourceType;
         if (options?.resourceId)

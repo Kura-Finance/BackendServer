@@ -1,5 +1,4 @@
 import { PrismaClient } from '@prisma/client';
-import { execSync } from 'child_process';
 import { logDebug, logDatabaseOperation, logError } from '../../logger';
 
 /**
@@ -10,44 +9,19 @@ import { logDebug, logDatabaseOperation, logError } from '../../logger';
 export const prisma = new PrismaClient();
 
 /**
- * 初始化數據庫連接並同步 Schema
- * - 執行 Prisma 遷移 (自動建表)
+ * 初始化資料庫連線
+ * - Migration 必須由 CI/CD 或部署流程執行 (prisma migrate deploy)
  * - 測試連接
  * - 記錄連接狀態
  */
 export async function initializeDatabase(): Promise<void> {
   try {
-    logDebug('Initializing database connection and syncing schema...');
-    
-    // 執行 Prisma 遷移來同步 Schema (如果表不存在就建表)
-    try {
-      console.log('🔄 Running Prisma migrations to sync database schema...');
-      execSync('npx prisma migrate deploy', {
-        cwd: process.cwd(),
-        stdio: 'inherit',
-        env: { ...process.env },
-      });
-      console.log('✅ Database schema synced successfully');
-    } catch (migrateError) {
-      // 如果遷移失敗，嘗試 db push (用於開發環境或新數據庫)
-      logDebug('Prisma migrate deploy failed, trying db push...', { error: migrateError });
-      console.log('⚠️ Running prisma db push as fallback...');
-      try {
-        execSync('npx prisma db push --skip-generate', {
-          cwd: process.cwd(),
-          stdio: 'inherit',
-          env: { ...process.env },
-        });
-        console.log('✅ Database schema synced with db push');
-      } catch (dbPushError) {
-        logError('Both Prisma migrate deploy and db push failed', dbPushError);
-        throw dbPushError;
-      }
-    }
+    logDebug('Initializing database connection...');
     
     const startTime = Date.now();
     
-    // 測試連接
+    // 建立連線並測試可用性
+    await prisma.$connect();
     await prisma.$executeRaw`SELECT 1`;
     
     const duration = Date.now() - startTime;

@@ -1,6 +1,6 @@
 "use strict";
 /**
- * Email Domain - Exports
+ * 郵件領域匯出
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.EmailService = void 0;

@@ -1,6 +1,6 @@
 "use strict";
 /**
- * Auth Domain Model Types
+ * Auth 領域模型型別
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 //# sourceMappingURL=types.js.map

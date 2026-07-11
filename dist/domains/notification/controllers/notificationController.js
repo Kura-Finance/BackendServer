@@ -4,25 +4,19 @@ exports.clearAllNotifications = exports.markMultipleAsRead = exports.updatePrefe
 const notificationService_1 = require("../services/notificationService");
 const logger_1 = require("../../logger");
 const auditLog_1 = require("../../logger/auditLog");
+const apiResponse_1 = require("../../shared/lib/apiResponse");
 /**
- * 发送通知
- * POST /api/notifications/send
+ * 發送通知
+ * 路由：POST /api/notifications/send
  */
 const sendNotification = async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            res.status(401).json({ error: 'Unauthorized' });
+            (0, apiResponse_1.sendError)(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
             return;
         }
         const { types, category, subject, title, message, data, actionUrl, priority } = req.body;
-        // 验证必需字段
-        if (!category || !title || !message) {
-            res.status(400).json({
-                error: 'Missing required fields: category, title, message',
-            });
-            return;
-        }
         const payload = {
             userId,
             types,
@@ -39,44 +33,36 @@ const sendNotification = async (req, res) => {
             category,
             notificationCount: notifications.length,
         });
-        res.status(200).json({
-            success: true,
+        (0, apiResponse_1.sendSuccess)(res, {
             notifications,
             count: notifications.length,
-        });
+        }, 200);
     }
     catch (error) {
         (0, logger_1.logError)('Error sending notification', error);
-        res.status(500).json({ error: 'Failed to send notification' });
+        (0, apiResponse_1.sendError)(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to send notification' });
     }
 };
 exports.sendNotification = sendNotification;
 /**
- * 获取用户通知列表
- * GET /api/notifications
+ * 取得使用者通知列表
+ * 路由：GET /api/notifications
  */
 const getNotifications = async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            res.status(401).json({ error: 'Unauthorized' });
+            (0, apiResponse_1.sendError)(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
             return;
         }
-        const { limit = '20', offset = '0', status, category, startDate, endDate, } = req.query;
-        // Extract first value if array and ensure they're strings
-        const limitStr = String(Array.isArray(limit) ? limit[0] : limit);
-        const offsetStr = String(Array.isArray(offset) ? offset[0] : offset);
-        const statusStr = status ? String(Array.isArray(status) ? status[0] : status) : undefined;
-        const categoryStr = category ? String(Array.isArray(category) ? category[0] : category) : undefined;
-        const startDateStr = startDate ? String(Array.isArray(startDate) ? startDate[0] : startDate) : undefined;
-        const endDateStr = endDate ? String(Array.isArray(endDate) ? endDate[0] : endDate) : undefined;
+        const { limit = 20, offset = 0, status, category, startDate, endDate } = req.query;
         const options = {
-            limit: Math.min(parseInt(limitStr) || 20, 100),
-            offset: parseInt(offsetStr) || 0,
-            ...(statusStr && { status: statusStr }),
-            ...(categoryStr && { category: categoryStr }),
-            ...(startDateStr && { startDate: new Date(startDateStr) }),
-            ...(endDateStr && { endDate: new Date(endDateStr) }),
+            limit,
+            offset,
+            ...(status && { status: status }),
+            ...(category && { category: category }),
+            ...(startDate && { startDate: new Date(startDate) }),
+            ...(endDate && { endDate: new Date(endDate) }),
         };
         (0, logger_1.logDebug)('Fetching notifications', {
             userId,
@@ -88,156 +74,134 @@ const getNotifications = async (req, res) => {
             offset: options.offset,
             total: result.total,
         });
-        res.status(200).json({
-            success: true,
+        (0, apiResponse_1.sendSuccess)(res, {
             notifications: result.notifications,
             total: result.total,
             limit: options.limit,
             offset: options.offset,
-        });
+        }, 200);
     }
     catch (error) {
         (0, logger_1.logError)('Error fetching notifications', error);
-        res.status(500).json({ error: 'Failed to fetch notifications' });
+        (0, apiResponse_1.sendError)(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to fetch notifications' });
     }
 };
 exports.getNotifications = getNotifications;
 /**
- * 标记通知为已读
- * PATCH /api/notifications/:id/read
+ * 標記通知為已讀
+ * 路由：PATCH /api/notifications/:id/read
  */
 const markAsRead = async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            res.status(401).json({ error: 'Unauthorized' });
+            (0, apiResponse_1.sendError)(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
             return;
         }
-        const notificationId = String(req.params.id);
-        if (!notificationId) {
-            res.status(400).json({ error: 'Notification ID is required' });
-            return;
-        }
+        const notificationId = req.params.id;
         const notification = await notificationService_1.NotificationService.markAsRead(notificationId, userId);
         auditLog_1.AuditLogger.logNotificationEvent('NOTIFICATION_READ', userId, {
             notificationId,
         });
-        res.status(200).json({
-            success: true,
+        (0, apiResponse_1.sendSuccess)(res, {
             notification,
-        });
+        }, 200);
     }
     catch (error) {
         (0, logger_1.logError)('Error marking notification as read', error);
-        res.status(500).json({ error: 'Failed to mark notification as read' });
+        (0, apiResponse_1.sendError)(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to mark notification as read' });
     }
 };
 exports.markAsRead = markAsRead;
 /**
- * 删除通知
- * DELETE /api/notifications/:id
+ * 刪除通知
+ * 路由：DELETE /api/notifications/:id
  */
 const deleteNotification = async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            res.status(401).json({ error: 'Unauthorized' });
+            (0, apiResponse_1.sendError)(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
             return;
         }
-        const notificationId = String(req.params.id);
-        if (!notificationId) {
-            res.status(400).json({ error: 'Notification ID is required' });
-            return;
-        }
+        const notificationId = req.params.id;
         await notificationService_1.NotificationService.deleteNotification(notificationId, userId);
         auditLog_1.AuditLogger.logNotificationEvent('NOTIFICATION_DELETED', userId, {
             notificationId,
         });
-        res.status(200).json({
-            success: true,
+        (0, apiResponse_1.sendSuccess)(res, {
             message: 'Notification deleted',
-        });
+        }, 200);
     }
     catch (error) {
         (0, logger_1.logError)('Error deleting notification', error);
-        res.status(500).json({ error: 'Failed to delete notification' });
+        (0, apiResponse_1.sendError)(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to delete notification' });
     }
 };
 exports.deleteNotification = deleteNotification;
 /**
- * 获取通知preferences
- * GET /api/notifications/preferences
+ * 取得通知偏好設定
+ * 路由：GET /api/notifications/preferences
  */
 const getPreferences = async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            res.status(401).json({ error: 'Unauthorized' });
+            (0, apiResponse_1.sendError)(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
             return;
         }
         const preferences = await notificationService_1.NotificationService.getNotificationPreferences(userId);
         auditLog_1.AuditLogger.logNotificationEvent('NOTIFICATION_READ', userId);
-        res.status(200).json({
-            success: true,
+        (0, apiResponse_1.sendSuccess)(res, {
             preferences,
-        });
+        }, 200);
     }
     catch (error) {
         (0, logger_1.logError)('Error fetching notification preferences', error);
-        res.status(500).json({ error: 'Failed to fetch preferences' });
+        (0, apiResponse_1.sendError)(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to fetch preferences' });
     }
 };
 exports.getPreferences = getPreferences;
 /**
- * 更新通知preferences
- * PATCH /api/notifications/preferences
+ * 更新通知偏好設定
+ * 路由：PATCH /api/notifications/preferences
  */
 const updatePreferences = async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            res.status(401).json({ error: 'Unauthorized' });
+            (0, apiResponse_1.sendError)(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
             return;
         }
         const preferences = req.body;
-        // 验证preferences对象
-        if (typeof preferences !== 'object' || Array.isArray(preferences)) {
-            res.status(400).json({ error: 'Invalid preferences object' });
-            return;
-        }
         const updated = await notificationService_1.NotificationService.updateNotificationPreferences(userId, preferences);
         auditLog_1.AuditLogger.logNotificationEvent('NOTIFICATION_SENT', userId, {
             changes: Object.keys(preferences),
         });
-        res.status(200).json({
-            success: true,
+        (0, apiResponse_1.sendSuccess)(res, {
             preferences: updated,
             message: 'Preferences updated successfully',
-        });
+        }, 200);
     }
     catch (error) {
         (0, logger_1.logError)('Error updating notification preferences', error);
-        res.status(500).json({ error: 'Failed to update preferences' });
+        (0, apiResponse_1.sendError)(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to update preferences' });
     }
 };
 exports.updatePreferences = updatePreferences;
 /**
- * 批量标记通知为已读
- * PATCH /api/notifications/batch/read
+ * 批次標記通知為已讀
+ * 路由：PATCH /api/notifications/batch/read
  */
 const markMultipleAsRead = async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            res.status(401).json({ error: 'Unauthorized' });
+            (0, apiResponse_1.sendError)(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
             return;
         }
         const { ids } = req.body;
-        if (!Array.isArray(ids) || ids.length === 0) {
-            res.status(400).json({ error: 'IDs array is required and must not be empty' });
-            return;
-        }
-        const results = await Promise.allSettled(ids.map(id => notificationService_1.NotificationService.markAsRead(id, userId)));
+        const results = await Promise.allSettled(ids.map((id) => notificationService_1.NotificationService.markAsRead(id, userId)));
         const successful = results.filter(r => r.status === 'fulfilled');
         const failed = results.filter(r => r.status === 'rejected');
         auditLog_1.AuditLogger.logNotificationEvent('NOTIFICATION_READ', userId, {
@@ -245,39 +209,38 @@ const markMultipleAsRead = async (req, res) => {
             successful: successful.length,
             failed: failed.length,
         });
-        res.status(200).json({
-            success: successful.length > 0,
+        (0, apiResponse_1.sendSuccess)(res, {
+            hasSuccess: successful.length > 0,
             markedCount: successful.length,
             failedCount: failed.length,
-        });
+        }, 200);
     }
     catch (error) {
         (0, logger_1.logError)('Error marking multiple notifications as read', error);
-        res.status(500).json({ error: 'Failed to mark notifications as read' });
+        (0, apiResponse_1.sendError)(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to mark notifications as read' });
     }
 };
 exports.markMultipleAsRead = markMultipleAsRead;
 /**
  * 清空所有通知
- * DELETE /api/notifications/all
+ * 路由：DELETE /api/notifications/all
  */
 const clearAllNotifications = async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            res.status(401).json({ error: 'Unauthorized' });
+            (0, apiResponse_1.sendError)(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
             return;
         }
-        // TODO: Implement deleteMany for all notifications
+        // TODO: 實作批次刪除（deleteMany）以清空所有通知
         auditLog_1.AuditLogger.logNotificationEvent('NOTIFICATION_DELETED', userId);
-        res.status(200).json({
-            success: true,
+        (0, apiResponse_1.sendSuccess)(res, {
             message: 'All notifications cleared',
-        });
+        }, 200);
     }
     catch (error) {
         (0, logger_1.logError)('Error clearing notifications', error);
-        res.status(500).json({ error: 'Failed to clear notifications' });
+        (0, apiResponse_1.sendError)(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to clear notifications' });
     }
 };
 exports.clearAllNotifications = clearAllNotifications;

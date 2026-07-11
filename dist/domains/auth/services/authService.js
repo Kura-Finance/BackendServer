@@ -1,27 +1,98 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AuthService = void 0;
-const bcryptjs_1 = __importDefault(require("bcryptjs"));
-const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
+const jwt = __importStar(require("jsonwebtoken"));
 const prisma_1 = require("../../shared/lib/prisma");
 const logger_1 = require("../../logger");
 const library_1 = require("@prisma/client/runtime/library");
 const email_1 = require("../../email");
 const plaidCacheUtil_1 = require("../../plaid/lib/plaidCacheUtil");
 /**
- * 注册流程已整合为邮件验证模式
- * 使用数据库存储验证码，而不是内存缓存
+ * 註冊流程已整合為郵件驗證模式
+ * 使用資料庫儲存驗證碼，而不是記憶體快取
  */
 /**
- * Auth Service - Business Logic Layer
+ * 認證服務 - 業務邏輯層
  */
 class AuthService {
     static JWT_SECRET = process.env.JWT_SECRET || 'secret';
-    static REGISTER_TOKEN_EXPIRY = 5 * 60 * 1000; // 5分钟
-    static VERIFICATION_CODE_EXPIRY = 10 * 60 * 1000; // 10分钟
+    static VERIFICATION_CODE_EXPIRY = 10 * 60 * 1000; // 10 分鐘
+    static normalizeHex(value) {
+        return value.trim().toLowerCase();
+    }
+    static isHexString(value) {
+        const normalized = this.normalizeHex(value);
+        return /^[a-f0-9]+$/.test(normalized) && normalized.length % 2 === 0;
+    }
+    static assertRequiredSrpPayload(payload, missingMessage) {
+        if (!payload.srpSalt || !payload.srpVerifier || !payload.encryptedDataKey || !payload.kekSalt) {
+            throw new Error(missingMessage);
+        }
+    }
+    static assertValidSrpPayload(payload) {
+        if (!this.isHexString(payload.srpSalt) ||
+            !this.isHexString(payload.srpVerifier) ||
+            !this.isHexString(payload.encryptedDataKey) ||
+            !this.isHexString(payload.kekSalt)) {
+            throw new Error('Invalid SRP payload format');
+        }
+    }
+    static normalizeSrpPayload(payload) {
+        return {
+            srpSalt: this.normalizeHex(payload.srpSalt),
+            srpVerifier: this.normalizeHex(payload.srpVerifier),
+            encryptedDataKey: this.normalizeHex(payload.encryptedDataKey),
+            kekSalt: this.normalizeHex(payload.kekSalt),
+        };
+    }
+    static buildSrpAuthUpdateData(payload) {
+        const normalizedPayload = this.normalizeSrpPayload(payload);
+        return {
+            srpSalt: normalizedPayload.srpSalt,
+            srpVerifier: normalizedPayload.srpVerifier,
+            encryptedDataKey: normalizedPayload.encryptedDataKey,
+            kekSalt: normalizedPayload.kekSalt,
+        };
+    }
+    static async updateUserSrpAuthById(userId, payload) {
+        await prisma_1.prisma.user.update({
+            where: { id: userId },
+            data: this.buildSrpAuthUpdateData(payload),
+        });
+    }
     /**
      * ============================================
      * 統一驗證碼管理系統
@@ -31,13 +102,23 @@ class AuthService {
      * 發送驗證碼 (通用方法)
      * @param email 目標郵箱
      * @param type 驗證碼類型: 'register' | 'password-reset' | 'email-change'
-     * @param userId 用戶ID (可選，註冊時不需要)
-     * @param metadata 額外數據 (例如: 新郵箱、其他必要信息)
+     * @param userId 使用者 ID (可選，註冊時不需要)
+     * @param metadata 額外資料 (例如：新郵箱、其他必要資訊)
      */
     static async sendVerificationCode(email, type, userId, metadata) {
         (0, logger_1.logDebug)('Sending verification code', { email, type, userId });
         if (!email) {
-            throw new Error('郵箱不能為空');
+            throw new Error('Email is required');
+        }
+        if (type === 'register') {
+            const existingUser = await prisma_1.prisma.user.findUnique({
+                where: { email },
+                select: { id: true, srpVerifier: true },
+            });
+            // 已完成 SRP 註冊的帳號，不允許再走註冊流程重發驗證碼
+            if (existingUser?.srpVerifier) {
+                throw new Error('Email is already registered. Please sign in.');
+            }
         }
         // 生成 6 位驗證碼
         const code = Math.random().toString().slice(2, 8).padStart(6, '0');
@@ -49,7 +130,7 @@ class AuthService {
                 where: {
                     email,
                     type,
-                    // 如果是已登入用戶，保持 userId 一致
+                    // 如果是已登入使用者，保持 userId 一致
                     ...(userId && { userId }),
                 },
             });
@@ -72,17 +153,17 @@ class AuthService {
             const emailSent = await email_1.EmailService.sendVerificationEmail(email, code, email.split('@')[0]);
             if (!emailSent) {
                 (0, logger_1.logError)('Failed to send verification email', new Error('Email service failed'), { email, type });
-                throw new Error('無法發送驗證碼，請稍後重試');
+                throw new Error('Unable to send verification code. Please try again later.');
             }
             (0, logger_1.logAuthEvent)('verification_code_sent', userId, { email, type });
             return { expiresIn: this.VERIFICATION_CODE_EXPIRY };
         }
         catch (error) {
-            if (error instanceof Error && error.message.includes('無法發送')) {
+            if (error instanceof Error && error.message.includes('Unable to send')) {
                 throw error;
             }
             (0, logger_1.logError)('Failed to send verification code', error, { email, type });
-            throw new Error('驗證碼發送失敗，請稍後重試');
+            throw new Error('Failed to send verification code. Please try again later.');
         }
     }
     /**
@@ -95,7 +176,7 @@ class AuthService {
     static async verifyCode(email, code, type) {
         (0, logger_1.logDebug)('Verifying code', { email, type });
         if (!email || !code) {
-            throw new Error('郵箱和驗證碼不能為空');
+            throw new Error('Email and verification code are required');
         }
         try {
             const startTime = Date.now();
@@ -109,12 +190,12 @@ class AuthService {
             (0, logger_1.logDatabaseOperation)('SELECT', 'verification_codes', Date.now() - startTime, true);
             if (!verificationCode) {
                 (0, logger_1.logAuthEvent)('failed_verification', undefined, { email, type, reason: 'invalid_code' });
-                throw new Error('驗證碼不正確');
+                throw new Error('Invalid verification code');
             }
             // 檢查過期
             if (new Date() > verificationCode.expiresAt) {
                 (0, logger_1.logAuthEvent)('failed_verification', verificationCode.userId ?? undefined, { email, type, reason: 'expired' });
-                throw new Error('驗證碼已過期，請重新申請');
+                throw new Error('Verification code has expired. Please request a new one.');
             }
             // 刪除已使用的驗證碼
             const deleteStartTime = Date.now();
@@ -130,15 +211,15 @@ class AuthService {
             };
         }
         catch (error) {
-            if (error instanceof Error && (error.message.includes('不正確') || error.message.includes('已過期'))) {
+            if (error instanceof Error && (error.message.includes('Invalid') || error.message.includes('expired'))) {
                 throw error;
             }
             (0, logger_1.logError)('Failed to verify code', error, { email, type });
-            throw new Error('驗證失敗，請稍後重試');
+            throw new Error('Verification failed. Please try again later.');
         }
     }
     /**
-     * 獲取用戶資料
+     * 取得使用者資料
      */
     static async buildUserProfile(userId) {
         const user = await prisma_1.prisma.user.findUnique({
@@ -148,11 +229,7 @@ class AuthService {
                 email: true,
                 name: true,
                 avatarUrl: true,
-                rewardProfile: {
-                    select: {
-                        tier: true,
-                    },
-                },
+                tier: true,
             },
         });
         if (!user) {
@@ -164,64 +241,11 @@ class AuthService {
             displayName: (user.name || user.email.split('@')[0]),
             avatarUrl: user.avatarUrl ||
                 `https://api.dicebear.com/7.x/notionists/svg?seed=${encodeURIComponent(user.email)}&backgroundColor=e2e8f0`,
-            membershipLabel: `${user.rewardProfile?.tier || 'Basic'} Member`,
+            membershipLabel: `${user.tier || 'Basic'} Member`,
         };
     }
     /**
-     * 请求注册Token (已整合到邮件验证流程)
-     * 现在使用数据库存储验证码并发送邮件
-     */
-    static async requestRegisterToken(email) {
-        (0, logger_1.logDebug)('Processing register token request (integrated email verification)', { email });
-        if (!email) {
-            throw new Error('邮箱不能为空');
-        }
-        // 使用新的邮件验证流程
-        return this.sendVerificationCode(email, 'register');
-    }
-    /**
-     * 确认注册 (已整合到邮件验证流程)
-     * 现在使用数据库中的验证码而不是内存token
-     */
-    static async confirmRegister(email, registerToken, password) {
-        (0, logger_1.logDebug)('Processing user registration confirmation (integrated email verification)', { email });
-        // registerToken 现在被视为验证码
-        // 使用新的邮件验证流程
-        return this.verifyEmailAndRegister(email, registerToken, password);
-    }
-    /**
-     * 用户登录
-     */
-    static async login(email, password) {
-        (0, logger_1.logDebug)('Processing user login', { email });
-        const startTime = Date.now();
-        let user;
-        try {
-            user = await prisma_1.prisma.user.findUnique({ where: { email } });
-        }
-        catch (error) {
-            // Handle database connection errors - treat as authentication failure
-            if (error instanceof library_1.PrismaClientKnownRequestError) {
-                (0, logger_1.logAuthEvent)('failed_login', undefined, { email, reason: 'database_error' });
-                throw new Error('帳號或密碼錯誤');
-            }
-            throw error;
-        }
-        if (!user || !(await bcryptjs_1.default.compare(password, user.password))) {
-            (0, logger_1.logAuthEvent)('failed_login', undefined, { email, reason: 'invalid_credentials' });
-            throw new Error('帳號或密碼錯誤');
-        }
-        (0, logger_1.logDatabaseOperation)('SELECT', 'users', Date.now() - startTime, true);
-        const token = jsonwebtoken_1.default.sign({ userId: user.id }, this.JWT_SECRET, { expiresIn: '7d' });
-        const profile = await this.buildUserProfile(user.id);
-        if (!profile) {
-            throw new Error('Failed to create user profile');
-        }
-        (0, logger_1.logAuthEvent)('login', user.id, { email });
-        return { token, user: profile };
-    }
-    /**
-     * 获取当前用户信息
+     * 取得當前使用者資訊
      */
     static async getCurrentUser(userId) {
         const startTime = Date.now();
@@ -229,17 +253,17 @@ class AuthService {
         (0, logger_1.logDatabaseOperation)('SELECT', 'users', Date.now() - startTime, true);
         if (!profile) {
             (0, logger_1.logError)('User profile not found', new Error('User not found'), { userId });
-            throw new Error('找不到使用者');
+            throw new Error('User not found');
         }
         return profile;
     }
     /**
-     * 获取当前用户信息（包括 Plaid 缓存统计）
+     * 取得當前使用者資訊（包含 Plaid 快取統計）
      */
     static async getCurrentUserWithPlaidCache(userId) {
         const profile = await this.getCurrentUser(userId);
         try {
-            // 获取 Plaid 缓存统计
+            // 取得 Plaid 快取統計資料
             const cacheStats = await (0, plaidCacheUtil_1.getCacheStats)(userId);
             const plaidCacheInfo = {
                 accounts: cacheStats.accounts,
@@ -261,12 +285,12 @@ class AuthService {
                 userId,
                 error: error instanceof Error ? error.message : 'Unknown error',
             });
-            // 如果获取缓存统计失败，仍然返回用户资料（缓存信息是可选的）
+            // 若取得快取統計失敗，仍回傳使用者資料（快取資訊為可選）
             return profile;
         }
     }
     /**
-     * 更新用户资料
+     * 更新使用者資料
      */
     static async updateUserProfile(userId, payload) {
         const updateData = {};
@@ -277,7 +301,7 @@ class AuthService {
             updateData.avatarUrl = payload.avatarUrl;
         }
         if (payload.avatarBase64 !== undefined) {
-            updateData.avatarUrl = payload.avatarBase64; // 將 Base64 直接存儲在 avatarUrl 欄位
+            updateData.avatarUrl = payload.avatarBase64; // 將 Base64 直接儲存在 avatarUrl 欄位
         }
         (0, logger_1.logDebug)('Updating user profile', { userId, changes: Object.keys(updateData) });
         const startTime = Date.now();
@@ -294,144 +318,141 @@ class AuthService {
         return profile;
     }
     /**
-     * 请求密码重置 (整合邮件验证码模式)
-     * 发送6位验证码到邮箱，而不是返回token
+     * 請求密碼重置 (整合郵件驗證碼模式)
+     * 發送 6 位驗證碼到郵箱，而不是回傳 token
      */
     static async requestPasswordReset(email) {
         (0, logger_1.logDebug)('Processing password reset request', { email });
         if (!email) {
-            throw new Error('邮箱不能为空');
+            throw new Error('Email is required');
         }
         try {
             const startTime = Date.now();
             const user = await prisma_1.prisma.user.findUnique({ where: { email } });
             (0, logger_1.logDatabaseOperation)('SELECT', 'users', Date.now() - startTime, true);
             if (!user) {
-                // 不要透露用户是否存在，返回通用消息
+                // 不透露使用者是否存在，回傳通用訊息
                 (0, logger_1.logAuthEvent)('failed_password_reset_request', undefined, { email, reason: 'user_not_found' });
-                // 返回成功以保护用户隐私
+                // 回傳成功以保護使用者隱私
                 return { expiresIn: 10 * 60 };
             }
-            // 生成6位数字验证码
-            const resetCode = Math.random().toString().slice(2, 8).padStart(6, '0');
-            const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10分钟过期
-            const updateStartTime = Date.now();
-            await prisma_1.prisma.user.update({
-                where: { id: user.id },
-                data: {
-                    passwordResetCode: resetCode,
-                    passwordResetExpiresAt: expiresAt,
+            // 刪除該使用者的舊重置碼
+            const deleteStartTime = Date.now();
+            await prisma_1.prisma.verificationCode.deleteMany({
+                where: {
+                    email,
+                    type: 'password-reset',
                 },
             });
-            (0, logger_1.logDatabaseOperation)('UPDATE', 'users', Date.now() - updateStartTime, true);
+            (0, logger_1.logDatabaseOperation)('DELETE', 'verification_codes', Date.now() - deleteStartTime, true);
+            // 生成 6 位數字驗證碼
+            const resetCode = Math.random().toString().slice(2, 8).padStart(6, '0');
+            const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 分鐘過期
+            const createStartTime = Date.now();
+            await prisma_1.prisma.verificationCode.create({
+                data: {
+                    email,
+                    code: resetCode,
+                    type: 'password-reset',
+                    userId: user.id,
+                    expiresAt,
+                    metadata: {},
+                },
+            });
+            (0, logger_1.logDatabaseOperation)('CREATE', 'verification_codes', Date.now() - createStartTime, true);
             (0, logger_1.logAuthEvent)('password_reset_requested', user.id, { email });
             (0, logger_1.logBusinessEvent)('password_reset_token_generated', user.id, { email });
-            // 发送密码重置邮件
+            // 發送密碼重置郵件
             const emailSent = await email_1.EmailService.sendPasswordResetEmail(email, resetCode, user.name || undefined);
             if (!emailSent) {
                 (0, logger_1.logError)('Failed to send password reset email', new Error('Email service failed'), { email });
-                throw new Error('无法发送重置链接，请稍后重试');
+                throw new Error('Unable to send reset code. Please try again later.');
             }
             (0, logger_1.logAuthEvent)('password_reset_code_sent', user.id, { email });
-            return { expiresIn: 10 * 60 }; // 秒数
+            return { expiresIn: 10 * 60 }; // 秒數
         }
         catch (error) {
             if (error instanceof library_1.PrismaClientKnownRequestError) {
                 (0, logger_1.logAuthEvent)('failed_password_reset_request', undefined, { email, reason: 'database_error' });
-                throw new Error('服务器错误，无法发送重置链接');
+                throw new Error('Server error: unable to send reset code');
             }
             throw error;
         }
     }
     /**
-     * 验证密码重置码并重置密码 (整合邮件验证码模式)
+     * 驗證密碼重置碼並重置密碼 (整合郵件驗證碼模式)
      */
-    static async resetPassword(email, resetCode, newPassword) {
-        (0, logger_1.logDebug)('Processing password reset', { email });
-        if (!email || !resetCode || !newPassword) {
-            throw new Error('缺少必要参数');
+    static async resetPassword(email, resetCode, srpSalt, srpVerifier, encryptedDataKey, kekSalt, preserveData = false) {
+        (0, logger_1.logDebug)('Processing password reset (SRP)', { email, preserveData });
+        const srpPayload = this.normalizeSrpPayload({
+            srpSalt,
+            srpVerifier,
+            encryptedDataKey,
+            kekSalt,
+        });
+        if (!email || !resetCode) {
+            throw new Error('Missing required parameters');
         }
-        if (newPassword.length < 6) {
-            throw new Error('密码长度至少为 6 个字符');
-        }
+        this.assertRequiredSrpPayload(srpPayload, 'Missing required parameters');
         if (resetCode.length !== 6 || !/^\d{6}$/.test(resetCode)) {
-            throw new Error('验证码格式不正确');
+            throw new Error('Invalid verification code format');
         }
+        this.assertValidSrpPayload(srpPayload);
         try {
+            // 驗證重置碼
+            const { valid } = await this.verifyCode(email, resetCode, 'password-reset');
+            if (!valid) {
+                throw new Error('Reset code is invalid or expired');
+            }
+            // 查詢使用者
             const startTime = Date.now();
             const user = await prisma_1.prisma.user.findUnique({ where: { email } });
             (0, logger_1.logDatabaseOperation)('SELECT', 'users', Date.now() - startTime, true);
             if (!user) {
                 (0, logger_1.logAuthEvent)('failed_password_reset', undefined, { email, reason: 'user_not_found' });
-                throw new Error('用户不存在');
+                throw new Error('User not found');
             }
-            // 检查验证码是否有效
-            if (!user.passwordResetCode) {
-                (0, logger_1.logAuthEvent)('failed_password_reset_code', user.id, { email, reason: 'no_code_found' });
-                throw new Error('重置码不存在或已过期，请重新请求');
-            }
-            const now = new Date();
-            if (user.passwordResetExpiresAt && user.passwordResetExpiresAt < now) {
-                (0, logger_1.logAuthEvent)('failed_password_reset_code', user.id, { email, reason: 'code_expired' });
-                throw new Error('重置码已过期，请重新请求');
-            }
-            if (user.passwordResetCode !== resetCode) {
-                (0, logger_1.logAuthEvent)('failed_password_reset_code', user.id, { email, reason: 'invalid_code' });
-                throw new Error('重置码错误');
-            }
-            // 重置码有效，更新密码
-            const hashedPassword = await bcryptjs_1.default.hash(newPassword, 10);
+            // 重置碼有效，更新 SRP 認證資訊與新的資料金鑰（Data Key）
             const updateStartTime = Date.now();
-            await prisma_1.prisma.user.update({
-                where: { id: user.id },
-                data: {
-                    password: hashedPassword,
-                    passwordResetCode: null,
-                    passwordResetExpiresAt: null,
-                },
-            });
+            await this.updateUserSrpAuthById(user.id, srpPayload);
             (0, logger_1.logDatabaseOperation)('UPDATE', 'users', Date.now() - updateStartTime, true);
-            (0, logger_1.logAuthEvent)('password_reset_success', user.id, { email });
-            (0, logger_1.logBusinessEvent)('user_password_reset', user.id, { email });
+            (0, logger_1.logAuthEvent)('password_reset_success', user.id, { email, preserveData });
+            (0, logger_1.logBusinessEvent)('user_password_reset_srp', user.id, { email, preserveData });
             return {
                 success: true,
-                message: '密码已成功重置，请用新密码登录',
+                message: preserveData
+                    ? 'Password changed successfully and encrypted data key preserved'
+                    : 'Password reset successfully',
             };
         }
         catch (error) {
             if (error instanceof library_1.PrismaClientKnownRequestError) {
                 (0, logger_1.logAuthEvent)('failed_password_reset', undefined, { email, reason: 'database_error' });
-                throw new Error('服务器错误，无法重置密码');
+                throw new Error('Server error: unable to reset password');
             }
             throw error;
         }
     }
     /**
-     * 删除用户账户
+     * 刪除使用者帳戶
      */
-    static async deleteAccount(userId, password) {
+    static async deleteAccount(userId) {
         (0, logger_1.logDebug)('Processing account deletion', { userId });
-        if (!userId || !password) {
-            throw new Error('缺少必要参数');
+        if (!userId) {
+            throw new Error('Missing required parameters');
         }
-        // 获取用户信息
+        // 取得使用者資訊
         const startTime = Date.now();
         const user = await prisma_1.prisma.user.findUnique({
             where: { id: userId },
-            select: { email: true, password: true },
+            select: { email: true },
         });
         (0, logger_1.logDatabaseOperation)('SELECT', 'users', Date.now() - startTime, true);
         if (!user) {
             (0, logger_1.logAuthEvent)('failed_register', undefined, { userId, reason: 'user_not_found' });
-            throw new Error('用户不存在');
+            throw new Error('User not found');
         }
-        // 验证密码
-        const passwordMatch = await bcryptjs_1.default.compare(password, user.password);
-        if (!passwordMatch) {
-            (0, logger_1.logAuthEvent)('failed_register', undefined, { userId, email: user.email, reason: 'invalid_password' });
-            throw new Error('密码不正确');
-        }
-        // 删除用户及其相关数据
+        // 刪除使用者及其相關資料
         const deleteStartTime = Date.now();
         await prisma_1.prisma.user.delete({
             where: { id: userId },
@@ -441,28 +462,28 @@ class AuthService {
         (0, logger_1.logBusinessEvent)('user_account_deleted', userId, { email: user.email });
         return {
             success: true,
-            message: '账户已成功删除',
+            message: 'Account deleted successfully',
         };
     }
     /**
-     * 请求修改邮箱 - 发送验证码到新邮箱
+     * 請求修改郵箱 - 發送驗證碼到新郵箱
      */
     static async requestEmailChange(userId, newEmail) {
         (0, logger_1.logDebug)('Processing email change request', { userId, newEmail });
         if (!userId || !newEmail) {
-            throw new Error('缺少必要參數');
+            throw new Error('Missing required parameters');
         }
         // 驗證新郵箱格式
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(newEmail)) {
-            throw new Error('無效的郵箱格式');
+            throw new Error('Invalid email format');
         }
         // 檢查新郵箱是否已被使用
         const existingUser = await prisma_1.prisma.user.findUnique({
             where: { email: newEmail },
         });
         if (existingUser) {
-            throw new Error('該郵箱已被註冊');
+            throw new Error('Email is already registered');
         }
         // 使用統一的驗證碼系統
         return this.sendVerificationCode(newEmail, 'email-change', userId, { newEmail });
@@ -473,20 +494,20 @@ class AuthService {
     static async confirmEmailChange(userId, newEmail, code) {
         (0, logger_1.logDebug)('Processing email change confirmation', { userId });
         if (!userId || !newEmail || !code) {
-            throw new Error('缺少必要參數');
+            throw new Error('Missing required parameters');
         }
         // 驗證碼驗證
         const verification = await this.verifyCode(newEmail, code, 'email-change');
         if (!verification.valid) {
-            throw new Error('驗證碼驗證失敗');
+            throw new Error('Verification failed');
         }
-        // 獲取當前用戶資訊
+        // 取得當前使用者資訊
         const user = await prisma_1.prisma.user.findUnique({
             where: { id: userId },
             select: { email: true },
         });
         if (!user) {
-            throw new Error('用戶不存在');
+            throw new Error('User not found');
         }
         // 更新郵箱
         const updateStartTime = Date.now();
@@ -499,49 +520,48 @@ class AuthService {
         (0, logger_1.logDatabaseOperation)('UPDATE', 'users', Date.now() - updateStartTime, true);
         (0, logger_1.logAuthEvent)('email_changed', userId, { oldEmail: user.email, newEmail });
         (0, logger_1.logBusinessEvent)('email_changed', userId, { newEmail });
-        // 獲取更新後的用戶資料
+        // 取得更新後的使用者資料
         const profile = await this.buildUserProfile(userId);
         if (!profile) {
-            throw new Error('無法獲取更新後的用戶資料');
+            throw new Error('Unable to fetch updated user profile');
         }
         return {
             success: true,
-            message: '郵箱已成功修改',
+            message: 'Email updated successfully',
             user: profile,
         };
     }
     /**
-     * 验证邮箱验证码并注册 (第二步)
+     * 驗證郵箱驗證碼並註冊 (第二步)
      */
-    static async verifyEmailAndRegister(email, verificationCode, password) {
+    static async verifyEmailAndRegister(email, verificationCode, srpData) {
         (0, logger_1.logDebug)('Verifying email and completing registration', { email });
-        // 验证密码
-        if (!password || password.length < 6) {
-            throw new Error('密码长度至少為 6 個字符');
-        }
-        // 验证验证码格式
+        // 驗證驗證碼格式
         if (!verificationCode || verificationCode.length !== 6) {
-            throw new Error('驗證碼格式不正確');
+            throw new Error('Invalid verification code format');
         }
+        const normalizedSrpData = this.normalizeSrpPayload(srpData);
+        this.assertRequiredSrpPayload(normalizedSrpData, 'Missing SRP registration payload');
+        this.assertValidSrpPayload(normalizedSrpData);
         try {
-            // 使用新的统一验证码系统验证
+            // 使用新的統一驗證碼系統驗證
             const verification = await this.verifyCode(email, verificationCode, 'register');
             if (!verification.valid) {
-                throw new Error('驗證碼驗證失敗');
+                throw new Error('Verification failed');
             }
-            // 获取用户
+            // 取得使用者
             const startTime = Date.now();
             const user = await prisma_1.prisma.user.findUnique({ where: { email } });
             (0, logger_1.logDatabaseOperation)('SELECT', 'users', Date.now() - startTime, true);
-            const hashedPassword = await bcryptjs_1.default.hash(password, 10);
             let registeredUser;
             if (!user) {
-                // 创建新用户（首次注册）
+                // 建立新使用者（首次註冊）
+                // 前端必須本地生成 DEK，並只上傳用 KEK 包裹後的 encryptedDataKey。
                 const createStartTime = Date.now();
                 registeredUser = await prisma_1.prisma.user.create({
                     data: {
                         email,
-                        password: hashedPassword,
+                        ...this.buildSrpAuthUpdateData(normalizedSrpData),
                         emailVerified: true,
                     },
                 });
@@ -549,22 +569,26 @@ class AuthService {
                 (0, logger_1.logAuthEvent)('register', registeredUser.id, { email });
             }
             else {
-                // 更新现有用户（邮箱已存在，可能是重新验证）
+                // 防呆：已完成 SRP 註冊的帳號不可被註冊流程覆蓋。
+                if (user.srpVerifier) {
+                    throw new Error('Registration already completed. Please sign in.');
+                }
+                // 更新既有使用者（郵箱已存在但尚未完成 SRP 註冊）
                 const updateStartTime = Date.now();
                 registeredUser = await prisma_1.prisma.user.update({
                     where: { id: user.id },
                     data: {
-                        password: hashedPassword,
+                        ...this.buildSrpAuthUpdateData(normalizedSrpData),
                         emailVerified: true,
                     },
                 });
                 (0, logger_1.logDatabaseOperation)('UPDATE', 'users', Date.now() - updateStartTime, true);
             }
-            // 生成 JWT token
-            const token = jsonwebtoken_1.default.sign({ userId: registeredUser.id }, this.JWT_SECRET, { expiresIn: '7d' });
+            // 生成 JWT 權杖
+            const token = jwt.sign({ userId: registeredUser.id }, this.JWT_SECRET, { expiresIn: '7d' });
             const userProfile = await this.buildUserProfile(registeredUser.id);
             if (!userProfile) {
-                throw new Error('無法創建用戶資料');
+                throw new Error('Unable to build user profile');
             }
             (0, logger_1.logAuthEvent)('email_verified', registeredUser.id, { email });
             (0, logger_1.logBusinessEvent)('user_email_verified', registeredUser.id, { email });
@@ -572,17 +596,10 @@ class AuthService {
         }
         catch (error) {
             if (error instanceof library_1.PrismaClientKnownRequestError) {
-                throw new Error('服務器錯誤，無法完成驗證');
+                throw new Error('Server error: unable to complete verification');
             }
             throw error;
         }
-    }
-    /**
-     * 重新發送驗證碼 (用於已註冊但未驗證的用戶)
-     */
-    static async resendVerificationCode(email) {
-        (0, logger_1.logDebug)('Resending verification code', { email });
-        return this.sendVerificationCode(email, 'register');
     }
 }
 exports.AuthService = AuthService;

@@ -3,153 +3,58 @@ import { AuthRequest } from '../middleware/auth';
 import { AuthService } from '../services/authService';
 import { logError } from '../../logger';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
+import { sendError, sendSuccess } from '../../shared/lib/apiResponse';
 
 /**
- * Auth Controller - Request/Response Handling
+ * 認證控制器 - 請求與回應處理
  */
 
-/**
- * 第一步：请求注册Token (已整合到邮件验证)
- * 现在发送验证码Email而不是返回token
- */
-export const requestRegisterToken = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { email } = req.body;
-
-    if (!email) {
-      res.status(400).json({ error: '邮箱不能为空' });
-      return;
-    }
-
-    const result = await AuthService.requestRegisterToken(email);
-
-    res.json({
-      message: '验证码已发送到邮箱，请检查收件箱',
-      expiresIn: result.expiresIn,
-    });
-  } catch (error) {
-    logError('Request register token failed', error, { email: req.body.email });
-    // 业务错误返回具体消息，数据库错误返回503，其他错误返回500
-    const isBusinessError = error instanceof Error && 
-      (error.message.includes('已註冊') || error.message.includes('郵箱') || error.message.includes('無法發送'));
-    const isDatabaseError = error instanceof PrismaClientKnownRequestError;
-    const statusCode = isBusinessError ? 400 : isDatabaseError ? 503 : 500;
-    const message = isBusinessError && error instanceof Error ? error.message : '伺服器錯誤';
-    res.status(statusCode).json({ error: message });
+function getAuthenticatedUserId(req: AuthRequest, res: Response): string | null {
+  if (!req.userId) {
+    sendError(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
+    return null;
   }
-};
 
-/**
- * 第二步：使用Token确认注册
- */
-export const confirmRegister = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { email, registerToken, password } = req.body;
-
-    if (!email || !registerToken || !password) {
-      res.status(400).json({ error: '邮箱、注册Token和密码不能为空' });
-      return;
-    }
-
-    const result = await AuthService.confirmRegister(email, registerToken, password);
-    res.json(result);
-  } catch (error) {
-    logError('Confirm register failed', error, { email: req.body.email });
-    // 验证错误返回400，数据库错误返回503，其他错误返回500
-    const isValidationError = error instanceof Error && 
-      (error.message.includes('已注册') || error.message.includes('Token') || error.message.includes('密码'));
-    const isDatabaseError = error instanceof PrismaClientKnownRequestError;
-    const statusCode = isValidationError ? 400 : isDatabaseError ? 503 : 500;
-    const message = isValidationError && error instanceof Error ? error.message : '伺服器錯誤';
-    res.status(statusCode).json({ error: message });
-  }
-};
-
-export const login = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { email, password } = req.body;
-    const result = await AuthService.login(email, password);
-    res.json(result);
-  } catch (error) {
-    logError('Login failed', error, { email: req.body.email });
-    // 認證失敗返回401，數據庫錯誤返回503，其他錯誤返回通用錯誤
-    const isAuthError = error instanceof Error && 
-      (error.message.includes('邮箱') || error.message.includes('密码') || error.message.includes('未找到') || error.message.includes('帳號或密碼'));
-    const isDatabaseError = error instanceof PrismaClientKnownRequestError;
-    const statusCode = isAuthError ? 401 : isDatabaseError ? 503 : 500;
-    const message = isAuthError && error instanceof Error ? error.message : '伺服器錯誤';
-    res.status(statusCode).json({ error: message });
-  }
-};
+  return req.userId;
+}
 
 export const me = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    if (!req.userId) {
-      res.status(401).json({ error: '未登入' });
+    const userId = getAuthenticatedUserId(req, res);
+    if (!userId) {
       return;
     }
 
-    const profile = await AuthService.getCurrentUserWithPlaidCache(req.userId);
-    res.json({ user: profile });
+    const profile = await AuthService.getCurrentUserWithPlaidCache(userId);
+    sendSuccess(res, { user: profile });
   } catch (error) {
-    logError('Fetch current user profile failed', error, { userId: (req as AuthRequest).userId });
-    // 用户不存在返回404，数据库错误返回503，其他错误返回500
-    const isNotFoundError = error instanceof Error && error.message.includes('找不到');
+    logError('Fetch current user profile failed', error, { userId: req.userId });
+    // 使用者不存在回傳 404，資料庫錯誤回傳 503，其他錯誤回傳 500
+    const isNotFoundError = error instanceof Error && error.message.toLowerCase().includes('not found');
     const isDatabaseError = error instanceof PrismaClientKnownRequestError;
     const statusCode = isNotFoundError ? 404 : isDatabaseError ? 503 : 500;
-    const message = isNotFoundError && error instanceof Error ? error.message : '伺服器錯誤';
-    res.status(statusCode).json({ error: message });
+    const message = isNotFoundError && error instanceof Error ? error.message : 'Internal server error';
+    sendError(res, statusCode, { code: isNotFoundError ? 'NOT_FOUND' : isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR', message });
   }
 };
 
 export const updateProfile = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    if (!req.userId) {
-      res.status(401).json({ error: '未登入' });
+    const userId = getAuthenticatedUserId(req, res);
+    if (!userId) {
       return;
     }
 
     const { displayName, avatarUrl } = req.body;
 
-    // 输入验证
-    if (displayName !== undefined && !displayName) {
-      res.status(400).json({ error: '顯示名稱不能為空' });
-      return;
-    }
+    const updatedProfile = await AuthService.updateUserProfile(userId, { displayName, avatarUrl });
 
-    if (displayName !== undefined && displayName.length > 50) {
-      res.status(400).json({ error: '顯示名稱長度不能超過 50 個字符' });
-      return;
-    }
-
-    if (avatarUrl !== undefined && !avatarUrl) {
-      res.status(400).json({ error: '頭像 URL 不能為空' });
-      return;
-    }
-
-    if (avatarUrl !== undefined && avatarUrl.length > 500) {
-      res.status(400).json({ error: '頭像 URL 長度不能超過 500 個字符' });
-      return;
-    }
-
-    // 驗證 URL 格式
-    if (avatarUrl !== undefined) {
-      try {
-        new URL(avatarUrl);
-      } catch {
-        res.status(400).json({ error: '無效的頭像 URL 格式' });
-        return;
-      }
-    }
-
-    const updatedProfile = await AuthService.updateUserProfile(req.userId, { displayName, avatarUrl });
-
-    res.json({ user: updatedProfile });
+    sendSuccess(res, { user: updatedProfile });
   } catch (error) {
     logError('Update profile failed', error, { userId: (req as AuthRequest).userId });
     const isDatabaseError = error instanceof PrismaClientKnownRequestError;
     const statusCode = isDatabaseError ? 503 : 500;
-    res.status(statusCode).json({ error: '伺服器錯誤' });
+    sendError(res, statusCode, { code: isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR', message: 'Internal server error' });
   }
 };
 
@@ -157,125 +62,117 @@ export const requestPasswordReset = async (req: Request, res: Response): Promise
   try {
     const { email } = req.body;
 
-    if (!email) {
-      res.status(400).json({ error: '郵箱不能為空' });
-      return;
-    }
-
     const result = await AuthService.requestPasswordReset(email);
 
-    res.json({
-      message: '重置碼已發送到郵箱，請檢查收件箱',
+    sendSuccess(res, {
+      message: 'Password reset code sent. Please check your inbox.',
       expiresIn: result.expiresIn,
     });
   } catch (error) {
     logError('Request password reset failed', error, { email: req.body.email });
     const isBusinessError = error instanceof Error && 
-      (error.message.includes('無法發送') || error.message.includes('郵箱'));
+      (error.message.toLowerCase().includes('unable to send') || error.message.toLowerCase().includes('email'));
     const isDatabaseError = error instanceof PrismaClientKnownRequestError;
     const statusCode = isBusinessError ? 400 : isDatabaseError ? 503 : 500;
-    const message = isBusinessError && error instanceof Error ? error.message : '伺服器錯誤';
-    res.status(statusCode).json({ error: message });
+    const message = isBusinessError && error instanceof Error ? error.message : 'Internal server error';
+    sendError(res, statusCode, {
+      code: isBusinessError ? 'BUSINESS_ERROR' : isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR',
+      message,
+    });
   }
 };
 
 export const resetPassword = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email, resetCode, newPassword } = req.body;
+    const { email, resetCode, srpSalt, srpVerifier, encryptedDataKey, kekSalt, preserveData } = req.body;
 
-    if (!email || !resetCode || !newPassword) {
-      res.status(400).json({ error: '缺少必要參數' });
-      return;
-    }
-
-    if (newPassword.length < 6) {
-      res.status(400).json({ error: '密碼長度至少為 6 個字符' });
-      return;
-    }
-
-    const result = await AuthService.resetPassword(email, resetCode, newPassword);
-    res.json(result);
+    const result = await AuthService.resetPassword(
+      email,
+      resetCode,
+      srpSalt,
+      srpVerifier,
+      encryptedDataKey,
+      kekSalt,
+      preserveData
+    );
+    sendSuccess(res, result);
   } catch (error) {
     logError('Reset password failed', error);
-    // 验证错误返回400，数据库错误返回503，其他错误返回500
+    // 驗證錯誤回傳 400，資料庫錯誤回傳 503，其他錯誤回傳 500
     const isValidationError = error instanceof Error && 
-      (error.message.includes('碼') || error.message.includes('過期') || error.message.includes('無效') || 
-       error.message.includes('密碼') || error.message.includes('不存在'));
+      (error.message.toLowerCase().includes('code') || error.message.toLowerCase().includes('expired') || 
+       error.message.toLowerCase().includes('invalid') || error.message.toLowerCase().includes('password') || 
+       error.message.toLowerCase().includes('missing') || error.message.toLowerCase().includes('not found'));
     const isDatabaseError = error instanceof PrismaClientKnownRequestError;
     const statusCode = isValidationError ? 400 : isDatabaseError ? 503 : 500;
-    const message = isValidationError && error instanceof Error ? error.message : '伺服器錯誤';
-    res.status(statusCode).json({ error: message });
+    const message = isValidationError && error instanceof Error ? error.message : 'Internal server error';
+    sendError(res, statusCode, {
+      code: isValidationError ? 'VALIDATION_ERROR' : isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR',
+      message,
+    });
+  }
+};
+
+/**
+ * 登出 - 清除 Cookie（網頁客戶端）
+ */
+export const logout = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    // 清除登入 Cookie
+    res.clearCookie('authToken', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+    });
+    
+    sendSuccess(res, { message: 'Logged out successfully' });
+  } catch (error) {
+    logError('Logout failed', error);
+    sendError(res, 500, { code: 'INTERNAL_ERROR', message: 'Logout failed' });
   }
 };
 
 export const deleteAccount = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    if (!req.userId) {
-      res.status(401).json({ error: '未登入' });
+    const userId = getAuthenticatedUserId(req, res);
+    if (!userId) {
       return;
     }
 
-    const { password } = req.body || {};
-
-    if (!password) {
-      res.status(400).json({ error: '密碼不能為空' });
-      return;
-    }
-
-    const result = await AuthService.deleteAccount(req.userId, password);
-    res.json(result);
+    const result = await AuthService.deleteAccount(userId);
+    sendSuccess(res, result);
   } catch (error) {
-    logError('Delete account failed', error, { userId: (req as AuthRequest).userId });
-    // 密码错误返回401，数据库错误返回503，其他错误返回500
-    const isAuthError = error instanceof Error && error.message.includes('密碼');
+    logError('Delete account failed', error, { userId: req.userId });
     const isDatabaseError = error instanceof PrismaClientKnownRequestError;
-    const statusCode = isAuthError ? 401 : isDatabaseError ? 503 : 500;
-    const message = isAuthError && error instanceof Error ? error.message : '伺服器錯誤';
-    res.status(statusCode).json({ error: message });
+    const statusCode = isDatabaseError ? 503 : 500;
+    const message = 'Internal server error';
+    sendError(res, statusCode, { code: isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR', message });
   }
 };
 
 /**
- * 专门修改头像 API - 接收 Base64 編碼的圖片
+ * 專用頭像修改介面 - 接收 Base64 編碼圖片
  */
 export const updateAvatar = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    if (!req.userId) {
-      res.status(401).json({ error: '未登入' });
+    const userId = getAuthenticatedUserId(req, res);
+    if (!userId) {
       return;
     }
 
     const { avatar } = req.body;
 
-    if (!avatar) {
-      res.status(400).json({ error: '頭像數據不能為空' });
-      return;
-    }
+    const updatedProfile = await AuthService.updateUserProfile(userId, { avatarBase64: avatar });
 
-    // 驗證 Base64 格式 (data:image/...;base64,...)
-    const base64Regex = /^data:image\/(jpeg|jpg|png|gif|webp);base64,/;
-    if (!base64Regex.test(avatar)) {
-      res.status(400).json({ error: '無效的 Base64 圖片格式，請使用 data:image/...;base64,... 格式' });
-      return;
-    }
-
-    // 限制大小 (Base64 編碼後最多 10MB)
-    if (avatar.length > 10 * 1024 * 1024) {
-      res.status(400).json({ error: '圖片大小不能超過 10MB' });
-      return;
-    }
-
-    const updatedProfile = await AuthService.updateUserProfile(req.userId, { avatarBase64: avatar });
-
-    res.json({ 
-      message: '頭像已更新',
+    sendSuccess(res, { 
+      message: 'Avatar updated successfully',
       user: updatedProfile 
     });
   } catch (error) {
-    logError('Update avatar failed', error, { userId: (req as AuthRequest).userId });
+    logError('Update avatar failed', error, { userId: req.userId });
     const isDatabaseError = error instanceof PrismaClientKnownRequestError;
     const statusCode = isDatabaseError ? 503 : 500;
-    res.status(statusCode).json({ error: '伺服器錯誤' });
+    sendError(res, statusCode, { code: isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR', message: 'Internal server error' });
   }
 };
 
@@ -284,34 +181,24 @@ export const updateAvatar = async (req: AuthRequest, res: Response): Promise<voi
  */
 export const updateDisplayName = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    if (!req.userId) {
-      res.status(401).json({ error: '未登入' });
+    const userId = getAuthenticatedUserId(req, res);
+    if (!userId) {
       return;
     }
 
     const { displayName } = req.body;
 
-    if (!displayName) {
-      res.status(400).json({ error: '顯示名稱不能為空' });
-      return;
-    }
+    const updatedProfile = await AuthService.updateUserProfile(userId, { displayName });
 
-    if (displayName.length > 50) {
-      res.status(400).json({ error: '顯示名稱長度不能超過 50 個字符' });
-      return;
-    }
-
-    const updatedProfile = await AuthService.updateUserProfile(req.userId, { displayName });
-
-    res.json({ 
-      message: '顯示名稱已更新',
+    sendSuccess(res, { 
+      message: 'Display name updated successfully',
       user: updatedProfile 
     });
   } catch (error) {
-    logError('Update display name failed', error, { userId: (req as AuthRequest).userId });
+    logError('Update display name failed', error, { userId: req.userId });
     const isDatabaseError = error instanceof PrismaClientKnownRequestError;
     const statusCode = isDatabaseError ? 503 : 500;
-    res.status(statusCode).json({ error: '伺服器錯誤' });
+    sendError(res, statusCode, { code: isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR', message: 'Internal server error' });
   }
 };
 
@@ -320,26 +207,25 @@ export const sendVerificationCode = async (req: Request, res: Response): Promise
   try {
     const { email } = req.body;
 
-    if (!email) {
-      res.status(400).json({ error: '郵箱不能為空' });
-      return;
-    }
-
     const result = await AuthService.sendVerificationCode(email, 'register');
 
-    res.json({
-      message: '驗證碼已發送到郵箱',
+    sendSuccess(res, {
+      message: 'Verification code sent to your email',
       expiresIn: result.expiresIn,
     });
   } catch (error) {
     logError('Send verification code failed', error, { email: req.body.email });
-    // 业务错误返回具体消息，数据库错误返回503，其他错误返回500
+    // 業務錯誤回傳具體訊息，資料庫錯誤回傳 503，其他錯誤回傳 500
     const isBusinessError = error instanceof Error && 
-      (error.message.includes('已註冊') || error.message.includes('郵箱') || error.message.includes('無法發送'));
+      (error.message.toLowerCase().includes('already registered') || error.message.toLowerCase().includes('email') || 
+       error.message.toLowerCase().includes('unable to send'));
     const isDatabaseError = error instanceof PrismaClientKnownRequestError;
     const statusCode = isBusinessError ? 400 : isDatabaseError ? 503 : 500;
-    const message = isBusinessError && error instanceof Error ? error.message : '伺服器錯誤';
-    res.status(statusCode).json({ error: message });
+    const message = isBusinessError && error instanceof Error ? error.message : 'Internal server error';
+    sendError(res, statusCode, {
+      code: isBusinessError ? 'BUSINESS_ERROR' : isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR',
+      message,
+    });
   }
 };
 
@@ -348,54 +234,44 @@ export const sendVerificationCode = async (req: Request, res: Response): Promise
  */
 export const verifyEmailAndRegister = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email, verificationCode, password } = req.body;
+    const { email, verificationCode, srpSalt, srpVerifier, encryptedDataKey, kekSalt } = req.body;
+    const clientType = (req.headers['x-client-type'] as string || 'web') as 'web' | 'mobile';
 
-    if (!email || !verificationCode || !password) {
-      res.status(400).json({ error: '郵箱、驗證碼和密碼不能為空' });
-      return;
+    const result = await AuthService.verifyEmailAndRegister(email, verificationCode, {
+      srpSalt,
+      srpVerifier,
+      encryptedDataKey,
+      kekSalt,
+    });
+    
+    if (clientType === 'web') {
+      // 網頁客戶端：回傳 HttpOnly Cookie
+      res.cookie('authToken', result.token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      });
+      // 不回傳 token 給網頁客戶端
+      sendSuccess(res, { message: 'Registration successful', user: result.user });
+    } else {
+      // 行動客戶端：回傳 JWT 權杖
+      sendSuccess(res, result);
     }
-
-    const result = await AuthService.verifyEmailAndRegister(email, verificationCode, password);
-    res.json(result);
   } catch (error) {
     logError('Verify email and register failed', error, { email: req.body.email });
-    // 验证错误返回400，数据库错误返回503，其他错误返回500
+    // 驗證錯誤回傳 400，資料庫錯誤回傳 503，其他錯誤回傳 500
     const isValidationError = error instanceof Error && 
-      (error.message.includes('註冊') || error.message.includes('驗證碼') || error.message.includes('密碼') || 
-       error.message.includes('過期') || error.message.includes('錯誤'));
+      (error.message.toLowerCase().includes('registration') || error.message.toLowerCase().includes('verification') || 
+       error.message.toLowerCase().includes('srp') || error.message.toLowerCase().includes('expired') || 
+       error.message.toLowerCase().includes('invalid') || error.message.toLowerCase().includes('missing'));
     const isDatabaseError = error instanceof PrismaClientKnownRequestError;
     const statusCode = isValidationError ? 400 : isDatabaseError ? 503 : 500;
-    const message = isValidationError && error instanceof Error ? error.message : '伺服器錯誤';
-    res.status(statusCode).json({ error: message });
-  }
-};
-
-/**
- * 重新發送驗證碼 (用於已註冊但未驗證的用戶)
- */
-export const resendVerificationCode = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { email } = req.body;
-
-    if (!email) {
-      res.status(400).json({ error: '郵箱不能為空' });
-      return;
-    }
-
-    const result = await AuthService.resendVerificationCode(email);
-
-    res.json({
-      message: '驗證碼已重新發送到郵箱',
-      expiresIn: result.expiresIn,
+    const message = isValidationError && error instanceof Error ? error.message : 'Internal server error';
+    sendError(res, statusCode, {
+      code: isValidationError ? 'VALIDATION_ERROR' : isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR',
+      message,
     });
-  } catch (error) {
-    logError('Resend verification code failed', error, { email: req.body.email });
-    const isBusinessError = error instanceof Error && 
-      (error.message.includes('已註冊') || error.message.includes('郵箱') || error.message.includes('無法發送'));
-    const isDatabaseError = error instanceof PrismaClientKnownRequestError;
-    const statusCode = isBusinessError ? 400 : isDatabaseError ? 503 : 500;
-    const message = isBusinessError && error instanceof Error ? error.message : '伺服器錯誤';
-    res.status(statusCode).json({ error: message });
   }
 };
 
@@ -404,32 +280,31 @@ export const resendVerificationCode = async (req: Request, res: Response): Promi
  */
 export const requestEmailChange = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    if (!req.userId) {
-      res.status(401).json({ error: '未登入' });
+    const userId = getAuthenticatedUserId(req, res);
+    if (!userId) {
       return;
     }
 
     const { newEmail } = req.body;
 
-    if (!newEmail) {
-      res.status(400).json({ error: '新郵箱不能為空' });
-      return;
-    }
+    const result = await AuthService.requestEmailChange(userId, newEmail);
 
-    const result = await AuthService.requestEmailChange(req.userId, newEmail);
-
-    res.json({
-      message: '驗證碼已發送到新郵箱，請檢查收件箱',
+    sendSuccess(res, {
+      message: 'Verification code sent to your new email. Please check your inbox.',
       expiresIn: result.expiresIn,
     });
   } catch (error) {
-    logError('Request email change failed', error, { userId: (req as AuthRequest).userId });
+    logError('Request email change failed', error, { userId: req.userId });
     const isBusinessError = error instanceof Error && 
-      (error.message.includes('無效') || error.message.includes('已被') || error.message.includes('無法發送'));
+      (error.message.toLowerCase().includes('invalid') || error.message.toLowerCase().includes('already') || 
+       error.message.toLowerCase().includes('unable to send'));
     const isDatabaseError = error instanceof PrismaClientKnownRequestError;
     const statusCode = isBusinessError ? 400 : isDatabaseError ? 503 : 500;
-    const message = isBusinessError && error instanceof Error ? error.message : '伺服器錯誤';
-    res.status(statusCode).json({ error: message });
+    const message = isBusinessError && error instanceof Error ? error.message : 'Internal server error';
+    sendError(res, statusCode, {
+      code: isBusinessError ? 'BUSINESS_ERROR' : isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR',
+      message,
+    });
   }
 };
 
@@ -438,33 +313,28 @@ export const requestEmailChange = async (req: AuthRequest, res: Response): Promi
  */
 export const confirmEmailChange = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    if (!req.userId) {
-      res.status(401).json({ error: '未登入' });
+    const userId = getAuthenticatedUserId(req, res);
+    if (!userId) {
       return;
     }
 
     const { newEmail, code } = req.body;
 
-    if (!newEmail) {
-      res.status(400).json({ error: '新郵箱不能為空' });
-      return;
-    }
+    const result = await AuthService.confirmEmailChange(userId, newEmail, code);
 
-    if (!code) {
-      res.status(400).json({ error: '驗證碼不能為空' });
-      return;
-    }
-
-    const result = await AuthService.confirmEmailChange(req.userId, newEmail, code);
-
-    res.json(result);
+    sendSuccess(res, result);
   } catch (error) {
-    logError('Confirm email change failed', error, { userId: (req as AuthRequest).userId });
+    logError('Confirm email change failed', error, { userId: req.userId });
     const isValidationError = error instanceof Error && 
-      (error.message.includes('驗證碼') || error.message.includes('過期') || error.message.includes('待驗'));
+      (error.message.toLowerCase().includes('verification') || error.message.toLowerCase().includes('expired') || 
+       error.message.toLowerCase().includes('pending') || error.message.toLowerCase().includes('invalid') || 
+       error.message.toLowerCase().includes('missing'));
     const isDatabaseError = error instanceof PrismaClientKnownRequestError;
     const statusCode = isValidationError ? 400 : isDatabaseError ? 503 : 500;
-    const message = isValidationError && error instanceof Error ? error.message : '伺服器錯誤';
-    res.status(statusCode).json({ error: message });
+    const message = isValidationError && error instanceof Error ? error.message : 'Internal server error';
+    sendError(res, statusCode, {
+      code: isValidationError ? 'VALIDATION_ERROR' : isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR',
+      message,
+    });
   }
 };

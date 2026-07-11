@@ -1,12 +1,15 @@
 /**
- * Asset Domain Model Types
+ * 資產領域模型型別
+ *
+ * NOTE: 加密只發生在 service → DB 這一層。
+ * 所有 TypeScript interface 使用 number，service 負責在寫入前加密、讀取後解密。
  */
 
 export interface AssetSnapshotData {
   assetId: string;
   name: string;
   type: 'bank_account' | 'investment' | 'crypto_wallet';
-  value: number;
+  value: number;       // plaintext；service 層負責加密後再存 DB
   currency?: string;
   recordedAt?: Date;
 }
@@ -16,7 +19,7 @@ export interface AssetSnapshotResponse {
   assetId: string;
   name: string;
   type: string;
-  value: number;
+  value: number;       // 已解密的明文數字
   currency: string;
   recordedAt: Date;
   createdAt: Date;
@@ -30,7 +33,7 @@ export interface AssetPerformanceResponse {
 
 export interface AssetHistoryPoint {
   timestamp: Date;
-  value: number;
+  value: number;       // 已解密的明文數字
   assetId: string;
   name: string;
   type: string;
@@ -38,7 +41,7 @@ export interface AssetHistoryPoint {
 
 export interface AssetHistoryResponse {
   userId: string;
-  totalAssets: number;
+  totalAssets: number; // 已解密的明文數字
   lastRecordedTime: Date | null;
   history: AssetHistoryPoint[];
   summary: {

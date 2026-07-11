@@ -6,8 +6,8 @@ import { PrismaClient } from '@prisma/client';
  */
 export declare const prisma: PrismaClient<import("@prisma/client").Prisma.PrismaClientOptions, never, import("@prisma/client/runtime/library").DefaultArgs>;
 /**
- * 初始化數據庫連接並同步 Schema
- * - 執行 Prisma 遷移 (自動建表)
+ * 初始化資料庫連線
+ * - Migration 必須由 CI/CD 或部署流程執行 (prisma migrate deploy)
  * - 測試連接
  * - 記錄連接狀態
  */

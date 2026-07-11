@@ -3,6 +3,7 @@ import { AuthRequest } from '../../auth/middleware/auth';
 import { AssetService } from '../services/assetService';
 import { AssetSnapshotData } from '../models/types';
 import { logError } from '../../logger';
+import { sendError, sendSuccess } from '../../shared/lib/apiResponse';
 
 /**
  * Asset Controller - Request/Response Handling
@@ -14,18 +15,11 @@ import { logError } from '../../logger';
 export const recordAssetSnapshot = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     if (!req.userId) {
-      res.status(401).json({ error: '未登入' });
+      sendError(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
       return;
     }
 
     const { assetId, name, type, value, currency } = req.body;
-
-    if (!assetId || !name || !type || value === undefined) {
-      res.status(400).json({
-        error: '缺少必要欄位: assetId, name, type, value',
-      });
-      return;
-    }
 
     const snapshot: AssetSnapshotData = {
       assetId,
@@ -37,10 +31,10 @@ export const recordAssetSnapshot = async (req: AuthRequest, res: Response): Prom
     };
 
     const result = await AssetService.recordAssetSnapshot(req.userId, snapshot);
-    res.json(result);
+    sendSuccess(res, result);
   } catch (error) {
     logError('Record asset snapshot failed', error, { userId: (req as AuthRequest).userId });
-    res.status(500).json({ error: '伺服器錯誤' });
+    sendError(res, 500, { code: 'INTERNAL_ERROR', message: 'Internal server error' });
   }
 };
 
@@ -50,16 +44,11 @@ export const recordAssetSnapshot = async (req: AuthRequest, res: Response): Prom
 export const recordMultipleSnapshots = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     if (!req.userId) {
-      res.status(401).json({ error: '未登入' });
+      sendError(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
       return;
     }
 
     const { snapshots } = req.body;
-
-    if (!Array.isArray(snapshots) || snapshots.length === 0) {
-      res.status(400).json({ error: 'snapshots 必須是非空陣列' });
-      return;
-    }
 
     const snapshotData: AssetSnapshotData[] = snapshots.map((s: any) => ({
       assetId: s.assetId,
@@ -71,10 +60,10 @@ export const recordMultipleSnapshots = async (req: AuthRequest, res: Response): 
     }));
 
     const results = await AssetService.recordMultipleSnapshots(req.userId, snapshotData);
-    res.json(results);
+    sendSuccess(res, results);
   } catch (error) {
     logError('Record multiple snapshots failed', error, { userId: (req as AuthRequest).userId });
-    res.status(500).json({ error: '伺服器錯誤' });
+    sendError(res, 500, { code: 'INTERNAL_ERROR', message: 'Internal server error' });
   }
 };
 
@@ -84,27 +73,27 @@ export const recordMultipleSnapshots = async (req: AuthRequest, res: Response): 
 export const getLatestSnapshot = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     if (!req.userId) {
-      res.status(401).json({ error: '未登入' });
+      sendError(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
       return;
     }
 
     const snapshots = await AssetService.getLatestSnapshot(req.userId);
 
     if (!snapshots) {
-      res.json({
-        message: '尚無資產紀錄',
+      sendSuccess(res, {
+        message: 'No asset records found',
         data: [],
       });
       return;
     }
 
-    res.json({
-      message: '成功取得最新資產狀態',
+    sendSuccess(res, {
+      message: 'Latest asset snapshot fetched successfully',
       data: snapshots,
     });
   } catch (error) {
     logError('Get latest snapshot failed', error, { userId: (req as AuthRequest).userId });
-    res.status(500).json({ error: '伺服器錯誤' });
+    sendError(res, 500, { code: 'INTERNAL_ERROR', message: 'Internal server error' });
   }
 };
 
@@ -114,17 +103,17 @@ export const getLatestSnapshot = async (req: AuthRequest, res: Response): Promis
 export const getAssetHistory = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     if (!req.userId) {
-      res.status(401).json({ error: '未登入' });
+      sendError(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
       return;
     }
 
-    const days = parseInt(req.query.days as string) || 30;
+    const days = Number(req.query.days) || 30;
 
     const history = await AssetService.getAssetHistory(req.userId, Math.min(days, 365));
-    res.json(history);
+    sendSuccess(res, history);
   } catch (error) {
     logError('Get asset history failed', error, { userId: (req as AuthRequest).userId });
-    res.status(500).json({ error: '伺服器錯誤' });
+    sendError(res, 500, { code: 'INTERNAL_ERROR', message: 'Internal server error' });
   }
 };
 
@@ -134,25 +123,20 @@ export const getAssetHistory = async (req: AuthRequest, res: Response): Promise<
 export const deleteAssetHistory = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     if (!req.userId) {
-      res.status(401).json({ error: '未登入' });
+      sendError(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
       return;
     }
 
-    const assetId = typeof req.params.assetId === 'string' ? req.params.assetId : '';
-
-    if (!assetId) {
-      res.status(400).json({ error: 'assetId 不能為空' });
-      return;
-    }
+    const assetId = req.params.assetId as string;
 
     const count = await AssetService.deleteAssetHistory(req.userId, assetId);
-    res.json({
-      message: `已刪除 ${count} 筆資產紀錄`,
+    sendSuccess(res, {
+      message: `Deleted ${count} asset records`,
       deletedCount: count,
     });
   } catch (error) {
     logError('Delete asset history failed', error, { userId: (req as AuthRequest).userId });
-    res.status(500).json({ error: '伺服器錯誤' });
+    sendError(res, 500, { code: 'INTERNAL_ERROR', message: 'Internal server error' });
   }
 };
 
@@ -162,17 +146,17 @@ export const deleteAssetHistory = async (req: AuthRequest, res: Response): Promi
 export const getRecordDates = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     if (!req.userId) {
-      res.status(401).json({ error: '未登入' });
+      sendError(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
       return;
     }
 
     const dates = await AssetService.getRecordDates(req.userId);
-    res.json({
+    sendSuccess(res, {
       dates,
       count: dates.length,
     });
   } catch (error) {
     logError('Get record dates failed', error, { userId: (req as AuthRequest).userId });
-    res.status(500).json({ error: '伺服器錯誤' });
+    sendError(res, 500, { code: 'INTERNAL_ERROR', message: 'Internal server error' });
   }
 };

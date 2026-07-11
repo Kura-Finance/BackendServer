@@ -2,11 +2,11 @@ import ccxt from 'ccxt';
 import { prisma } from '../../shared/lib/prisma';
 import { logDebug, logError, logBusinessEvent } from '../../logger';
 import { AuditLogger } from '../../logger/auditLog';
-import { KURA_SUPPORTED_EXCHANGES, EXCHANGE_DISPLAY_MAP } from '../constants';
+import { KURA_SUPPORTED_EXCHANGES, EXCHANGE_DISPLAY_MAP, getExchangeIcon, getStockLogoUrl } from '../../shared/lib/symbolsAndExchangesUtil';
 import { EncryptionUtil } from '../../shared/lib/encryption';
 
 /**
- * Exchange Service - CCXT Integration Layer
+ * 交易所服務 - CCXT 整合層
  * 支持全球 100+ 加密貨幣交易所
  */
 
@@ -28,7 +28,7 @@ export class ExchangeService {
       if (!ExchangeClass) {
         return {
           success: false,
-          error: `不支持的交易所: ${exchange}`,
+          error: `Unsupported exchange: ${exchange}`,
         };
       }
 
@@ -49,7 +49,7 @@ export class ExchangeService {
 
       return { success: true };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '未知錯誤';
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logError('Exchange verification failed', error, { exchange });
       return {
         success: false,
@@ -81,7 +81,7 @@ export class ExchangeService {
       );
 
       if (!verification.success) {
-        throw new Error(verification.error || '連接失敗');
+        throw new Error(verification.error || 'Connection failed');
       }
 
       // 獲取交易所顯示名稱
@@ -134,7 +134,10 @@ export class ExchangeService {
         accountId: account.id,
       }, undefined, duration);
 
-      return account;
+      return {
+        ...account,
+        icon: getExchangeIcon(account.exchange),
+      };
     } catch (error) {
       const duration = Date.now() - startTime;
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -158,7 +161,7 @@ export class ExchangeService {
       logDebug('Fetching exchange balances', { userId, exchangeAccountId });
 
       if (!exchangeAccountId || exchangeAccountId === 'undefined') {
-        throw new Error('無效的帳戶 ID');
+        throw new Error('Invalid account ID');
       }
 
       // 從數據庫獲取帳戶信息
@@ -167,11 +170,11 @@ export class ExchangeService {
       });
 
       if (!account || account.userId !== userId) {
-        throw new Error('帳戶不存在或無權限');
+        throw new Error('Account not found or access denied');
       }
 
       if (!account.isActive) {
-        throw new Error('帳戶已停用');
+        throw new Error('Account is inactive');
       }
 
       // 解密敏感信息
@@ -238,7 +241,7 @@ export class ExchangeService {
       });
 
       if (!exchangeAccountId || exchangeAccountId === 'undefined') {
-        throw new Error('無效的帳戶 ID');
+        throw new Error('Invalid account ID');
       }
 
       // 從數據庫獲取帳戶信息
@@ -247,11 +250,11 @@ export class ExchangeService {
       });
 
       if (!account || account.userId !== userId) {
-        throw new Error('帳戶不存在或無權限');
+        throw new Error('Account not found or access denied');
       }
 
       if (!account.isActive) {
-        throw new Error('帳戶已停用');
+        throw new Error('Account is inactive');
       }
 
       // 解密敏感信息
@@ -278,7 +281,7 @@ export class ExchangeService {
       // 獲取期貨合約持倉 (非同步,不阻塞主流程)
       const positions = await this.getPositions(userId, exchangeInstance, account.exchange, exchangeAccountId);
 
-      // 格式化 balances - 只返回有餘額的幣種
+      // 格式化餘額資料 balances - 只回傳有餘額的幣種
       const formattedBalances = Object.keys(balances)
         .filter(symbol => {
           if (
@@ -310,9 +313,10 @@ export class ExchangeService {
       const symbolsForPricing = formattedBalances.map(b => b.symbol);
       const priceData = await this.getPrices(exchangeInstance, symbolsForPricing);
 
-      // 添加 USD 價值和 24h 變化到 balances
+      // 將 USD 價值與 24h 變化加入 balances
       const balancesWithUsd = formattedBalances.map(balance => ({
         ...balance,
+        logo: getStockLogoUrl(balance.symbol),
         usdPrice: priceData[balance.symbol]?.price || 0,
         change24h: priceData[balance.symbol]?.change24h || 0,
         usdValue: balance.total * (priceData[balance.symbol]?.price || 0),
@@ -325,8 +329,8 @@ export class ExchangeService {
       const balancesUsdTotal = balancesWithUsd.reduce((sum, b) => sum + b.usdValue, 0);
       const assetsUsdTotal = assets.reduce((sum, a) => sum + a.usdValue, 0);
 
-      // 添加 USD 價值到 positions
-      // 提取 positions 中的基礎幣種以獲取 24h 變化
+      // 將 USD 價值加入 positions
+      // 取出 positions 中的基礎幣種以取得 24h 變化
       const positionSymbols = positions.map((pos: any) => pos.symbol.split('/')[0]); // 從 BTC/USDT 提取 BTC
       const positionPriceData = await this.getPrices(exchangeInstance, [...new Set(positionSymbols)] as string[]);
 
@@ -334,6 +338,7 @@ export class ExchangeService {
         const baseSymbol = pos.symbol.split('/')[0];
         return {
           ...pos,
+          logo: getStockLogoUrl(baseSymbol),
           change24h: positionPriceData[baseSymbol]?.change24h || 0,
           usdValue: pos.contracts * pos.contractSize * pos.markPrice,
         };
@@ -427,10 +432,10 @@ export class ExchangeService {
             // 計算 24h 變化百分比
             let change24h = 0;
             if (ticker.percentage !== undefined && ticker.percentage !== null) {
-              // 優先使用 percentage 字段 (已經是百分比格式)
+              // 優先使用 percentage 欄位（已是百分比格式）
               change24h = ticker.percentage;
             } else if (ticker.open && ticker.close) {
-              // 如果沒有 percentage，從 open 和 close 計算
+              // 若沒有 percentage，從 open 與 close 計算
               change24h = ((ticker.close - ticker.open) / ticker.open) * 100;
               change24h = parseFloat(change24h.toFixed(2));
             } else if (ticker.quoteVolume && ticker.baseVolume) {
@@ -603,6 +608,95 @@ export class ExchangeService {
   }
 
   /**
+   * 從緩存中獲取交易所餘額和資產
+   * 用於達到 API 限制時返回最後一次成功同步的數據
+   */
+  static async getBalancesAndAssetsFromCache(userId: string, exchangeAccountId: string) {
+    try {
+      logDebug('Fetching exchange balances and assets from cache', {
+        userId,
+        exchangeAccountId,
+      });
+
+      if (!exchangeAccountId || exchangeAccountId === 'undefined') {
+        throw new Error('Invalid account ID');
+      }
+
+      // 從數據庫獲取帳戶信息
+      const account = await prisma.exchangeAccount.findUnique({
+        where: { id: exchangeAccountId },
+      });
+
+      if (!account || account.userId !== userId) {
+        throw new Error('Account not found or access denied');
+      }
+
+      // 從緩存獲取餘額
+      const cachedBalances = await prisma.exchangeBalanceCache.findMany({
+        where: {
+          userId,
+          exchangeAccountId,
+        },
+      });
+
+      if (!cachedBalances || cachedBalances.length === 0) {
+        logDebug('No cached balances found', { userId, exchangeAccountId });
+        throw new Error('No cached data available. Please run a manual sync first.');
+      }
+
+      // 格式化緩存數據
+      const balancesWithUsd = cachedBalances.map(balance => ({
+        symbol: balance.symbol,
+        logo: getStockLogoUrl(balance.symbol),
+        free: Number(balance.free) || 0,
+        used: Number(balance.used) || 0,
+        total: Number(balance.total) || 0,
+        usdPrice: 0, // 緩存數據不包含實時價格
+        change24h: 0,
+        usdValue: 0,
+      }));
+
+      // 篩選出有自由餘額的資產
+      const assets = balancesWithUsd.filter(b => b.free > 0);
+
+      // 計算 USD 總值（無法計算，因為沒有實時價格）
+      const balancesUsdTotal = 0;
+      const assetsUsdTotal = 0;
+
+      // 獲取同步時間戳
+      const syncLog = await prisma.exchangeSyncLog.findUnique({
+        where: { userId },
+      });
+
+      return {
+        account: {
+          id: account.id,
+          exchange: account.exchange,
+          displayName: account.exchangeDisplayName,
+          icon: getExchangeIcon(account.exchange),
+        },
+        balances: balancesWithUsd,
+        balancesUsdTotal,
+        assets,
+        assetsUsdTotal,
+        positions: [],
+        positionsUsdTotal: 0,
+        totalUsdValue: 0,
+        timestamp: syncLog?.balancesSyncedAt?.toISOString() || new Date().toISOString(),
+        fromCache: true,
+        cacheNotice: 'Daily query limit reached. Showing last synced data (without real-time prices).',
+      };
+    } catch (error) {
+      logError(
+        'Failed to fetch exchange balances and assets from cache',
+        error,
+        { userId, exchangeAccountId }
+      );
+      throw error;
+    }
+  }
+
+  /**
    * 獲取所有支持的交易所列表
    */
   static getSupportedExchanges() {
@@ -625,7 +719,7 @@ export class ExchangeService {
       logDebug('Disconnecting exchange account', { userId, exchangeAccountId });
 
       if (!exchangeAccountId || exchangeAccountId === 'undefined') {
-        throw new Error('無效的帳戶 ID');
+        throw new Error('Invalid account ID');
       }
 
       const account = await prisma.exchangeAccount.findUnique({
@@ -633,7 +727,7 @@ export class ExchangeService {
       });
 
       if (!account || account.userId !== userId) {
-        throw new Error('帳戶不存在或無權限');
+        throw new Error('Account not found or access denied');
       }
 
       // 刪除帳戶及其相關快取
@@ -682,7 +776,7 @@ export class ExchangeService {
    * 獲取用戶連接的所有交易所帳戶
    */
   static async getUserExchangeAccounts(userId: string) {
-    return await prisma.exchangeAccount.findMany({
+    const accounts = await prisma.exchangeAccount.findMany({
       where: { userId },
       select: {
         id: true,
@@ -694,5 +788,11 @@ export class ExchangeService {
         createdAt: true,
       },
     });
+
+    // 為每個帳戶加入 icon 欄位
+    return accounts.map(account => ({
+      ...account,
+      icon: getExchangeIcon(account.exchange),
+    }));
   }
 }

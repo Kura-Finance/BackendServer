@@ -2,6 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getPlaidEnvironmentByUserId = getPlaidEnvironmentByUserId;
 exports.createPlaidClientForUser = createPlaidClientForUser;
+exports.createPlaidClient = createPlaidClient;
+exports.createPlaidWebhookClient = createPlaidWebhookClient;
 const plaid_1 = require("plaid");
 /**
  * 根據用戶 ID 決定使用 Sandbox 或 Production 環境
@@ -39,6 +41,9 @@ function getPlaidSecret(environment) {
  */
 function createPlaidClientForUser(userId) {
     const environment = getPlaidEnvironmentByUserId(userId);
+    return createPlaidClient(environment);
+}
+function createPlaidClient(environment) {
     const basePath = plaid_1.PlaidEnvironments[environment];
     if (!basePath) {
         throw new Error(`Invalid Plaid environment: ${environment}`);
@@ -58,5 +63,10 @@ function createPlaidClientForUser(userId) {
         },
     });
     return new plaid_1.PlaidApi(configuration);
+}
+function createPlaidWebhookClient() {
+    const env = (process.env.PLAID_ENV || 'sandbox').toLowerCase();
+    const environment = env === 'production' ? 'production' : 'sandbox';
+    return createPlaidClient(environment);
 }
 //# sourceMappingURL=plaidClientFactory.js.map

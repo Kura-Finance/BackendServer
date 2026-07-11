@@ -1,7 +1,7 @@
 import { appLogger } from './logger';
 
 /**
- * HTTP 请求日志
+ * HTTP 請求日誌
  */
 export const logHttpRequest = (method: string, url: string, statusCode: number, duration: number, userId?: string | number) => {
   const level = statusCode >= 400 ? 'warn' : 'info';
@@ -15,7 +15,7 @@ export const logHttpRequest = (method: string, url: string, statusCode: number, 
 };
 
 /**
- * 数据库操作日志
+ * 資料庫操作日誌
  */
 export const logDatabaseOperation = (operation: string, table: string, duration: number, success: boolean, error?: Error) => {
   if (success) {
@@ -36,9 +36,9 @@ export const logDatabaseOperation = (operation: string, table: string, duration:
 };
 
 /**
- * 认证事件日志
+ * 驗證事件日誌
  */
-export const logAuthEvent = (event: 'login' | 'logout' | 'register' | 'failed_login' | 'failed_register' | 'password_reset_requested' | 'failed_password_reset_request' | 'password_reset_success' | 'failed_password_reset' | 'failed_send_verification' | 'failed_email_verification' | 'email_verified' | 'password_reset_code_sent' | 'failed_password_reset_code' | 'password_reset_verified' | 'verification_code_sent' | 'failed_verification' | 'verification_success' | 'email_changed', userId?: string | number, details?: Record<string, any>) => {
+export const logAuthEvent = (event: 'login' | 'logout' | 'register' | 'failed_login' | 'failed_register' | 'password_reset_requested' | 'failed_password_reset_request' | 'password_reset_success' | 'failed_password_reset' | 'failed_send_verification' | 'failed_email_verification' | 'email_verified' | 'password_reset_code_sent' | 'failed_password_reset_code' | 'password_reset_verified' | 'verification_code_sent' | 'failed_verification' | 'verification_success' | 'email_changed' | 'password_change_success' | 'failed_password_change', userId?: string | number, details?: Record<string, any>) => {
   appLogger.info(`Auth event: ${event}`, {
     event,
     userId: userId || 'unknown',
@@ -47,7 +47,7 @@ export const logAuthEvent = (event: 'login' | 'logout' | 'register' | 'failed_lo
 };
 
 /**
- * 错误日志
+ * 錯誤日誌
  */
 export const logError = (message: string, error: Error | unknown, context?: Record<string, any>) => {
   if (error instanceof Error) {
@@ -65,7 +65,7 @@ export const logError = (message: string, error: Error | unknown, context?: Reco
 };
 
 /**
- * 性能监控日志
+ * 效能監控日誌
  */
 export const logPerformance = (operation: string, duration: number, threshold: number = 1000) => {
   const level = duration > threshold ? 'warn' : 'debug';
@@ -77,7 +77,7 @@ export const logPerformance = (operation: string, duration: number, threshold: n
 };
 
 /**
- * 业务事件日志
+ * 業務事件日誌
  */
 export const logBusinessEvent = (event: string, userId?: string | number, details?: Record<string, any>) => {
   appLogger.info(`Business event: ${event}`, {
@@ -89,7 +89,7 @@ export const logBusinessEvent = (event: string, userId?: string | number, detail
 };
 
 /**
- * 调试信息（仅在开发环境显示）
+ * 除錯資訊（僅在開發環境顯示）
  */
 export const logDebug = (message: string, data?: Record<string, any>) => {
   appLogger.debug(message, data);

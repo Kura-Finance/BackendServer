@@ -12,11 +12,11 @@ import type {
 const DEFAULT_NOTIFICATION_TYPES = ['email', 'in_app'] as const;
 
 /**
- * Notification Service - 业务层
+ * 通知服務 - 業務層
  */
 export class NotificationService {
   /**
-   * 发送通知（支持多种类型）
+   * 發送通知（支援多種類型）
    */
   static async sendNotification(payload: CreateNotificationPayload): Promise<NotificationRecord[]> {
     const startTime = Date.now();
@@ -28,16 +28,16 @@ export class NotificationService {
         types: payload.types || DEFAULT_NOTIFICATION_TYPES,
       });
 
-      // 获取用户通知preferences
+      // 取得使用者通知偏好設定
       const preferences = await this.getNotificationPreferences(payload.userId);
       
-      // 检查用户是否取消订阅
+      // 檢查使用者是否取消訂閱
       if (preferences.unsubscribeAll) {
         logDebug('User unsubscribed from notifications', { userId: payload.userId });
         return [];
       }
 
-      // 根据category检查是否启用
+      // 依據 category 檢查是否啟用
       if (!this.isCategoryEnabled(payload.category, preferences)) {
         logDebug('Notification category disabled for user', {
           userId: payload.userId,
@@ -46,11 +46,11 @@ export class NotificationService {
         return [];
       }
 
-      // 确定要发送的通知类型
+      // 決定要發送的通知類型
       const notificationTypes = payload.types || DEFAULT_NOTIFICATION_TYPES;
       const results: NotificationRecord[] = [];
 
-      // 并行发送各类型通知
+      // 平行發送各類型通知
       const notificationPromises = notificationTypes.map(type => 
         this.sendNotificationByType(type as any, payload)
       );
@@ -68,7 +68,7 @@ export class NotificationService {
         }
       });
 
-      // 记录审计日志
+      // 記錄審計日誌
       AuditLogger.logNotificationEvent('NOTIFICATION_SENT', payload.userId, {
         category: payload.category,
         types: notificationTypes,
@@ -94,7 +94,7 @@ export class NotificationService {
   }
 
   /**
-   * 按类型发送通知
+   * 依類型發送通知
    */
   private static async sendNotificationByType(
     type: 'email' | 'push' | 'in_app',
@@ -103,7 +103,7 @@ export class NotificationService {
     const startTime = Date.now();
     
     try {
-      // 创建通知记录
+      // 建立通知紀錄
       const notification = await prisma.notification.create({
         data: {
           userId: payload.userId,
@@ -121,20 +121,20 @@ export class NotificationService {
 
       logDatabaseOperation('CREATE', 'notifications', Date.now() - startTime, true);
 
-      // 根据类型发送
+      // 依類型發送
       if (type === 'email') {
         await this.sendEmailNotification(notification, payload);
       } else if (type === 'push') {
         await this.sendPushNotification(notification, payload);
       } else if (type === 'in_app') {
-        // in_app 通知直接保存，不需要额外发送
+        // in_app 通知直接儲存，不需要額外發送
         await prisma.notification.update({
           where: { id: notification.id },
           data: { status: 'delivered', deliveredAt: new Date() },
         });
       }
 
-      // 返回通知记录
+      // 回傳通知紀錄
       return await prisma.notification.findUnique({
         where: { id: notification.id },
       }) as NotificationRecord;
@@ -147,14 +147,14 @@ export class NotificationService {
   }
 
   /**
-   * 发送邮件通知
+   * 發送郵件通知
    */
   private static async sendEmailNotification(
     notification: any,
     payload: CreateNotificationPayload
   ): Promise<void> {
     try {
-      // 这里集成你的邮件服务 (Resend API)
+      // 在此整合郵件服務（Resend API）
       const user = await prisma.user.findUnique({
         where: { id: payload.userId },
         select: { email: true },
@@ -164,14 +164,14 @@ export class NotificationService {
         throw new Error('User not found');
       }
 
-      // 调用邮件服务发送
+      // 呼叫郵件服務發送
     //   const result = await emailService.send({
     //     to: user.email,
     //     subject: payload.subject,
     //     html: payload.message,
     //   });
 
-      // 更新通知状态
+      // 更新通知狀態
       await prisma.notification.update({
         where: { id: notification.id },
         data: {
@@ -194,14 +194,14 @@ export class NotificationService {
   }
 
   /**
-   * 发送推送通知
+   * 發送推播通知
    */
   private static async sendPushNotification(
     notification: any,
     payload: CreateNotificationPayload
   ): Promise<void> {
     try {
-      // 这里集成推送服务 (Firebase Messaging 等)
+      // 在此整合推播服務（如 Firebase Messaging）
       // const result = await pushService.send({
       //   userId: payload.userId,
       //   title: payload.title,
@@ -231,7 +231,7 @@ export class NotificationService {
   }
 
   /**
-   * 获取用户通知列表
+ * 取得使用者通知列表
    */
   static async getNotifications(
     userId: string,
@@ -278,7 +278,7 @@ export class NotificationService {
   }
 
   /**
-   * 标记通知为已读
+ * 標記通知為已讀
    */
   static async markAsRead(notificationId: string, userId: string): Promise<NotificationRecord> {
     try {
@@ -309,7 +309,7 @@ export class NotificationService {
   }
 
   /**
-   * 删除通知
+ * 刪除通知
    */
   static async deleteNotification(notificationId: string, userId: string): Promise<void> {
     try {
@@ -339,7 +339,7 @@ export class NotificationService {
   }
 
   /**
-   * 获取用户通知preferences
+ * 取得使用者通知偏好設定
    */
   static async getNotificationPreferences(userId: string): Promise<NotificationPreferences> {
     try {
@@ -347,7 +347,7 @@ export class NotificationService {
         where: { userId },
       });
 
-      // 如果不存在，创建默认preferences
+      // 若不存在，建立預設偏好設定
       if (!prefs) {
         prefs = await prisma.notificationPreferences.create({
           data: {
@@ -395,14 +395,14 @@ export class NotificationService {
   }
 
   /**
-   * 更新用户通知preferences
+   * 更新使用者通知偏好設定
    */
   static async updateNotificationPreferences(
     userId: string,
     preferences: Partial<NotificationPreferences>
   ): Promise<NotificationPreferences> {
     try {
-      // 检查preferences是否存在，如果不存在则创建
+      // 檢查 preferences 是否存在，若不存在則建立
       let existing = await prisma.notificationPreferences.findUnique({
         where: { userId },
       });
@@ -452,7 +452,7 @@ export class NotificationService {
   }
 
   /**
-   * 检查category是否启用
+   * 檢查 category 是否啟用
    */
   private static isCategoryEnabled(
     category: string,

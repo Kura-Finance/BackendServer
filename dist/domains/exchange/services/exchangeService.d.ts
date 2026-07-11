@@ -1,5 +1,5 @@
 /**
- * Exchange Service - CCXT Integration Layer
+ * 交易所服務 - CCXT 整合層
  * 支持全球 100+ 加密貨幣交易所
  */
 export declare class ExchangeService {
@@ -14,6 +14,7 @@ export declare class ExchangeService {
      * 連結新的交易所帳戶
      */
     static connectExchange(userId: string, exchange: string, apiKey: string, apiSecret: string, passphrase?: string): Promise<{
+        icon: string;
         apiKey: string;
         userId: string;
         id: string;
@@ -50,6 +51,7 @@ export declare class ExchangeService {
             displayName: string;
         };
         balances: {
+            logo: string;
             usdPrice: number;
             change24h: number;
             usdValue: number;
@@ -60,6 +62,7 @@ export declare class ExchangeService {
         }[];
         balancesUsdTotal: number;
         assets: {
+            logo: string;
             usdPrice: number;
             change24h: number;
             usdValue: number;
@@ -89,6 +92,46 @@ export declare class ExchangeService {
      */
     private static cacheBalances;
     /**
+     * 從緩存中獲取交易所餘額和資產
+     * 用於達到 API 限制時返回最後一次成功同步的數據
+     */
+    static getBalancesAndAssetsFromCache(userId: string, exchangeAccountId: string): Promise<{
+        account: {
+            id: string;
+            exchange: string;
+            displayName: string;
+            icon: string;
+        };
+        balances: {
+            symbol: string;
+            logo: string;
+            free: number;
+            used: number;
+            total: number;
+            usdPrice: number;
+            change24h: number;
+            usdValue: number;
+        }[];
+        balancesUsdTotal: number;
+        assets: {
+            symbol: string;
+            logo: string;
+            free: number;
+            used: number;
+            total: number;
+            usdPrice: number;
+            change24h: number;
+            usdValue: number;
+        }[];
+        assetsUsdTotal: number;
+        positions: never[];
+        positionsUsdTotal: number;
+        totalUsdValue: number;
+        timestamp: string;
+        fromCache: boolean;
+        cacheNotice: string;
+    }>;
+    /**
      * 獲取所有支持的交易所列表
      */
     static getSupportedExchanges(): import("..").SupportedExchange[];
@@ -106,6 +149,7 @@ export declare class ExchangeService {
      * 獲取用戶連接的所有交易所帳戶
      */
     static getUserExchangeAccounts(userId: string): Promise<{
+        icon: string;
         id: string;
         createdAt: Date;
         exchange: string;

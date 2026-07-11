@@ -1,5 +1,5 @@
 /**
- * Auth Domain Model Types
+ * Auth 領域模型型別
  */
 
 export interface PlaidCacheInfo {
@@ -19,26 +19,11 @@ export interface UserProfile {
   displayName: string;
   avatarUrl: string;
   membershipLabel: string;
-  plaidCache?: PlaidCacheInfo; // 可选的 Plaid 缓存统计信息
-}
-
-export interface RegisterPayload {
-  email: string;
-  password: string;
-}
-
-export interface LoginPayload {
-  email: string;
-  password: string;
+  plaidCache?: PlaidCacheInfo; // 可選的 Plaid 快取統計資訊
 }
 
 export interface UpdateProfilePayload {
   displayName?: string;
   avatarUrl?: string;
   avatarBase64?: string;  // Base64 編碼的圖片數據 (data:image/...;base64,...)
-}
-
-export interface AuthResponse {
-  token: string;
-  user: UserProfile;
 }

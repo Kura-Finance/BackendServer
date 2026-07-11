@@ -36,6 +36,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const auth_1 = require("../auth/middleware/auth");
 const ExchangeController = __importStar(require("./controllers/exchangeController"));
+const validateRequest_1 = require("../shared/middleware/validateRequest");
+const exchangeSchemas_1 = require("./schemas/exchangeSchemas");
 const router = (0, express_1.Router)();
 // 所有交易所路由都需要驗證
 router.use(auth_1.requireAuth);
@@ -49,7 +51,7 @@ router.get('/supported', ExchangeController.getSupportedExchanges);
  * 連結新的交易所帳戶
  * Body: { exchange, apiKey, apiSecret, passphrase? }
  */
-router.post('/connect', ExchangeController.connectExchange);
+router.post('/connect', (0, validateRequest_1.validateRequest)({ body: exchangeSchemas_1.connectExchangeBodySchema }), ExchangeController.connectExchange);
 /**
  * GET /api/exchange/accounts
  * 獲取用戶所有交易所帳戶
@@ -60,11 +62,11 @@ router.get('/accounts', ExchangeController.getUserExchangeAccounts);
  * 獲取特定交易所帳戶的餘額和資產 (合併端點)
  * 返回: { account, balances[], assets[], timestamp }
  */
-router.get('/:exchangeAccountId/balances', ExchangeController.getExchangeBalances);
+router.get('/:exchangeAccountId/balances', (0, validateRequest_1.validateRequest)({ params: exchangeSchemas_1.exchangeAccountIdParamsSchema }), ExchangeController.getExchangeBalances);
 /**
  * DELETE /api/exchange/:exchangeAccountId
  * 斷開交易所連接
  */
-router.delete('/:exchangeAccountId', ExchangeController.disconnectExchange);
+router.delete('/:exchangeAccountId', (0, validateRequest_1.validateRequest)({ params: exchangeSchemas_1.exchangeAccountIdParamsSchema }), ExchangeController.disconnectExchange);
 exports.default = router;
 //# sourceMappingURL=router.js.map

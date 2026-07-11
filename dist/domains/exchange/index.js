@@ -1,6 +1,6 @@
 "use strict";
-// Exchange Domain
-// 加密貨幣交易所集成 (CCXT)
+// 交易所領域模組
+// 加密貨幣交易所整合 (CCXT)
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -44,8 +44,8 @@ Object.defineProperty(exports, "ExchangeService", { enumerable: true, get: funct
 exports.ExchangeController = __importStar(require("./controllers/exchangeController"));
 var router_1 = require("./router");
 Object.defineProperty(exports, "exchangeRouter", { enumerable: true, get: function () { return __importDefault(router_1).default; } });
-var constants_1 = require("./constants");
-Object.defineProperty(exports, "KURA_SUPPORTED_EXCHANGES", { enumerable: true, get: function () { return constants_1.KURA_SUPPORTED_EXCHANGES; } });
-Object.defineProperty(exports, "EXCHANGE_DISPLAY_MAP", { enumerable: true, get: function () { return constants_1.EXCHANGE_DISPLAY_MAP; } });
-Object.defineProperty(exports, "EXCHANGES_REQUIRING_PASSPHRASE", { enumerable: true, get: function () { return constants_1.EXCHANGES_REQUIRING_PASSPHRASE; } });
+var symbolsAndExchangesUtil_1 = require("../shared/lib/symbolsAndExchangesUtil");
+Object.defineProperty(exports, "KURA_SUPPORTED_EXCHANGES", { enumerable: true, get: function () { return symbolsAndExchangesUtil_1.KURA_SUPPORTED_EXCHANGES; } });
+Object.defineProperty(exports, "EXCHANGE_DISPLAY_MAP", { enumerable: true, get: function () { return symbolsAndExchangesUtil_1.EXCHANGE_DISPLAY_MAP; } });
+Object.defineProperty(exports, "EXCHANGES_REQUIRING_PASSPHRASE", { enumerable: true, get: function () { return symbolsAndExchangesUtil_1.EXCHANGES_REQUIRING_PASSPHRASE; } });
 //# sourceMappingURL=index.js.map
