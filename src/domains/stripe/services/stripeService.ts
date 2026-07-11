@@ -16,6 +16,8 @@ const ACTIVE_SUBSCRIPTION_STATUSES = new Set<Stripe.Subscription.Status>([
   'active',
   'past_due',
 ]);
+const REFERRAL_CASHBACK_RATE = 0.1;
+const DEFAULT_REFERRAL_CASHBACK_HOLD_DAYS = 14;
 
 export class StripeService {
   private static stripeClient: Stripe | null = null;
@@ -58,7 +60,15 @@ export class StripeService {
     return new Date(unixTimestamp * 1000);
   }
 
-  private static async getOrCreateCustomer(userId: string): Promise<{ customerId: string; email: string }> {
+  private static getCashbackHoldDays(): number {
+    const configured = Number(process.env.REFERRAL_CASHBACK_HOLD_DAYS || DEFAULT_REFERRAL_CASHBACK_HOLD_DAYS);
+    if (!Number.isFinite(configured) || configured < 0) {
+      return DEFAULT_REFERRAL_CASHBACK_HOLD_DAYS;
+    }
+    return Math.floor(configured);
+  }
+
+  private static async getOrCreateCustomer(userId: string): Promise<{ customerId: string; email: string | null }> {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -78,7 +88,7 @@ export class StripeService {
 
     const stripe = this.getStripeClient();
     const customer = await stripe.customers.create({
-      email: user.email,
+      ...(user.email ? { email: user.email } : {}),
       metadata: {
         userId: user.id,
       },
@@ -200,6 +210,9 @@ export class StripeService {
       return;
     }
 
+    // 每次 webhook 先嘗試結算已到期的 pending 返現
+    await this.settlePendingCashbacks();
+
     switch (event.type) {
       case 'checkout.session.completed':
         await this.handleCheckoutCompleted(event.data.object as Stripe.Checkout.Session);
@@ -210,8 +223,16 @@ export class StripeService {
         await this.syncSubscription(event.data.object as Stripe.Subscription);
         break;
       case 'invoice.paid':
+        await this.handleInvoiceEvent(event.data.object as Stripe.Invoice, true);
+        break;
       case 'invoice.payment_failed':
-        await this.handleInvoiceEvent(event.data.object as Stripe.Invoice);
+        await this.handleInvoiceEvent(event.data.object as Stripe.Invoice, false);
+        break;
+      case 'charge.refunded':
+        await this.handleChargeRefunded(event.data.object as Stripe.Charge, event.id);
+        break;
+      case 'charge.dispute.closed':
+        await this.handleDisputeClosed(event.data.object as Stripe.Dispute, event.id);
         break;
       default:
         logDebug('Unhandled Stripe webhook type', { type: event.type, eventId: event.id });
@@ -251,7 +272,10 @@ export class StripeService {
     });
   }
 
-  private static async handleInvoiceEvent(invoice: Stripe.Invoice): Promise<void> {
+  private static async handleInvoiceEvent(
+    invoice: Stripe.Invoice,
+    shouldAwardReferralCashback: boolean,
+  ): Promise<void> {
     const parent = invoice.parent;
     if (!parent?.subscription_details?.subscription) {
       return;
@@ -263,10 +287,16 @@ export class StripeService {
 
     const stripe = this.getStripeClient();
     const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-    await this.syncSubscription(subscription);
+    const paidUserId = await this.syncSubscription(subscription);
+
+    if (!shouldAwardReferralCashback || !paidUserId) {
+      return;
+    }
+
+    await this.applyReferralCashback(paidUserId, invoice, subscriptionId);
   }
 
-  private static async syncSubscription(subscription: Stripe.Subscription): Promise<void> {
+  private static async syncSubscription(subscription: Stripe.Subscription): Promise<string | null> {
     const customerId = typeof subscription.customer === 'string'
       ? subscription.customer
       : subscription.customer.id;
@@ -277,7 +307,7 @@ export class StripeService {
         stripeSubscriptionId: subscription.id,
         customerId,
       });
-      return;
+      return null;
     }
 
     const stripePriceId = subscription.items.data[0]?.price?.id || null;
@@ -317,6 +347,216 @@ export class StripeService {
     });
 
     await this.applyTierBySubscription(userId, subscription.status, stripePriceId);
+    return userId;
+  }
+
+  private static async applyReferralCashback(
+    paidUserId: string,
+    invoice: Stripe.Invoice,
+    subscriptionId: string,
+  ): Promise<void> {
+    const referredUser = await prisma.user.findUnique({
+      where: { id: paidUserId },
+      select: {
+        referredByUserId: true,
+      },
+    });
+
+    const inviterUserId = referredUser?.referredByUserId;
+    if (!inviterUserId || inviterUserId === paidUserId) {
+      return;
+    }
+
+    const amountPaidCents = invoice.amount_paid || 0;
+    if (amountPaidCents <= 0) {
+      return;
+    }
+
+    const grossAmount = Number((amountPaidCents / 100).toFixed(2));
+    const cashbackAmount = Number((grossAmount * REFERRAL_CASHBACK_RATE).toFixed(2));
+    const stripeInvoiceId = invoice.id;
+    const stripeChargeId = this.extractChargeIdFromInvoice(invoice);
+    if (cashbackAmount <= 0) {
+      return;
+    }
+    if (!stripeInvoiceId) {
+      return;
+    }
+
+    const holdDays = this.getCashbackHoldDays();
+    const availableAt = new Date();
+    availableAt.setDate(availableAt.getDate() + holdDays);
+
+    try {
+      await prisma.referralCashback.create({
+        data: {
+          inviterUserId,
+          referredUserId: paidUserId,
+          stripeInvoiceId,
+          stripeChargeId,
+          stripeSubscriptionId: subscriptionId,
+          grossAmount,
+          cashbackAmount,
+          currency: invoice.currency || 'usd',
+          status: 'pending',
+          availableAt,
+        },
+      });
+    } catch (error) {
+      if (error instanceof PrismaClientKnownRequestError && error.code === 'P2002') {
+        // 同一張 invoice webhook 重送，避免重複入帳
+        return;
+      }
+      throw error;
+    }
+  }
+
+  private static extractChargeIdFromInvoice(invoice: Stripe.Invoice): string | null {
+    const invoiceCharge = (invoice as any).charge as string | { id?: string } | null | undefined;
+    if (!invoiceCharge) return null;
+    return typeof invoiceCharge === 'string' ? invoiceCharge : invoiceCharge.id || null;
+  }
+
+  private static async settlePendingCashbacks(): Promise<void> {
+    const now = new Date();
+    const dueCashbacks = await prisma.referralCashback.findMany({
+      where: {
+        status: 'pending',
+        availableAt: {
+          lte: now,
+        },
+      },
+      select: {
+        id: true,
+        inviterUserId: true,
+        cashbackAmount: true,
+      },
+      take: 200,
+    });
+
+    for (const cashback of dueCashbacks) {
+      await prisma.$transaction(async (tx) => {
+        const updated = await tx.referralCashback.updateMany({
+          where: {
+            id: cashback.id,
+            status: 'pending',
+          },
+          data: {
+            status: 'available',
+            settledAt: now,
+          },
+        });
+
+        if (updated.count === 0) {
+          return;
+        }
+
+        await tx.user.update({
+          where: { id: cashback.inviterUserId },
+          data: {
+            cashbackBalance: {
+              increment: cashback.cashbackAmount,
+            },
+          },
+        });
+      });
+    }
+  }
+
+  private static async handleChargeRefunded(charge: Stripe.Charge, eventId: string): Promise<void> {
+    const stripeChargeId = charge.id;
+    const chargeInvoice = (charge as any).invoice as string | { id?: string } | null | undefined;
+    const stripeInvoiceId =
+      typeof chargeInvoice === 'string' ? chargeInvoice : chargeInvoice?.id || undefined;
+
+    const reverseTarget: { stripeInvoiceId?: string; stripeChargeId?: string } = {};
+    if (stripeInvoiceId) reverseTarget.stripeInvoiceId = stripeInvoiceId;
+    if (stripeChargeId) reverseTarget.stripeChargeId = stripeChargeId;
+
+    await this.reverseReferralCashback(
+      reverseTarget,
+      'refund_or_chargeback',
+      eventId,
+    );
+  }
+
+  private static async handleDisputeClosed(dispute: Stripe.Dispute, eventId: string): Promise<void> {
+    // 僅在爭議最終輸掉時失效返現
+    if (dispute.status === 'won') {
+      return;
+    }
+
+    const stripeChargeId =
+      typeof dispute.charge === 'string' ? dispute.charge : dispute.charge?.id;
+
+    const reverseTarget: { stripeInvoiceId?: string; stripeChargeId?: string } = {};
+    if (stripeChargeId) reverseTarget.stripeChargeId = stripeChargeId;
+
+    await this.reverseReferralCashback(
+      reverseTarget,
+      'dispute_lost',
+      eventId,
+    );
+  }
+
+  private static async reverseReferralCashback(
+    target: { stripeInvoiceId?: string; stripeChargeId?: string },
+    reason: string,
+    eventId: string,
+  ): Promise<void> {
+    if (!target.stripeInvoiceId && !target.stripeChargeId) {
+      return;
+    }
+
+    const cashback = await prisma.referralCashback.findFirst({
+      where: {
+        OR: [
+          ...(target.stripeInvoiceId ? [{ stripeInvoiceId: target.stripeInvoiceId }] : []),
+          ...(target.stripeChargeId ? [{ stripeChargeId: target.stripeChargeId }] : []),
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        inviterUserId: true,
+        cashbackAmount: true,
+        status: true,
+      },
+    });
+
+    if (!cashback || cashback.status === 'reversed') {
+      return;
+    }
+
+    await prisma.$transaction(async (tx) => {
+      const updated = await tx.referralCashback.updateMany({
+        where: {
+          id: cashback.id,
+          status: cashback.status,
+        },
+        data: {
+          status: 'reversed',
+          reversedAt: new Date(),
+          reverseReason: reason,
+          reversedByEventId: eventId,
+        },
+      });
+
+      if (updated.count === 0) {
+        return;
+      }
+
+      if (cashback.status === 'available') {
+        await tx.user.update({
+          where: { id: cashback.inviterUserId },
+          data: {
+            cashbackBalance: {
+              decrement: cashback.cashbackAmount,
+            },
+          },
+        });
+      }
+    });
   }
 
   private static async resolveUserId(

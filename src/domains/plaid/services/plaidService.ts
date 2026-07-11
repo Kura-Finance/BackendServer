@@ -5,13 +5,14 @@
 
 import { PlaidAuthService } from './plaidAuthService';
 import { PlaidAccountService } from './plaidAccountService';
-import { PlaidCacheService } from './plaidCacheService';
+import { PlaidCacheService, EncryptedFinanceSnapshot } from './plaidCacheService';
 import { PlaidWebhookSyncService } from './plaidWebhookSyncService';
-import { FinanceSnapshot } from '../models/types';
 
 /**
- * 統一的 Plaid 服務門面
- * 提供簡潔的公開 API，內部委託給專門服務
+ * 統一的 Plaid 服務門面（Phase 3 Zero-Access E2EE only）。
+ *
+ * 所有對外 API 都回傳「加密形式」snapshot：後端永不解密 sensitive payload，
+ * 前端用 X25519 privateKey unwrap payloadKeys 後解每個 row 的 ciphertext。
  */
 export class PlaidService {
   // ===== 驗證 =====
@@ -31,13 +32,22 @@ export class PlaidService {
     return PlaidAccountService.disconnectItemByAccountId(userId, accountId);
   }
 
-  // ===== 快取與同步 =====
-  static async getFinanceSnapshotOptimized(userId: string, isManualRefresh: boolean = false): Promise<FinanceSnapshot> {
+  // ===== 快取與同步（全部加密形式）=====
+  /**
+   * 優化版：快取未過期 → 直接讀加密 row；過期或手動刷新 → 從 Plaid API 抓 → 加密寫入 → 回讀加密 row。
+   */
+  static async getFinanceSnapshotOptimized(
+    userId: string,
+    isManualRefresh: boolean = false,
+  ): Promise<EncryptedFinanceSnapshot> {
     return PlaidCacheService.getFinanceSnapshotOptimized(userId, isManualRefresh);
   }
 
-  static async getFinanceSnapshot(userId: string): Promise<FinanceSnapshot> {
-    return PlaidCacheService.getFinanceSnapshot(userId);
+  /**
+   * 僅讀快取（不觸發 Plaid API）：回傳目前 cache 中的加密形式 snapshot。
+   */
+  static async getEncryptedFinanceSnapshot(userId: string): Promise<EncryptedFinanceSnapshot> {
+    return PlaidCacheService.getEncryptedSnapshotFromCache(userId);
   }
 
   // ===== Webhook 同步 =====

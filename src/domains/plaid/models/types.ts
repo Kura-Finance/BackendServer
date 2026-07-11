@@ -36,7 +36,7 @@ export interface PlaidTransactionPayload {
   recurringFrequency?: string; // 重複頻率 (WEEKLY, MONTHLY, YEARLY 等)
   isSubscription?: boolean; // 是否為訂閱交易
   enrichedMerchantName?: string; // 商家正式名稱
-  merchantLogo?: string; // 商家 LOGO URL (Clearbit)
+  merchantLogo?: string; // 商家 LOGO URL（來自 Plaid）
   plaidMerchantLogo?: string; // Plaid 原生返回的商家 logo (如果有)
   merchantCategory?: string; // 商家分類
   isPending?: boolean; // 是否為待處理交易

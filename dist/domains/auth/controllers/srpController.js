@@ -37,7 +37,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.srpGenerateDataKeyDisabled = exports.srpDataKey = exports.srpSetup = exports.srpVerify = exports.srpChallenge = exports.srpGetSalt = void 0;
+exports.srpDataKey = exports.srpSetup = exports.srpVerify = exports.srpChallenge = exports.srpGetSalt = void 0;
 const jwt = __importStar(require("jsonwebtoken"));
 const srpService_1 = require("../services/srpService");
 const authService_1 = require("../services/authService");
@@ -190,15 +190,4 @@ const srpDataKey = async (req, res) => {
     }
 };
 exports.srpDataKey = srpDataKey;
-/**
- * POST /api/auth/srp/generate-data-key
- * 停用：Zero Access/Zero Knowledge 模式下，DEK 必須由用戶端本地生成。
- */
-const srpGenerateDataKeyDisabled = async (_req, res) => {
-    (0, apiResponse_1.sendError)(res, 410, {
-        code: 'GONE',
-        message: 'Endpoint disabled. Generate data key on client and upload only encryptedDataKey via /srp/setup or /register/verify.',
-    });
-};
-exports.srpGenerateDataKeyDisabled = srpGenerateDataKeyDisabled;
 //# sourceMappingURL=srpController.js.map

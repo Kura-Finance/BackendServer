@@ -6,9 +6,36 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PlaidTransactionService = void 0;
 const logger_1 = require("../../logger");
-const symbolsAndExchangesUtil_1 = require("../../shared/lib/symbolsAndExchangesUtil");
 const plaidDataTransformer_1 = require("../lib/plaidDataTransformer");
 class PlaidTransactionService {
+    static normalizeMerchantName(merchantName) {
+        if (!merchantName) {
+            return 'Unknown Merchant';
+        }
+        const raw = merchantName.trim();
+        if (!raw) {
+            return 'Unknown Merchant';
+        }
+        // 部分機構會把多個候選商戶名用分號串起來，優先取第一段可用值
+        const firstSegment = raw
+            .split(';')
+            .map((segment) => segment.trim())
+            .find((segment) => segment.length > 0) || raw;
+        let normalized = firstSegment
+            .replace(/^merchant\s*name:\s*/i, '')
+            .replace(/\s+from\s+.+\s+via\s+.+$/i, '')
+            .replace(/\s+via\s+.+$/i, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+        // 若第一段是敘述句，改抓 "Merchant name: xxx"
+        if (!normalized || /^from\s+/i.test(normalized)) {
+            const embeddedMerchant = raw.match(/merchant\s*name:\s*([^;]+)/i)?.[1]?.trim();
+            if (embeddedMerchant) {
+                normalized = embeddedMerchant;
+            }
+        }
+        return normalized || raw;
+    }
     static extractPlaidMerchantLogo(tx) {
         if (typeof tx.logo_url === 'string' && tx.logo_url.trim()) {
             return tx.logo_url.trim();
@@ -105,16 +132,17 @@ class PlaidTransactionService {
     static formatTransaction(tx, accountsMetadata) {
         const accountMeta = accountsMetadata.get(tx.account_id);
         const primaryCategory = tx.personal_finance_category?.primary || tx.category?.[0] || 'Uncategorized';
+        const normalizedMerchant = this.normalizeMerchantName(tx.merchant_name || tx.name);
         // 識別定期交易和訂閱
         const { isSubscription, isRecurring } = this.identifyRecurringTransactions(primaryCategory, tx.merchant_name);
         const txPayload = {
             id: tx.transaction_id,
             accountId: tx.account_id,
-            accountName: accountMeta?.name || 'Plaid Account',
+            accountName: accountMeta?.name,
             accountType: (0, plaidDataTransformer_1.mapPlaidAccountType)(accountMeta?.type || 'depository', accountMeta?.subtype),
             amount: Number(Math.abs(tx.amount)).toFixed(2),
             date: tx.date,
-            merchant: tx.merchant_name || tx.name,
+            merchant: normalizedMerchant,
             category: primaryCategory,
             type: (0, plaidDataTransformer_1.mapPlaidTransactionType)(tx.amount, primaryCategory),
             // ===== 進階交易信息 =====
@@ -130,13 +158,11 @@ class PlaidTransactionService {
         }
         const plaidMerchantLogo = this.extractPlaidMerchantLogo(tx);
         if (tx.merchant_name) {
-            txPayload.enrichedMerchantName = tx.merchant_name;
-            txPayload.merchantLogo = (0, symbolsAndExchangesUtil_1.getMerchantLogoUrl)(tx.merchant_name);
+            txPayload.enrichedMerchantName = normalizedMerchant;
         }
-        else if (tx.name) {
-            txPayload.merchantLogo = (0, symbolsAndExchangesUtil_1.getMerchantLogoUrl)(tx.name);
-        }
+        // merchantLogo 完全以 Plaid 回傳為準，不再 fallback logo.dev
         if (plaidMerchantLogo) {
+            txPayload.merchantLogo = plaidMerchantLogo;
             txPayload.plaidMerchantLogo = plaidMerchantLogo;
         }
         if (tx.pending) {
@@ -159,39 +185,6 @@ class PlaidTransactionService {
             primaryCategory === 'RENT' ||
             primaryCategory === 'UTILITIES';
         return { isSubscription: isSubscriptionFlag, isRecurring: isRecurringFlag };
-    }
-    /**
-     * 為緩存格式化交易
-     */
-    static formatTransactionsForCache(transactions) {
-        return transactions.map((tx) => {
-            const transaction = {
-                accountId: tx.accountId,
-                transactionId: tx.id,
-                merchant: tx.merchant,
-                amount: tx.amount,
-                category: tx.category,
-                type: tx.type,
-                date: tx.date,
-                month: tx.date.slice(0, 7),
-            };
-            // 只在有值的情況下添加可選欄位
-            if (tx.personalFinanceCategory)
-                transaction.personalFinanceCategory = tx.personalFinanceCategory;
-            if (tx.isRecurring !== undefined)
-                transaction.isRecurring = tx.isRecurring;
-            if (tx.recurringFrequency)
-                transaction.recurringFrequency = tx.recurringFrequency;
-            if (tx.isSubscription !== undefined)
-                transaction.isSubscription = tx.isSubscription;
-            if (tx.enrichedMerchantName)
-                transaction.enrichedMerchantName = tx.enrichedMerchantName;
-            if (tx.merchantLogo)
-                transaction.merchantLogo = tx.merchantLogo;
-            if (tx.isPending)
-                transaction.isPending = tx.isPending;
-            return transaction;
-        });
     }
 }
 exports.PlaidTransactionService = PlaidTransactionService;

@@ -14,31 +14,44 @@ datasource db {
 // 1. 核心用戶系統 (User & Auth)
 // ==========================================
 model User {
-  id                         String    @id @default(uuid())
-  email                      String    @unique
-  stripeCustomerId           String?   @unique
+  id               String    @id @default(uuid())
+  // email 由 Privy 提供（wallet / social 登入可能沒有 email），因此可為 null
+  email            String?   @unique
+  stripeCustomerId String?   @unique
+  referCode        String    @unique
+  referredByUserId String?
+  referredAt       DateTime?
 
-  // ── SRP 零知識認證 (Phase 2) ──────────────────────────────
-  // SRP 不傳遞密碼到伺服器；伺服器只存 verifier（無法反推密碼）
-  srpSalt                    String?   // Argon2id salt (hex)，用於 client-side key derivation
-  srpVerifier                String?   // SRP verifier (hex)，取代 bcrypt password
+  // ── Privy 認證（取代 SRP）─────────────────────────────────
+  // privyUserId：Privy DID（did:privy:...），登入身分的主鍵
+  // walletAddress：Privy embedded wallet EOA 地址（簽名/登入綁定）
+  // scaAddress：ERC-4337 Smart Contract Account 地址（付款結算用）
+  privyUserId   String? @unique
+  walletAddress String?
+  scaAddress    String?
 
-  // ── Per-user Data Key (Phase 2) ───────────────────────────
-  // Data Key 由後端隨機生成，用 client 推導的 KEK 加密後存放
-  // 後端永遠不知道 KEK，因此永遠無法解密 encryptedDataKey
-  encryptedDataKey           String?   // AES-GCM(DataKey, KEK)，只有 client 能解密
-  kekSalt                    String?   // Argon2id salt for KEK derivation (可與 srpSalt 不同)
+  // ── E2EE KEK 推導 salt（改由 Passkey PRF 使用）──────────────
+  // 原本是 SRP/password 派生 KEK 的 salt，現在前端用 Passkey PRF + 此 salt
+  // 推導 KEK 來 wrap encryptedPrivateKey。後端僅儲存，永不參與推導。
+  kekSalt String?
 
-  name                       String?
-  avatarUrl                  String?
-  emailVerified              Boolean   @default(false)
-  tier                       String    @default("Basic")
-  points                     Int       @default(0)
-  createdAt                  DateTime  @default(now())
-  updatedAt                  DateTime  @updatedAt
+  // ── E2EE Key Pair (Phase 3 - Zero Access Encryption) ──────
+  // 用戶端生成 X25519 keypair：
+  //   publicKey 由後端用來 wrap 每次 sync 的 SEK
+  //   encryptedPrivateKey 用 KEK 加密後存放，後端永遠無法解
+  publicKey           String? // base64(X25519 pubkey, 32 bytes)
+  encryptedPrivateKey String? // base64(nonce | XChaCha20-Poly1305(privKey, KEK))
+  keyPairAlgorithm    String    @default("x25519-xchacha20")
+  keyPairCreatedAt    DateTime?
 
-  // 關聯：驗證碼管理
-  verificationCodes VerificationCode[]
+  name            String?
+  avatarUrl       String?
+  emailVerified   Boolean  @default(false)
+  tier            String   @default("Basic")
+  points          Int      @default(0)
+  cashbackBalance Float    @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   // 關聯：Dashboard 模組 (金融帳戶)
   plaidItems       PlaidItem[]
@@ -60,9 +73,8 @@ model User {
   exchangeAssetCache   ExchangeAssetCache[]
   exchangeSyncLog      ExchangeSyncLog?
 
-  // 關聯：Asset Performance 模組 (資產績效追蹤)
-  assetSnapshots   AssetSnapshot[]
-  assetPerformance AssetPerformance?
+  // 關聯：Asset Performance 模組 (per-metric encrypted snapshots)
+  assetSnapshots AssetSnapshot[]
 
   // 關聯：通知系統 (Notification System)
   notifications           Notification[]
@@ -70,6 +82,111 @@ model User {
   debankProtocolCache     DeBankProtocolCache[]
   debankTokenCache        DeBankTokenCache[]
   stripeSubscriptions     StripeSubscription[]
+  inviterCashbacks        ReferralCashback[]       @relation("ReferralCashbackInviter")
+  referredCashbacks       ReferralCashback[]       @relation("ReferralCashbackReferred")
+
+  referredBy    User?  @relation("UserReferrals", fields: [referredByUserId], references: [id], onDelete: SetNull)
+  referredUsers User[] @relation("UserReferrals")
+
+  // 關聯：E2EE 加密 payload key（每個用戶可能有多個 wrappedSek）
+  encryptedPayloadKeys EncryptedPayloadKey[]
+
+  // 關聯：Non-Custodial Crypto Card
+  cardKycApplications CardKycApplication[]
+  cardAccounts        CardAccount[]
+  cardWallet          CardWallet?
+  cardTransactions    CardTransaction[]
+  cardDailySpend      CardDailySpend[]
+
+  // 關聯：Passkey / WebAuthn（E2EE 資料層解鎖）
+  passkeyCredentials PasskeyCredential[]
+  webauthnChallenge  WebAuthnChallenge?
+
+  // 關聯：Bridge On/Off Ramp（法幣 <-> 穩定幣）
+  bridgeCustomer         BridgeCustomer?
+  bridgeTransfers        BridgeTransfer[]
+  bridgeExternalAccounts BridgeExternalAccount[]
+
+  @@index([referredByUserId])
+}
+
+// ==========================================
+// 5. Passkey / WebAuthn（E2EE 資料層解鎖）
+// ==========================================
+
+// 已註冊的 WebAuthn 憑證（每個裝置一筆）。
+// encryptedDek：用該 passkey（PRF 推導金鑰）包裝的 32-byte DEK（hex）；
+//   passkey assertion 驗證成功後回傳給前端解開資料層。
+model PasskeyCredential {
+  id           String   @id @default(uuid())
+  userId       String
+  credentialId String   @unique // base64url credential id
+  publicKey    String            // base64 COSE public key
+  counter      Int      @default(0)
+  transports   String[]          // ['internal','hybrid','usb','nfc','ble']
+  deviceType   String?           // 'singleDevice' | 'multiDevice'
+  backedUp     Boolean  @default(false)
+  encryptedDek String?           // hex(32 bytes)：passkey 包裝的 DEK
+  createdAt    DateTime @default(now())
+  lastUsedAt   DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([credentialId])
+}
+
+// 進行中的 WebAuthn challenge（每個使用者同時只有一個，含過期時間）。
+model WebAuthnChallenge {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  challenge String            // base64url challenge
+  type      String            // 'registration' | 'authentication'
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
+// ==========================================
+// 1.5 E2EE Payload Key (Zero Access Encryption)
+// ==========================================
+// 每次同步流程在後端生成一個 Session Encryption Key (SEK)，
+// 用該用戶的 publicKey 做 sealed box 包裝後存入此表。
+// 同一次 sync 內所有 row 共用同一個 wrappedSek。
+// 後端寫完即丟棄 SEK，永遠無法解開 wrappedSek。
+model EncryptedPayloadKey {
+  id         String   @id @default(uuid())
+  userId     String
+  // scope 範例：
+  //   plaid_tx:{plaidItemId}        - Plaid 交易批次
+  //   plaid_acct:{plaidItemId}      - Plaid 銀行帳戶批次
+  //   plaid_inv:{plaidItemId}       - Plaid 投資批次
+  //   exchange_balance:{accountId}  - 交易所餘額
+  //   exchange_asset:{accountId}    - 交易所資產
+  //   debank_token:{address}        - DeBank token
+  //   debank_protocol:{address}     - DeBank protocol
+  //   asset_snapshot:{metric}       - 資產快照（per-metric）
+  scope      String
+  wrappedSek String // base64(crypto_box_seal(SEK, userPublicKey))
+  algorithm  String   @default("x25519-sealedbox+aes-256-gcm")
+  createdAt  DateTime @default(now())
+
+  user                        User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plaidTransactionCache       PlaidTransactionCache[]
+  plaidAccountCache           PlaidAccountCache[]
+  plaidInvestmentAccountCache PlaidInvestmentAccountCache[]
+  plaidInvestmentCache        PlaidInvestmentCache[]
+  exchangeBalanceCache        ExchangeBalanceCache[]
+  exchangeAssetCache          ExchangeAssetCache[]
+  debankTokenCache            DeBankTokenCache[]
+  debankProtocolCache         DeBankProtocolCache[]
+  assetSnapshot               AssetSnapshot[]
+
+  @@index([userId, scope, createdAt])
 }
 
 // ==========================================
@@ -78,13 +195,13 @@ model User {
 
 // 傳統金融綁定 (Plaid 授權紀錄)
 model PlaidItem {
-  id              String   @id @default(uuid())
-  userId          String
-  accessToken     String   @unique // Plaid API 的永久存取權杖
-  itemId          String   @unique // Plaid 的銀行項目 ID
+  id                 String   @id @default(uuid())
+  userId             String
+  accessToken        String   @unique // Plaid API 的永久存取權杖
+  itemId             String   @unique // Plaid 的銀行項目 ID
   transactionsCursor String? // transactions/sync cursor（每個 Plaid item 獨立維護）
-  institutionName String // 銀行或券商名稱 (例如: Chase, Robinhood)
-  createdAt       DateTime @default(now())
+  institutionName    String // 銀行或券商名稱 (例如: Chase, Robinhood)
+  createdAt          DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -118,49 +235,56 @@ model ExchangeAccount {
   @@index([userId])
 }
 
-// 交易所餘額快取 (按交易所与幣種快取，减少 API 調用)
+// 交易所餘額快取（Phase 3 Zero-Access E2EE only）。
+// 後端只持有 metadata（symbol / exchange）+ payloadCiphertext + payloadKeyId。
 model ExchangeBalanceCache {
   id                String @id @default(uuid())
   userId            String
   exchangeAccountId String // 所屬的交易所帳戶
   exchange          String // 交易所名稱
   symbol            String // 幣種代碼 (例如: "BTC", "ETH", "USDT")
-  free              Float // 可用餘額
-  used              Float // 鎖定餘額 (訂單中)
-  total             Float // 總餘額 (free + used)
+
+  // ── Phase 3 E2EE payload（內含 free / used / total）──
+  payloadCiphertext String? // base64(iv | tag | AES-256-GCM(SEK, JSON{free,used,total}))
+  payloadKeyId      String?
 
   cacheTtl  Int      @default(300) // 快取過期時間 (秒，預設 5 分鐘)
   cachedAt  DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
 
   @@unique([userId, exchangeAccountId, symbol])
   @@index([userId])
   @@index([userId, exchangeAccountId])
+  @@index([payloadKeyId])
 }
 
-// 交易所資產快取 (用户在交易所持有的加密貨幣)
+// 交易所資產快取（Phase 3 Zero-Access E2EE only）。
+// 後端只持有 metadata（symbol / exchange）+ payloadCiphertext + payloadKeyId。
 model ExchangeAssetCache {
   id                String @id @default(uuid())
   userId            String
   exchangeAccountId String // 所屬的交易所帳戶
   exchange          String // 交易所名稱
   symbol            String // 幣種代碼 (例如: "BTC", "ETH")
-  holdings          Float // 持有數量
-  price             Float // 當前價格 (USD)
-  value             Float // 資產價值 (USD，= holdings × price)
-  percentageOfTotal Float // 佔總資產的百分比
+
+  // ── Phase 3 E2EE payload（內含 holdings / price / value / percentageOfTotal）──
+  payloadCiphertext String?
+  payloadKeyId      String?
 
   cacheTtl  Int      @default(300) // 快取過期時間 (秒)
   cachedAt  DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
 
   @@unique([userId, exchangeAccountId, symbol])
   @@index([userId])
   @@index([userId, exchangeAccountId])
+  @@index([payloadKeyId])
 }
 
 // 交易所同步狀態 (跟踪每個用戶的交易所最後同步時間)
@@ -187,150 +311,153 @@ model ExchangeSyncLog {
 // 3. Asset Performance 模組 (資產績效追蹤)
 // ==========================================
 
-// 資產快照 (記錄某個時間點的資產狀況，用於繪製資產曲線圖)
+// 資產快照（Phase 3 Zero-Access E2EE only）。
+//
+// 每筆 row 只記一個 metric（per-metric snapshot）；同一 metric 同一天可有多筆 row，
+// 前端讀取後按 sub-scoped key 取 latest、按 base 加總組合日線。
+//
+// metric 命名規則：
+//   base：     "cashFlow" / "plaidInvestment"
+//   sub-scoped："cryptoSpot:exchange:{accountId}"、"cryptoSpot:debank:{address}"、
+//              "defiProtocol:debank:{address}"
 model AssetSnapshot {
-  id       String @id @default(uuid())
-  userId   String
-  assetId  String // 資產標識 (例如: account-id 或 investment-id)
-  name     String // 資產名稱 (例如: "Checking Account", "VTSAX Portfolio")
-  type     String // 資產類型 (bank_account, investment, crypto_wallet)
-  value    String   // AES-256-GCM 加密的資產價值 (USD)
-  currency String @default("USD")
+  id                String   @id @default(uuid())
+  userId            String
+  metric            String   // base 或 sub-scoped metric 名稱
+  payloadCiphertext String   // base64(iv | tag | AES-256-GCM(SEK, JSON{value: number}))
+  payloadKeyId      String   // wrappedSek 指針
 
-  // 記錄時間戳
   recordedAt DateTime // 記錄時間
   createdAt  DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
 
   @@index([userId, recordedAt])
-  @@index([userId, assetId])
-}
-
-// 資產性能總覽 (用戶層級，快取用於快速查詢)
-model AssetPerformance {
-  id     String @id @default(uuid())
-  userId String @unique
-
-  // 總資產
-  totalAssets      String    @default("") // AES-256-GCM 加密的總資產價值
-  lastRecordedTime DateTime? // 上次記錄時間
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, metric, recordedAt])
+  @@index([payloadKeyId])
 }
 
 // ==========================================
 // 4. Plaid 快取模組 (減少 API 調用，降低成本)
 // ==========================================
 
-// Plaid 帳戶快取 (銀行帳戶與投資帳戶基本資訊)
+// Plaid 帳戶快取（Phase 3 Zero-Access E2EE only）。
+//
+// 後端只持有 metadata（plaidItemId / accountId / type / bucket）+ payloadCiphertext + payloadKeyId。
+// 敏感欄位（name / balance / institutionName / logo / plaidLogo / apy / mask）全部整包進 payloadCiphertext。
 model PlaidAccountCache {
-  id              String @id @default(uuid())
-  userId          String
-  plaidItemId     String // 所屬的 Plaid Item
-  accountId       String // Plaid 的帳戶 ID
-  name            String // 帳戶名稱 (例如: "Chase Checking")
-  balance         String   // AES-256-GCM 加密的帳戶餘額
-  type            String // 帳戶類型 (checking, saving, credit, investment)
-  bucket          String // 帳戶分類 (banking, investment)
-  institutionName String // 銀行/券商名稱
-  logo            String @default("https://www.google.com/s2/favicons?domain=plaid.com&sz=128")
-  apy             String?  // AES-256-GCM 加密的年化報酬率
-  mask            String?  // AES-256-GCM 加密的帳號末 4 碼
+  id          String @id @default(uuid())
+  userId      String
+  plaidItemId String // 所屬的 Plaid Item
+  accountId   String // Plaid 的帳戶 ID
+  type        String // 帳戶類型 (checking, saving, credit, investment) — AssetService 算負債用
+  bucket      String // 帳戶分類 (banking, investment) — AssetService 分組用
+
+  // ── Phase 3 E2EE payload ──
+  payloadCiphertext String? // base64(iv | tag | AES-256-GCM(SEK, JSON{name,balance,institutionName,logo,plaidLogo,apy,mask}))
+  payloadKeyId      String?
 
   cachedAt  DateTime @default(now()) // 快取時間
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
 
   @@unique([userId, accountId])
   @@index([userId])
   @@index([userId, plaidItemId])
+  @@index([payloadKeyId])
 }
 
-// Plaid 交易快取 (每個月份的交易記錄，按月份分區)
+// Plaid 交易快取（Phase 3 Zero-Access E2EE only）。
+//
+// 後端只持有 metadata（accountId / transactionId / plaidItemId / date / month / isPending /
+// isRecurring / isSubscription / lastWebhookUpdate）+ payloadCiphertext + payloadKeyId。
+// 敏感欄位（amount, merchant, category, type, personalFinanceCategory, recurringFrequency,
+// enrichedMerchantName, merchantLogo, merchantCategory, accountName, accountType）
+// 全部整包進 payloadCiphertext。
 model PlaidTransactionCache {
-  id            String @id @default(uuid())
-  userId        String
-  accountId     String // 所屬帳戶 ID
-  transactionId String // Plaid 交易 ID
-  merchant      String // 商家名稱
-  amount        String // 交易金額
-  category      String // 交易分類 (基礎分類)
-  type          String // 交易類型 (deposit, credit, transfer)
-  date          String // 交易日期 (YYYY-MM-DD)
-  month         String // 快取月份 (YYYY-MM)，用於快速查詢
+  id     String @id @default(uuid())
+  userId String
 
-  // ===== 進階交易信息 (Plaid Personal Finance Category 及其他增強) =====
-  personalFinanceCategory String? // 個人財務類別 (例: SALARY, SUBSCRIPTION_PAYMENT, TRANSFER_OUT 等)
-  isRecurring             Boolean  @default(false) // 是否為定期交易
-  recurringFrequency      String?  // 重複頻率 (WEEKLY, MONTHLY, YEARLY, SEMI_MONTHLY, BI_WEEKLY)
-  isSubscription          Boolean  @default(false) // 是否為訂閱交易
-  
-  // 交易增強信息
-  enrichedMerchantName    String?  // Plaid 增強的商家名稱 (官方名稱)
-  merchantLogo            String?  // 商家 LOGO URL
-  merchantCategory        String?  // 商家分類
-  
-  // Webhook 和同步信息
-  lastWebhookUpdate       DateTime? // 上次 webhook 更新時間
-  isPending               Boolean  @default(false) // 是否為待處理交易
+  // ── metadata (plaintext) ──
+  accountId         String // 所屬帳戶 ID
+  transactionId     String // Plaid 交易 ID (dedup key)
+  plaidItemId       String? // 所屬 Plaid Item
+  date              String // 交易日期 (YYYY-MM-DD)
+  month             String // 快取月份 (YYYY-MM)
+  isPending         Boolean   @default(false)
+  isRecurring       Boolean   @default(false)
+  isSubscription    Boolean   @default(false)
+  lastWebhookUpdate DateTime?
+
+  // ── Phase 3 E2EE payload ──
+  payloadCiphertext String?
+  payloadKeyId      String?
 
   cachedAt DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
 
   @@unique([userId, transactionId])
   @@index([userId])
   @@index([userId, month])
   @@index([userId, accountId])
-  @@index([userId, isRecurring]) // 快速查詢定期交易
-  @@index([userId, isSubscription]) // 快速查詢訂閱交易
-  @@index([userId, personalFinanceCategory]) // 按 PFC 分類查詢
+  @@index([userId, plaidItemId])
+  @@index([userId, isRecurring])
+  @@index([userId, isSubscription])
+  @@index([payloadKeyId])
 }
 
-// Plaid 投資帳戶快取
+// Plaid 投資帳戶快取（Phase 3 Zero-Access E2EE only）。
+// 後端只持有 metadata（accountId）+ payloadCiphertext + payloadKeyId。
+// 敏感欄位（name, institutionName, logo, plaidLogo）整包進 payloadCiphertext。
 model PlaidInvestmentAccountCache {
-  id              String @id @default(uuid())
-  userId          String
-  accountId       String // Plaid 投資帳戶 ID
-  name            String // 帳戶名稱
-  institutionName String // 券商名稱
-  logo            String @default("https://www.google.com/s2/favicons?domain=plaid.com&sz=128")
+  id        String @id @default(uuid())
+  userId    String
+  accountId String // Plaid 投資帳戶 ID
+
+  // ── Phase 3 E2EE payload ──
+  payloadCiphertext String?
+  payloadKeyId      String?
 
   cachedAt  DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
 
   @@unique([userId, accountId])
   @@index([userId])
+  @@index([payloadKeyId])
 }
 
-// Plaid 投資持倉快取 (股票、加密貨幣等)
+// Plaid 投資持倉快取（Phase 3 Zero-Access E2EE only）。
+// 後端只持有 metadata（accountId / investmentId / type）+ payloadCiphertext + payloadKeyId。
+// 敏感欄位（symbol, name, holdings, currentPrice, change24h, logo）整包進 payloadCiphertext。
 model PlaidInvestmentCache {
   id           String @id @default(uuid())
   userId       String
   accountId    String // 所屬投資帳戶 ID
   investmentId String // 投資 ID (accountId-securityId)
-  symbol       String // 股票代碼或名稱
-  name         String // 資產名稱
-  holdings     String // AES-256-GCM 加密的持有數量
-  currentPrice String // AES-256-GCM 加密的當前價格
-  type         String // 資產類型 (stock, crypto, 等)
-  logo         String @default("https://www.google.com/s2/favicons?domain=plaid.com&sz=128")
+  type         String // 資產類型 (stock, crypto, etf...) — 分組統計用
+
+  // ── Phase 3 E2EE payload (內含 symbol, name, holdings, currentPrice, change24h, logo) ──
+  payloadCiphertext String?
+  payloadKeyId      String?
 
   cachedAt  DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
 
   @@unique([userId, investmentId])
   @@index([userId])
   @@index([userId, accountId])
+  @@index([payloadKeyId])
 }
 
 // Plaid 同步狀態 (跟踪每個用戶的最後同步時間，避免過於頻繁的 API 調用)
@@ -377,49 +504,60 @@ model PlaidRefreshLog {
   @@index([refreshDate])
 }
 
-// DeBank 協議快取（按地址保存使用者協議持倉，降低上游 API 壓力）
+// DeBank 協議快取（Phase 3 Zero-Access E2EE only）。
+// 後端只持有 metadata（address / protocolId / chain）+ payloadCiphertext + payloadKeyId。
+// 敏感欄位（name + rawData，內含 USD value 等）整包進 payloadCiphertext。
 model DeBankProtocolCache {
-  id         String   @id @default(uuid())
+  id         String @id @default(uuid())
   userId     String
   address    String // EVM 錢包地址（0x...）
-  protocolId String // DeBank 協議 ID（若缺失則由後端生成穩定 ID）
+  protocolId String // DeBank 協議 ID
   chain      String // 鏈名稱（例如：eth、bsc、arb）
-  name       String // 協議名稱
-  rawData    Json // DeBank 原始協議資料
+
+  // ── Phase 3 E2EE payload (內含 name + rawData) ──
+  payloadCiphertext String?
+  payloadKeyId      String?
 
   cacheTtl  Int      @default(300) // 快取 TTL（秒）
   cachedAt  DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
 
   @@unique([userId, address, protocolId])
   @@index([userId])
   @@index([userId, address])
   @@index([cachedAt])
+  @@index([payloadKeyId])
 }
 
-// DeBank Token 快取（按地址保存使用者 EVM Token 持倉，與 DeFi protocol 分離）
+// DeBank Token 快取（Phase 3 Zero-Access E2EE only）。
+// 後端只持有 metadata（address / chain / tokenId）+ payloadCiphertext + payloadKeyId。
+// 敏感欄位（symbol, name, rawData，內含 amount/price/usd_value）整包進 payloadCiphertext。
 model DeBankTokenCache {
-  id        String @id @default(uuid())
-  userId    String
-  address   String // EVM 錢包地址（0x...）
-  chain     String // 鏈名稱（例如：eth、bsc、arb）
-  tokenId   String // DeBank token ID（若缺失則由後端生成穩定 ID）
-  symbol    String // Token symbol（例如：ETH、USDC）
-  name      String // Token 名稱
-  rawData   Json // DeBank 原始 token 資料
+  id      String @id @default(uuid())
+  userId  String
+  address String // EVM 錢包地址（0x...）
+  chain   String // 鏈名稱（例如：eth、bsc、arb）
+  tokenId String // DeBank token ID
+
+  // ── Phase 3 E2EE payload (內含 symbol, name, rawData) ──
+  payloadCiphertext String?
+  payloadKeyId      String?
 
   cacheTtl  Int      @default(300) // 快取 TTL（秒）
   cachedAt  DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
 
   @@unique([userId, address, chain, tokenId])
   @@index([userId])
   @@index([userId, address])
   @@index([cachedAt])
+  @@index([payloadKeyId])
 }
 
 // API 操作限制日誌 (追蹤用戶每日的 API 操作次數，支持多種操作類型)
@@ -439,29 +577,6 @@ model ApiOperationLog {
   @@index([userId])
   @@index([date])
   @@index([operationType])
-}
-
-// ==========================================
-// 5. 統一驗證碼管理
-// ==========================================
-
-// 驗證碼表 (統一管理所有驗證場景: 註冊、密碼重置、郵箱修改等)
-model VerificationCode {
-  id        String   @id @default(uuid())
-  userId    String? // 對於未註冊用戶可為 null (例如: 註冊驗證)
-  email     String // 驗證碼的目標郵箱
-  code      String // 6位驗證碼
-  type      String // 驗證碼類型: 'register', 'password-reset', 'email-change'
-  metadata  Json? // 額外數據 (例如: 新郵箱、重置令牌等)
-  expiresAt DateTime // 過期時間
-  createdAt DateTime @default(now())
-
-  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, type])
-  @@index([email, type])
-  @@index([code])
-  @@index([expiresAt])
 }
 
 // ==========================================
@@ -539,19 +654,19 @@ model Admin {
 // 8. Billing 訂閱系統 (Stripe)
 // ==========================================
 model StripeSubscription {
-  id                   String   @id @default(uuid())
+  id                   String    @id @default(uuid())
   userId               String
   stripeCustomerId     String
-  stripeSubscriptionId String   @unique
+  stripeSubscriptionId String    @unique
   stripePriceId        String?
   status               String
   currentPeriodStart   DateTime?
   currentPeriodEnd     DateTime?
-  cancelAtPeriodEnd    Boolean  @default(false)
+  cancelAtPeriodEnd    Boolean   @default(false)
   canceledAt           DateTime?
   metadata             Json?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -568,4 +683,281 @@ model StripeWebhookEvent {
   createdAt     DateTime @default(now())
 
   @@index([type])
+}
+
+model ReferralCashback {
+  id                   String    @id @default(uuid())
+  inviterUserId        String
+  referredUserId       String
+  stripeInvoiceId      String    @unique
+  stripeChargeId       String?
+  stripeSubscriptionId String?
+  grossAmount          Float
+  cashbackAmount       Float
+  currency             String    @default("usd")
+  status               String    @default("pending") // pending | available | reversed
+  availableAt          DateTime
+  settledAt            DateTime?
+  reversedAt           DateTime?
+  reverseReason        String?
+  reversedByEventId    String?
+  createdAt            DateTime  @default(now())
+
+  inviter  User @relation("ReferralCashbackInviter", fields: [inviterUserId], references: [id], onDelete: Cascade)
+  referred User @relation("ReferralCashbackReferred", fields: [referredUserId], references: [id], onDelete: Cascade)
+
+  @@index([inviterUserId, createdAt])
+  @@index([referredUserId, createdAt])
+  @@index([status, availableAt])
+  @@index([stripeChargeId])
+}
+
+// ==========================================
+// 9. Non-Custodial Crypto Card
+// ==========================================
+
+// KYC 申請（使用 Gnosis Pay 內建 Sumsub KYC）
+model CardKycApplication {
+  id                String    @id @default(uuid())
+  userId            String
+  provider          String    @default("gnosispay") // gnosispay (uses Sumsub internally)
+  providerSessionId String?   @unique               // Sumsub applicant ID（可選）
+  status            String    @default("not_started")
+  // not_started | pending | under_review | approved | rejected
+  submittedAt       DateTime?
+  reviewedAt        DateTime?
+  rejectionReason   String?
+  rawWebhookData    Json?     // 最後一次 Didit webhook payload（debug 用）
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([providerSessionId])
+}
+
+// 發卡帳戶（透過 Gnosis Pay 發卡）
+model CardAccount {
+  id                  String    @id @default(uuid())
+  userId              String
+  providerCardId      String    @unique  // GP card ID
+  providerAccountId   String?            // GP account / Safe address
+  last4               String?
+  expiryMonth         Int?
+  expiryYear          Int?
+  status              String    @default("applying")
+  // unavailable | applying | issued | active | frozen | cancelled
+  isVirtual           Boolean   @default(true)
+  isPhysical          Boolean   @default(false)
+  dailyLimitEure      Float     @default(500)   // GP uses EURe/USDCe/GBPe
+  monthlyLimitEure    Float     @default(5000)
+  currency            String    @default("EURe")
+  frozenAt            DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions CardTransaction[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([providerCardId])
+}
+
+// Gnosis Pay 用戶 Session + Safe 狀態
+// 每個用戶同時只有一個 GP session（@@unique userId）
+// address：EOA 地址（用於 SIWE 簽名）
+// gpSafeAddress：GP 在 Gnosis Chain 上部署的 Safe 地址
+model CardWallet {
+  id             String    @id @default(uuid())
+  userId         String    @unique
+  chainId        Int       @default(100) // Gnosis Chain
+  address        String                  // EOA address for SIWE
+
+  // ── Gnosis Pay JWT (1-24h TTL, renewal requires user re-sign) ──
+  gpJwt            String?
+  gpJwtExpiresAt   DateTime?
+
+  // ── Gnosis Pay onboarding state ──────────────────────────────
+  gpTermsAccepted  Boolean   @default(false)
+  gpPhoneVerified  Boolean   @default(false)
+  gpSofCompleted   Boolean   @default(false)
+  gpKycStatus      String?   // notStarted | pending | approved | rejected | ...
+  gpAccountStatus  Int?      // 0 = Safe ready, null = not deployed
+  gpSafeAddress    String?   // Safe address on Gnosis Chain
+  gpCurrency       String?   // 'EURe' | 'GBPe' | 'USDCe' (set after Safe deploy)
+  gpCardId         String?   // GP virtual card ID
+
+  linkedAt  DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([address])
+  @@index([gpSafeAddress])
+}
+
+// 消費帳本（每筆 GP 授權或結算事件）
+model CardTransaction {
+  id                String    @id @default(uuid())
+  userId            String
+  cardAccountId     String
+  amount            Float                      // 消費金額
+  currency          String    @default("EURe") // EURe | GBPe | USDCe
+  merchantName      String?
+  merchantCategory  String?
+  txHash            String?                    // 鏈上 settlement tx hash（若有）
+  providerEventId   String?   @unique          // GP transaction ID（idempotency key）
+  status            String    @default("authorized")
+  // authorized | cleared | reversed | refunded | declined
+  kind              String    @default("Payment") // Payment | Refund | Reversal
+  isPending         Boolean   @default(true)
+  authorizedAt      DateTime  @default(now())
+  clearedAt         DateTime?
+  reversedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cardAccount CardAccount @relation(fields: [cardAccountId], references: [id], onDelete: Cascade)
+
+  @@index([userId, authorizedAt])
+  @@index([userId, status])
+  @@index([cardAccountId])
+  @@index([providerEventId])
+}
+
+// 每日花費追蹤（用於 dailyLimit 檢查）
+model CardDailySpend {
+  id        String   @id @default(uuid())
+  userId    String
+  date      String   // YYYY-MM-DD
+  spentUsdc Float    @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+  @@index([userId])
+  @@index([date])
+}
+
+// ==========================================
+// 10. Bridge On/Off Ramp (法幣 <-> 穩定幣)
+// ==========================================
+// Bridge (api.bridge.xyz) 提供 fiat <-> stablecoin 的 on/off ramp。
+// 流程：先建立 Bridge customer（透過 hosted KYC link 完成 KYC + TOS），
+// KYC 通過並取得相應 endorsement 後，才能建立 transfer 進行出入金。
+
+// Bridge 客戶（每個用戶一個 Bridge customer，紀錄 KYC / endorsement 狀態）
+model BridgeCustomer {
+  id               String  @id @default(uuid())
+  userId           String  @unique
+  bridgeCustomerId String? @unique // Bridge customer ID（cust_...）
+  kycLinkId        String? @unique // Bridge kyc_link ID
+
+  customerType String  @default("individual") // individual | business
+  email        String?
+  fullName     String?
+
+  kycLink   String? // hosted KYC 連結
+  tosLink   String? // hosted TOS 連結
+  kycStatus String  @default("not_started")
+  // not_started | under_review | incomplete | awaiting_ubo | approved | rejected | paused | offboarded
+  tosStatus String  @default("pending") // pending | approved
+
+  endorsements Json? // Bridge 回傳的 endorsements 陣列（base / sepa / spei ...）
+  rawCustomer  Json? // 最後一次完整 customer payload（debug 用）
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([bridgeCustomerId])
+  @@index([kycStatus])
+}
+
+// Bridge 外部銀行帳戶（off-ramp 法幣出金的目的地）
+model BridgeExternalAccount {
+  id                      String  @id @default(uuid())
+  userId                  String
+  bridgeExternalAccountId String  @unique // Bridge external_account ID
+  bridgeCustomerId        String? // 所屬 Bridge customer
+  bankName                String?
+  accountOwnerName        String?
+  last4                   String?
+  currency                String  @default("usd")
+  active                  Boolean @default(true)
+
+  rawAccount Json? // 最後一次完整 external_account payload（debug 用）
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([bridgeCustomerId])
+}
+
+// Bridge 轉帳（on-ramp / off-ramp / crypto-to-crypto）
+model BridgeTransfer {
+  id               String  @id @default(uuid())
+  userId           String
+  bridgeCustomerId String? // 所屬 Bridge customer（cust_...，僅供查詢，非外鍵）
+  bridgeTransferId String  @unique // Bridge transfer ID
+
+  direction String // onramp | offramp | crypto
+  state     String @default("awaiting_funds")
+  // awaiting_funds | in_review | funds_received | payment_submitted | payment_processed | returned | refunded | canceled | error
+
+  amount       String? // 金額（decimal string，例如 "100.25"）
+  developerFee String? // 開發者抽成（decimal string）
+
+  // ── source（資金來源）──
+  sourceRail     String? // ach_push | wire | sepa | spei | ethereum | base | polygon | solana | arbitrum ...
+  sourceCurrency String? // usd | eur | mxn | usdc | usdb | eurc ...
+
+  // ── destination（資金去向）──
+  destinationRail        String?
+  destinationCurrency    String?
+  destinationAddress     String? // on-ramp 的 crypto to_address
+  destinationExternalId  String? // off-ramp 的 external_account ID
+  destinationTxHash      String?
+
+  // Bridge 回傳給用戶用來打款的指示（fiat 銀行資訊或 crypto 存款地址）
+  depositInstructions Json?
+
+  clientReferenceId String?
+  rawTransfer       Json? // 最後一次完整 transfer payload
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, direction])
+  @@index([state])
+  @@index([bridgeTransferId])
+  @@index([bridgeCustomerId])
+}
+
+// Bridge webhook 事件去重（event_id 為全域唯一）
+model BridgeWebhookEvent {
+  id            String   @id @default(uuid())
+  bridgeEventId String   @unique // Bridge event_id
+  eventCategory String
+  eventType     String
+  payload       Json?
+  processedAt   DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  @@index([eventType])
 }

@@ -1,52 +1,27 @@
 import { UserProfile, UpdateProfilePayload } from '../models/types';
-type SRPAuthPayload = {
-    srpSalt: string;
-    srpVerifier: string;
-    encryptedDataKey: string;
-    kekSalt: string;
-};
-/**
- * 註冊流程已整合為郵件驗證模式
- * 使用資料庫儲存驗證碼，而不是記憶體快取
- */
+import type { PrivyIdentity } from './privyService';
 /**
  * 認證服務 - 業務邏輯層
+ *
+ * 登入由 Privy 驅動：前端用 Privy 完成登入後，後端驗證 Privy token、
+ * 對應到內部 user（以 privyUserId 為主鍵），再核發自有的 JWT session token。
  */
 export declare class AuthService {
-    private static readonly JWT_SECRET;
-    private static readonly VERIFICATION_CODE_EXPIRY;
-    private static normalizeHex;
-    private static isHexString;
-    private static assertRequiredSrpPayload;
-    private static assertValidSrpPayload;
-    private static normalizeSrpPayload;
-    private static buildSrpAuthUpdateData;
-    private static updateUserSrpAuthById;
+    private static normalizeReferralCode;
+    private static generateUniqueReferCode;
+    private static resolveInviterByReferralCode;
     /**
      * ============================================
-     * 統一驗證碼管理系統
+     * Privy 登入
      * ============================================
+     *
+     * 以 Privy DID 為主鍵 upsert 使用者，綁定 embedded wallet，回傳自有 JWT。
+     * 首次登入即註冊（無需獨立的註冊流程）。
      */
-    /**
-     * 發送驗證碼 (通用方法)
-     * @param email 目標郵箱
-     * @param type 驗證碼類型: 'register' | 'password-reset' | 'email-change'
-     * @param userId 使用者 ID (可選，註冊時不需要)
-     * @param metadata 額外資料 (例如：新郵箱、其他必要資訊)
-     */
-    static sendVerificationCode(email: string, type: 'register' | 'password-reset' | 'email-change', userId?: string, metadata?: Record<string, unknown>): Promise<{
-        expiresIn: number;
-    }>;
-    /**
-     * 驗證碼驗證 (通用方法)
-     * @param email 目標郵箱
-     * @param code 驗證碼
-     * @param type 驗證碼類型
-     * @returns { valid: boolean; metadata?: unknown }
-     */
-    static verifyCode(email: string, code: string, type: 'register' | 'password-reset' | 'email-change'): Promise<{
-        valid: boolean;
-        metadata?: unknown;
+    static loginWithPrivy(identity: PrivyIdentity, referralCode?: string): Promise<{
+        token: string;
+        user: UserProfile;
+        needsKeyPairSetup: boolean;
     }>;
     /**
      * 取得使用者資料
@@ -65,47 +40,39 @@ export declare class AuthService {
      */
     static updateUserProfile(userId: string, payload: UpdateProfilePayload): Promise<UserProfile>;
     /**
-     * 請求密碼重置 (整合郵件驗證碼模式)
-     * 發送 6 位驗證碼到郵箱，而不是回傳 token
-     */
-    static requestPasswordReset(email: string): Promise<{
-        expiresIn: number;
-    }>;
-    /**
-     * 驗證密碼重置碼並重置密碼 (整合郵件驗證碼模式)
-     */
-    static resetPassword(email: string, resetCode: string, srpSalt: string, srpVerifier: string, encryptedDataKey: string, kekSalt: string, preserveData?: boolean): Promise<{
-        success: boolean;
-        message: string;
-    }>;
-    /**
      * 刪除使用者帳戶
      */
     static deleteAccount(userId: string): Promise<{
         success: boolean;
         message: string;
     }>;
-    /**
-     * 請求修改郵箱 - 發送驗證碼到新郵箱
-     */
-    static requestEmailChange(userId: string, newEmail: string): Promise<{
-        expiresIn: number;
-    }>;
-    /**
-     * 確認修改郵箱 - 驗證碼驗證成功則修改郵箱
-     */
-    static confirmEmailChange(userId: string, newEmail: string, code: string): Promise<{
-        success: boolean;
-        message: string;
-        user: UserProfile;
-    }>;
-    /**
-     * 驗證郵箱驗證碼並註冊 (第二步)
-     */
-    static verifyEmailAndRegister(email: string, verificationCode: string, srpData: SRPAuthPayload): Promise<{
-        token: string;
-        user: UserProfile;
+    static applyReferralCode(userId: string, referralCode: string): Promise<UserProfile>;
+    static getReferralCashbackHistory(userId: string, options?: {
+        status?: 'pending' | 'available' | 'reversed';
+        limit?: number;
+    }): Promise<{
+        summary: {
+            pending: number;
+            available: number;
+            reversed: number;
+            totalEarned: number;
+        };
+        items: Array<{
+            id: string;
+            referredUserId: string;
+            referredUserEmail: string | null;
+            stripeInvoiceId: string;
+            stripeSubscriptionId: string | null;
+            grossAmount: number;
+            cashbackAmount: number;
+            currency: string;
+            status: 'pending' | 'available' | 'reversed';
+            availableAt: Date;
+            settledAt: Date | null;
+            reversedAt: Date | null;
+            reverseReason: string | null;
+            createdAt: Date;
+        }>;
     }>;
 }
-export {};
 //# sourceMappingURL=authService.d.ts.map

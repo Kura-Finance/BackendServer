@@ -20,12 +20,6 @@ export interface DeBankProtocolPosition {
   portfolio_item_list?: DeBankProtocolPortfolio['portfolio_item_list'];
 }
 
-export interface DeBankProtocolQueryResult {
-  protocols: DeBankProtocolPosition[];
-  fromCache: boolean;
-  cachedAt?: string;
-}
-
 export interface DeBankTokenPosition {
   id?: string;
   chain?: string;
@@ -37,8 +31,3 @@ export interface DeBankTokenPosition {
   logo_url?: string;
 }
 
-export interface DeBankTokenQueryResult {
-  tokens: DeBankTokenPosition[];
-  fromCache: boolean;
-  cachedAt?: string;
-}

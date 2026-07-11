@@ -1,48 +1,58 @@
 import { z } from 'zod';
 
-const evenHexString = z
+const base64String = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z0-9+/]+=*$/, 'must be a valid base64 string');
+
+const hexString = z
   .string()
   .trim()
   .regex(/^(?:[a-fA-F0-9]{2})+$/, 'must be an even-length hex string')
   .transform((value) => value.toLowerCase());
 
-export const emailBodySchema = z.object({
-  email: z.string().trim().email('must be a valid email address'),
+// ── Privy 登入 ───────────────────────────────────────────────────────
+// accessToken：Privy access token（必填，登入權威證明）
+// identityToken：Privy identity token（選填，解析 email + embedded wallet）
+// referralCode：首次登入即註冊時可帶邀請碼
+export const privyLoginBodySchema = z.object({
+  accessToken: z.string().trim().min(1, 'accessToken is required'),
+  identityToken: z.string().trim().min(1).optional(),
+  referralCode: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-Z0-9]{4,32}$/, 'referralCode must be 4-32 uppercase letters/numbers')
+    .optional(),
 });
 
-export const srpPayloadSchema = z.object({
-  srpSalt: evenHexString,
-  srpVerifier: evenHexString,
-  encryptedDataKey: evenHexString,
-  kekSalt: evenHexString,
+// ── Passkey / WebAuthn ───────────────────────────────────────────────
+// response：WebAuthn 客戶端回傳的 JSON（結構由瀏覽器/SDK 決定，這裡只確認是物件）
+// encryptedDek：用 passkey PRF 推導的金鑰包裝的 DEK，hex(32 bytes) = 64 hex chars
+export const passkeyRegisterBodySchema = z.object({
+  response: z.object({}).passthrough(),
+  encryptedDek: z
+    .string()
+    .trim()
+    .regex(/^[0-9a-fA-F]{64}$/, 'encryptedDek must be hex(32 bytes) = 64 hex chars')
+    .transform((v) => v.toLowerCase()),
 });
 
-export const resetPasswordBodySchema = emailBodySchema
-  .extend({
-    resetCode: z.string().trim().regex(/^\d{6}$/, 'resetCode must be 6 digits'),
-    preserveData: z.boolean().optional(),
-  })
-  .extend({ ...srpPayloadSchema.shape });
-
-export const srpVerifyBodySchema = z.object({
-  sessionId: z.string().trim().min(1, 'sessionId is required'),
-  clientA: evenHexString,
-  clientM1: evenHexString,
+export const passkeyAuthenticateBodySchema = z.object({
+  response: z.object({}).passthrough(),
 });
 
-export const verifyEmailAndRegisterBodySchema = emailBodySchema
-  .extend({
-    verificationCode: z.string().trim().regex(/^\d{6}$/, 'verificationCode must be 6 digits'),
-  })
-  .extend({ ...srpPayloadSchema.shape });
-
-export const requestEmailChangeBodySchema = z.object({
-  newEmail: z.string().trim().email('newEmail must be a valid email address'),
+export const applyReferralCodeBodySchema = z.object({
+  referralCode: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-Z0-9]{4,32}$/, 'referralCode must be 4-32 uppercase letters/numbers'),
 });
 
-export const confirmEmailChangeBodySchema = z.object({
-  newEmail: z.string().trim().email('newEmail must be a valid email address'),
-  code: z.string().trim().regex(/^\d{6}$/, 'code must be 6 digits'),
+export const cashbackHistoryQuerySchema = z.object({
+  status: z.enum(['pending', 'available', 'reversed']).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
 });
 
 export const updateDisplayNameBodySchema = z.object({
@@ -66,3 +76,16 @@ export const updateProfileBodySchema = z
     (data) => data.displayName !== undefined || data.avatarUrl !== undefined,
     { message: 'At least one field is required', path: ['body'] },
   );
+
+// ── Phase 3 E2EE Key Pair（Zero Access Encryption）────────────────────
+// publicKey: base64(X25519 pubkey, 32 bytes) → 編碼後固定 44 字元（含 padding）
+// encryptedPrivateKey: client 自由 base64 字串（KEK-wrapped private key）
+// kekSalt: 選填，Passkey PRF 推導 KEK 用的 salt（hex）；後端僅儲存
+export const keyPairBodySchema = z.object({
+  publicKey: base64String
+    .length(44, 'publicKey must be 44 base64 chars (32-byte X25519 key)'),
+  encryptedPrivateKey: base64String
+    .min(16, 'encryptedPrivateKey is too short')
+    .max(2048, 'encryptedPrivateKey is too long'),
+  kekSalt: hexString.optional(),
+});

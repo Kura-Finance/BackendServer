@@ -9,12 +9,13 @@ import {
 
 const router = Router();
 
-// 所有交易所路由都需要驗證
+// 所有交易所路由都需要驗證（包含 /supported；若未來需要公開，把這條路由
+// 註冊在 router.use(requireAuth) 之前即可）
 router.use(requireAuth);
 
 /**
  * GET /api/exchange/supported
- * 獲取支持的交易所列表 (無需驗證，可移到上面 authMiddleware 之前)
+ * 獲取支持的交易所列表（目前需要登入）
  */
 router.get('/supported', ExchangeController.getSupportedExchanges);
 
@@ -33,8 +34,10 @@ router.get('/accounts', ExchangeController.getUserExchangeAccounts);
 
 /**
  * GET /api/exchange/:exchangeAccountId/balances
- * 獲取特定交易所帳戶的餘額和資產 (合併端點)
- * 返回: { account, balances[], assets[], timestamp }
+ * 取得特定交易所帳戶的「加密形式」餘額 + 資產（Phase 3 Zero-Access E2EE only）。
+ * - 觸發 CCXT 同步 → 加密寫快取 → 回讀加密 row
+ * - 達到查詢上限時，回退讀本地加密快取
+ * 返回: { account, payloadKeys[], balances[], assets[] }
  */
 router.get(
   '/:exchangeAccountId/balances',

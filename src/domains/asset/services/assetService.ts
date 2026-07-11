@@ -1,260 +1,228 @@
 import { prisma } from '../../shared/lib/prisma';
+import { encryptPayload, zeroize } from '../../shared/crypto';
 import {
-  AssetSnapshotData,
-  AssetSnapshotResponse,
-  AssetHistoryResponse,
-} from '../models/types';
-import { FieldEncryption } from '../../shared/lib/fieldEncryption';
+  PayloadKeyService,
+  KeyPairNotConfiguredError,
+} from '../../shared/services/payloadKeyService';
+import { appLogger, logDebug, logError } from '../../logger';
 
 /**
- * 資產服務 - 資產追蹤業務邏輯
+ * 資產服務 - 資產追蹤業務邏輯（Phase 3 Zero-Access E2EE only）
+ *
+ * 自 PR 5 起：
+ *   - 移除舊版 `getAssetHistory` / `recordCompositeSnapshot` /
+ *     `computeCurrentBreakdownFromSources`（依賴明文 cache row 與
+ *     `AssetPerformance` 表，與 zero-access 模型互斥）
+ *   - 僅保留 per-metric 加密快照寫入 & 加密讀取 API
+ *   - `getRecordDates` 仍以 metadata 形式回傳（`AssetSnapshot.recordedAt`）
  */
+
+// Phase 3 metric naming:
+//   - 單來源 base：    "cashFlow"、"plaidInvestment"
+//   - 多來源 sub-scoped："{base}:{source}:{id}"
+//                       e.g. "cryptoSpot:exchange:acct-123"、
+//                            "cryptoSpot:debank:0xabc..."、
+//                            "defiProtocol:debank:0xabc..."
+//     前端讀取後按 base 加總、按 sub-scoped key 取 latest 來組日線。
+export type AssetMetricBase = 'cashFlow' | 'plaidInvestment' | 'cryptoSpot' | 'defiProtocol';
+export type AssetMetricKey = string;
+
+/**
+ * `Record<metric, value>` — metric 字串可為 base 或 sub-scoped 形式。
+ * 為了向後相容仍允許 4 個 base metric 為 optional 欄位。
+ */
+export interface PlaintextMetrics {
+  cashFlow?: number;
+  plaidInvestment?: number;
+  cryptoSpot?: number;
+  defiProtocol?: number;
+  // 任意 sub-scoped metric（"cryptoSpot:exchange:acct-id" 等）
+  [extendedMetric: string]: number | undefined;
+}
+
+export interface EncryptedAssetSnapshotRow {
+  id: string;
+  metric: AssetMetricKey;
+  recordedAt: Date;
+  payloadCiphertext: string;
+  payloadKeyId: string;
+}
+
+export interface EncryptedAssetHistoryResponse {
+  userId: string;
+  payloadKeys: Array<{ id: string; scope: string; wrappedSek: string; algorithm: string }>;
+  snapshots: EncryptedAssetSnapshotRow[];
+}
 
 export class AssetService {
   /**
-   * 記錄資產快照
-   */
-  static async recordAssetSnapshot(
-    userId: string,
-    snapshot: AssetSnapshotData
-  ): Promise<AssetSnapshotResponse> {
-    const recordedAt = snapshot.recordedAt || new Date();
-
-    const assetSnapshot = await prisma.assetSnapshot.create({
-      data: {
-        userId,
-        assetId: snapshot.assetId,
-        name: snapshot.name,
-        type: snapshot.type,
-        value: FieldEncryption.encryptNumber(snapshot.value),
-        currency: snapshot.currency || 'USD',
-        recordedAt,
-      },
-    });
-
-    // 更新 AssetPerformance：只取各 assetId 最新一筆加總，避免多次記錄後數字膨脹
-    const totalAssets = await AssetService.computeCurrentTotalAssets(userId);
-
-    await prisma.assetPerformance.upsert({
-      where: { userId },
-      update: { totalAssets: FieldEncryption.encryptNumber(totalAssets), lastRecordedTime: recordedAt },
-      create: { userId, totalAssets: FieldEncryption.encryptNumber(totalAssets), lastRecordedTime: recordedAt },
-    });
-
-    return this.formatSnapshot(assetSnapshot);
-  }
-
-  /**
-   * 批量記錄多個資產快照
-   */
-  static async recordMultipleSnapshots(
-    userId: string,
-    snapshots: AssetSnapshotData[]
-  ): Promise<AssetSnapshotResponse[]> {
-    const recordedAt = new Date();
-
-    const createdSnapshots = await Promise.all(
-      snapshots.map((snapshot) =>
-        prisma.assetSnapshot.create({
-          data: {
-            userId,
-            assetId: snapshot.assetId,
-            name: snapshot.name,
-            type: snapshot.type,
-            value: FieldEncryption.encryptNumber(snapshot.value),
-            currency: snapshot.currency || 'USD',
-            recordedAt,
-          },
-        })
-      )
-    );
-
-    // 更新 AssetPerformance：只取各 assetId 最新一筆加總，避免多次記錄後數字膨脹
-    const totalAssets = await AssetService.computeCurrentTotalAssets(userId);
-
-    await prisma.assetPerformance.upsert({
-      where: { userId },
-      update: { totalAssets: FieldEncryption.encryptNumber(totalAssets), lastRecordedTime: recordedAt },
-      create: { userId, totalAssets: FieldEncryption.encryptNumber(totalAssets), lastRecordedTime: recordedAt },
-    });
-
-    return createdSnapshots.map(this.formatSnapshot);
-  }
-
-  /**
-   * 獲取最新的資產快照（當前資產狀態）
-   */
-  static async getLatestSnapshot(userId: string): Promise<AssetSnapshotResponse[] | null> {
-    const snapshots = await (prisma.assetSnapshot as any).findMany({
-      where: { userId },
-      orderBy: { recordedAt: 'desc' },
-      take: 1,
-    });
-
-    if (snapshots.length === 0) return null;
-
-    const latestTime = snapshots[0]!.recordedAt;
-
-    const allLatest = await (prisma.assetSnapshot as any).findMany({
-      where: {
-        userId,
-        recordedAt: latestTime,
-      },
-    });
-
-    return allLatest.map(this.formatSnapshot);
-  }
-
-  /**
-   * 獲取資產歷史數據（用於繪製圖表）
-   * @param userId 用户 ID
-   * @param days 過去的天數 (預設 30 天)
-   */
-  static async getAssetHistory(userId: string, days: number = 30): Promise<AssetHistoryResponse> {
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
-
-    const snapshots = await prisma.assetSnapshot.findMany({
-      where: {
-        userId,
-        recordedAt: {
-          gte: startDate,
-        },
-      },
-      orderBy: { recordedAt: 'asc' },
-    });
-
-    const performance = await prisma.assetPerformance.findUnique({
-      where: { userId },
-    });
-
-    // 構建時間序列數據
-    // 以「整點小時」為 bucket key，將同一批次寫入的多個帳戶快照合併成一個總資產數據點
-    const historyMap = new Map<string, { value: number; ts: Date }>();
-
-    snapshots.forEach((snapshot: any) => {
-      const d = new Date(snapshot.recordedAt);
-      d.setMinutes(0, 0, 0);
-      const bucketKey = d.toISOString();
-      const decryptedValue = FieldEncryption.decryptNumber(snapshot.value);
-      const existing = historyMap.get(bucketKey);
-      historyMap.set(bucketKey, {
-        value: (existing?.value ?? 0) + decryptedValue,
-        ts: existing?.ts ?? d,
-      });
-    });
-
-    // 轉換為陣列格式，按時間升序排列
-    const history = Array.from(historyMap.values())
-      .sort((a, b) => a.ts.getTime() - b.ts.getTime())
-      .map(({ ts, value }) => ({
-        timestamp: ts,
-        value,
-        assetId: '',
-        name: 'Total Assets',
-        type: 'total',
-      }));
-
-    // 計算統計數據
-    const values = history.map((h: any) => h.value);
-    const minValue = values.length > 0 ? Math.min(...values) : 0;
-    const maxValue = values.length > 0 ? Math.max(...values) : 0;
-    const averageValue = values.length > 0 ? values.reduce((a: number, b: number) => a + b, 0) / values.length : 0;
-    const currentValue: number = values.length > 0 ? (values[values.length - 1] ?? 0) : 0;
-    const previousValue: number = values.length > 1 ? (values[0] ?? 0) : (currentValue ?? 0);
-    const change = currentValue - previousValue;
-    const changePercent = previousValue !== 0 ? (change / previousValue) * 100 : 0;
-
-    return {
-      userId,
-      totalAssets: performance?.totalAssets ? FieldEncryption.decryptNumber(performance.totalAssets) : 0,
-      lastRecordedTime: performance?.lastRecordedTime || null,
-      history,
-      summary: {
-        minValue,
-        maxValue,
-        averageValue,
-        change,
-        changePercent,
-      },
-    };
-  }
-
-  /**
-   * 刪除特定資產的歷史記錄
-   */
-  static async deleteAssetHistory(userId: string, assetId: string): Promise<number> {
-    const result = await prisma.assetSnapshot.deleteMany({
-      where: {
-        userId,
-        assetId,
-      },
-    });
-
-    // 重新計算 AssetPerformance
-    const allSnapshots = await prisma.assetSnapshot.findMany({
-      where: { userId },
-    });
-
-    const totalAssets = allSnapshots.reduce((sum: number, s: any) => sum + FieldEncryption.decryptNumber(s.value), 0);
-    const lastRecordedTime =
-      allSnapshots.length > 0
-        ? new Date(Math.max(...allSnapshots.map((s: any) => s.recordedAt.getTime())))
-        : null;
-
-    await prisma.assetPerformance.upsert({
-      where: { userId },
-      update: {
-        totalAssets: FieldEncryption.encryptNumber(totalAssets),
-        lastRecordedTime,
-      },
-      create: {
-        userId,
-        totalAssets: FieldEncryption.encryptNumber(totalAssets),
-        lastRecordedTime,
-      },
-    });
-
-    return result.count;
-  }
-
-  /**
-   * 計算用戶當前各資產最新快照的總資產值
-   * 只取每個 assetId 最新一筆，避免累加歷史數據導致數字膨脹
-   */
-  private static async computeCurrentTotalAssets(userId: string): Promise<number> {
-    const latestPerAsset = await prisma.assetSnapshot.findMany({
-      where: { userId },
-      orderBy: { recordedAt: 'desc' },
-      distinct: ['assetId'],
-    });
-    return latestPerAsset.reduce((sum: number, s: any) => sum + FieldEncryption.decryptNumber(s.value), 0);
-  }
-
-  /**
-   * 取得用户的所有记录日期 (用于前端日期选择器)
+   * 取得用戶所有 snapshot 的 recordedAt（去重排序，metadata only）。
+   * 不解密 payload，純粹給前端做日期選擇器。
    */
   static async getRecordDates(userId: string): Promise<Date[]> {
     const snapshots = await prisma.assetSnapshot.findMany({
       where: { userId },
       distinct: ['recordedAt'],
+      select: { recordedAt: true },
       orderBy: { recordedAt: 'desc' },
     });
-
-    return snapshots.map((s: any) => s.recordedAt);
+    return snapshots.map((s) => s.recordedAt);
   }
 
-  // 輔助方法
-  private static formatSnapshot(snapshot: any) {
+  // ═════════════════════════════════════════════════════════════════
+  // Phase 3 Zero-Access E2EE — per-metric 加密快照
+  // ═════════════════════════════════════════════════════════════════
+
+  /**
+   * 把已知明文的 metric 寫成加密 AssetSnapshot row（每個 metric 一個 row）。
+   *
+   * 設計理念：呼叫者通常是某個 sync 流程（PlaidCacheService / ExchangeService /
+   * DeBankService），它在 sync 過程中**還持有明文**，把要寫的 metric 直接傳進來。
+   * 後端就在這唯一短暫持有明文的瞬間做加密，立刻 zeroize SEK，永久失去解密能力。
+   *
+   * 使用範例（PlaidCacheService 內）：
+   *   await AssetService.recordSnapshotFromPlaintext(userId, {
+   *     cashFlow: bankingValue,           // 從 snapshot.accounts 算出
+   *     plaidInvestment: plaidInvValue,   // 從 snapshot.investments 算出
+   *   });
+   *
+   * 若使用者尚未 setup keypair：graceful degrade，記 warning 後直接 return。
+   * 由於 PR 5 已移除 legacy snapshot 寫入路徑，此情況下不會有資產歷史資料；
+   * 必須先呼叫 `POST /api/auth/keys/setup`。
+   */
+  static async recordSnapshotFromPlaintext(
+    userId: string,
+    metrics: PlaintextMetrics,
+    recordedAt: Date = new Date(),
+  ): Promise<void> {
+    const entries: Array<[AssetMetricKey, number]> = [];
+    for (const [metric, value] of Object.entries(metrics)) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+      entries.push([metric, value]);
+    }
+
+    if (entries.length === 0) {
+      return;
+    }
+
+    let payloadKey;
+    try {
+      payloadKey = await PayloadKeyService.createForUser(
+        userId,
+        `asset_snapshot:${userId}:${recordedAt.getTime()}`,
+      );
+    } catch (error) {
+      if (error instanceof KeyPairNotConfiguredError) {
+        // Pre-Phase-3 users that haven't yet called /api/auth/keys/setup —
+        // gracefully skip snapshot creation. The Plaid sync caller treats
+        // missing keypair as a soft failure for asset history.
+        appLogger.warn(
+          'User has no E2EE key pair — skipping encrypted asset snapshot',
+          { userId, metrics: entries.map(([k]) => k) },
+        );
+        return;
+      }
+      // Anything else (DB outage, constraint error, crypto fault) is a real
+      // bug — surface it so the caller can decide whether to roll back the
+      // surrounding sync rather than silently dropping asset history.
+      logError('Failed to create payload key for asset snapshot', error, { userId });
+      throw error;
+    }
+
+    try {
+      const rows = entries.map(([metric, value]) => ({
+        userId,
+        metric,
+        recordedAt,
+        payloadCiphertext: encryptPayload(payloadKey.sek, { value }),
+        payloadKeyId: payloadKey.payloadKeyId,
+      }));
+
+      await prisma.assetSnapshot.createMany({ data: rows });
+
+      logDebug('Recorded encrypted asset snapshot', {
+        userId,
+        metrics: entries.map(([k]) => k),
+        recordedAt,
+      });
+    } finally {
+      zeroize(payloadKey.sek);
+    }
+  }
+
+  /**
+   * 用「Plaid snapshot」直接算出 cashFlow + plaidInvestment 兩個 metric 的明文。
+   *
+   * 給 PlaidCacheService.saveFinanceSnapshotToCache 在 SEK 還在記憶體時呼叫。
+   * 不讀任何快取，純函式。
+   */
+  static computePlaidMetricsFromSnapshot(snapshot: {
+    accounts: Array<{ balance: number; type: string }>;
+    investments: Array<{ holdings: number; currentPrice: number }>;
+  }): { cashFlow: number; plaidInvestment: number } {
+    const cashFlow = snapshot.accounts.reduce((sum, account) => {
+      const normalizedType = String(account.type || '').toLowerCase();
+      const balance = Number(account.balance || 0);
+      return sum + (normalizedType === 'credit' ? -Math.abs(balance) : balance);
+    }, 0);
+
+    const plaidInvestment = snapshot.investments.reduce((sum, inv) => {
+      const holdings = Number(inv.holdings || 0);
+      const price = Number(inv.currentPrice || 0);
+      return sum + holdings * price;
+    }, 0);
+
+    return { cashFlow, plaidInvestment };
+  }
+
+  /**
+   * 取得某段時間內的加密 AssetSnapshot rows + 對應的 wrappedSek。
+   *
+   * 後端不解密，前端用 privateKey unwrap 後在客戶端組成 4-metric 時間序列。
+   *
+   * 前端聚合規則：
+   *   - metric 字串：可能是 base("cashFlow") 或 sub-scoped("cryptoSpot:exchange:acct-123")
+   *   - 同 sub-scoped key 在同一天若有多筆 row，取 recordedAt 最大者（去掉重複 sync）
+   *   - 同 base、不同 sub-scope 的值要加總（cryptoSpot 跨 exchange + debank、defiProtocol 跨地址）
+   */
+  static async getEncryptedAssetHistory(
+    userId: string,
+    days: number = 30,
+  ): Promise<EncryptedAssetHistoryResponse> {
+    const startDate = new Date();
+    startDate.setUTCDate(startDate.getUTCDate() - days + 1);
+    startDate.setUTCHours(0, 0, 0, 0);
+
+    const rows = await prisma.assetSnapshot.findMany({
+      where: {
+        userId,
+        recordedAt: { gte: startDate },
+      },
+      select: {
+        id: true,
+        metric: true,
+        recordedAt: true,
+        payloadCiphertext: true,
+        payloadKeyId: true,
+      },
+      orderBy: { recordedAt: 'asc' },
+    });
+
+    const snapshots: EncryptedAssetSnapshotRow[] = rows.map((r) => ({
+      id: r.id,
+      metric: r.metric,
+      recordedAt: r.recordedAt,
+      payloadCiphertext: r.payloadCiphertext,
+      payloadKeyId: r.payloadKeyId,
+    }));
+
+    const payloadKeyIds = Array.from(new Set(snapshots.map((s) => s.payloadKeyId)));
+    const payloadKeys = await PayloadKeyService.getForRead(userId, payloadKeyIds);
+
     return {
-      id: snapshot.id,
-      assetId: snapshot.assetId,
-      name: snapshot.name,
-      type: snapshot.type,
-      value: snapshot.value,
-      currency: snapshot.currency,
-      recordedAt: snapshot.recordedAt,
-      createdAt: snapshot.createdAt,
+      userId,
+      payloadKeys,
+      snapshots,
     };
   }
 }

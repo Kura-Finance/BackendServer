@@ -1,3 +1,12 @@
+import { Prisma } from '@prisma/client';
+import { prisma } from '../../shared/lib/prisma';
+/**
+ * Prisma client that callers may pass into the cache util helpers when they
+ * want a sequence of writes to participate in an outer `prisma.$transaction`.
+ * Defaults to the singleton client so existing single-statement callers stay
+ * unchanged.
+ */
+export type CacheUtilDb = Prisma.TransactionClient | typeof prisma;
 /**
  * 是缓存已过期，需要更新
  * @param lastSyncedAt 上次同步时间（可以为 null）
@@ -8,7 +17,7 @@ export declare function isCacheExpired(lastSyncedAt: Date | null, cacheTtlSecond
 /**
  * 获取或创建用户的同步日志记录
  */
-export declare function getOrCreateSyncLog(userId: string): Promise<any>;
+export declare function getOrCreateSyncLog(userId: string, db?: CacheUtilDb): Promise<any>;
 /**
  * 检查账户缓存是否需要刷新
  */
@@ -42,81 +51,57 @@ export declare function clearInvestmentsCache(userId: string): Promise<void>;
  */
 export declare function updateSyncTimestamp(userId: string, type: 'accounts' | 'transactions' | 'investments', stats?: {
     total?: number;
-}): Promise<void>;
+}, db?: CacheUtilDb): Promise<void>;
 /**
- * 批量插入或更新账户缓存
+ * 批量同步 Plaid 帳戶快取（snapshot 模式：先 delete 後 insert）。
+ * Plaid accounts API 永遠回完整列表，本函式保持「整體替換」語意。
  */
 export declare function upsertAccountsCache(userId: string, accounts: Array<{
     plaidItemId: string;
     accountId: string;
-    name: string;
-    balance: string;
     type: string;
     bucket: string;
-    institutionName: string;
-    logo?: string;
-    apy?: string | null;
-    mask?: string | null;
-}>): Promise<number>;
+    payloadCiphertext: string;
+    payloadKeyId: string;
+}>, db?: CacheUtilDb): Promise<number>;
 /**
- * 批量插入或更新交易缓存
+ * 批量同步 Plaid 交易快取（增量 upsert by transactionId）。
+ *
+ * 與 PR 5 之前的「by-month delete + insert」不同：
+ *   - Plaid transactionsSync 為增量 API，只回 added / modified / removed
+ *   - removedTransactionIds 由 caller 處理（在 fetchPlaintextFromPlaid 中直接 delete）
+ *   - 既有未變更的 row 必須保留在 DB（其加密 payloadCiphertext 仍由舊 SEK 保護）
  */
 export declare function upsertTransactionsCache(userId: string, transactions: Array<{
     accountId: string;
     transactionId: string;
-    merchant: string;
-    amount: string;
-    category: string;
-    type: string;
+    plaidItemId?: string | null;
     date: string;
     month: string;
-    personalFinanceCategory?: string;
-    isRecurring?: boolean;
-    recurringFrequency?: string;
-    isSubscription?: boolean;
-    enrichedMerchantName?: string;
-    merchantLogo?: string;
-    merchantCategory?: string;
     isPending?: boolean;
-}>, removedTransactionIds?: string[]): Promise<number>;
+    isRecurring?: boolean;
+    isSubscription?: boolean;
+    payloadCiphertext: string;
+    payloadKeyId: string;
+}>, db?: CacheUtilDb): Promise<number>;
 /**
- * 批量插入或更新投资账户缓存
+ * 批量同步 Plaid 投資帳戶快取（snapshot 模式：先 delete 後 insert）。
  */
 export declare function upsertInvestmentAccountsCache(userId: string, investmentAccounts: Array<{
     accountId: string;
-    name: string;
-    institutionName: string;
-    logo?: string;
-}>): Promise<number>;
+    payloadCiphertext: string;
+    payloadKeyId: string;
+}>, db?: CacheUtilDb): Promise<number>;
 /**
- * 批量插入或更新投资持仓缓存
+ * 批量同步 Plaid 投資持倉快取（snapshot 模式：先 delete 後 insert）。
  */
 export declare function upsertInvestmentsCache(userId: string, investments: Array<{
     accountId: string;
     investmentId: string;
-    symbol: string;
-    name: string;
-    holdings: string;
-    currentPrice: string;
     type: string;
-    logo?: string;
-}>): Promise<number>;
-/**
- * 从缓存获取账户数据
- */
-export declare function getAccountsFromCache(userId: string): Promise<any>;
-/**
- * 从缓存获取交易数据（某个月份）
- */
-export declare function getTransactionsFromCache(userId: string, month?: string): Promise<any>;
-/**
- * 从缓存获取投资账户数据
- */
-export declare function getInvestmentAccountsFromCache(userId: string): Promise<any>;
-/**
- * 从缓存获取投资持仓数据
- */
-export declare function getInvestmentsFromCache(userId: string): Promise<any>;
+    payloadCiphertext: string;
+    payloadKeyId: string;
+}>, db?: CacheUtilDb): Promise<number>;
 /**
  * 获取用户的缓存统计信息
  */

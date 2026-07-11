@@ -114,8 +114,24 @@ jobs:
             DEBANK_ACCESS_KEY=${{ secrets.DEBANK_ACCESS_KEY }}
             STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
             STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
-            STRIPE_PRICE_PRO=${{ secrets.STRIPE_PRICE_PRO }}
-            STRIPE_PRICE_ULTIMATE=${{ secrets.STRIPE_PRICE_ULTIMATE }}
+            STRIPE_PRICE_PRO_MONTHLY=${{ secrets.STRIPE_PRICE_PRO_MONTHLY }}
+            STRIPE_PRICE_PRO_YEARLY=${{ secrets.STRIPE_PRICE_PRO_YEARLY }}
+            STRIPE_PRICE_ULTIMATE_MONTHLY=${{ secrets.STRIPE_PRICE_ULTIMATE_MONTHLY }}
+            STRIPE_PRICE_ULTIMATE_YEARLY=${{ secrets.STRIPE_PRICE_ULTIMATE_YEARLY }}
+            GNOSIS_PAY_PARTNER_ID=${{ secrets.GNOSIS_PAY_PARTNER_ID }}
+            GNOSIS_PAY_SIWE_DOMAIN=api.kura-finance.com
+            GNOSIS_PAY_PSE_APP_ID=${{ secrets.GNOSIS_PAY_PSE_APP_ID }}
+            GNOSIS_PAY_PSE_CERT_B64=${{ secrets.GNOSIS_PAY_PSE_CERT_B64 }}
+            GNOSIS_PAY_PSE_KEY_B64=${{ secrets.GNOSIS_PAY_PSE_KEY_B64 }}
+            BRIDGE_API_KEY=${{ secrets.BRIDGE_API_KEY }}
+            BRIDGE_WEBHOOK_PUBLIC_KEY=${{ secrets.BRIDGE_WEBHOOK_PUBLIC_KEY }}
+            PRIVY_APP_ID=${{ secrets.PRIVY_APP_ID }}
+            PRIVY_APP_SECRET=${{ secrets.PRIVY_APP_SECRET }}
+            PRIVY_VERIFICATION_KEY=${{ secrets.PRIVY_VERIFICATION_KEY }}
+            WEBAUTHN_RP_ID=api.kura-finance.com
+            WEBAUTHN_RP_NAME=Kura
+            WEBAUTHN_ORIGIN=https://api.kura-finance.com
+
       
       # 🔔 GitHub Secrets 配置提示（首次部署時需設置）
       # ALLOWED_ORIGINS: "https://app.kura-finance.com,https://www.kura-finance.com"

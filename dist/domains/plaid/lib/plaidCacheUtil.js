@@ -14,10 +14,6 @@ exports.upsertAccountsCache = upsertAccountsCache;
 exports.upsertTransactionsCache = upsertTransactionsCache;
 exports.upsertInvestmentAccountsCache = upsertInvestmentAccountsCache;
 exports.upsertInvestmentsCache = upsertInvestmentsCache;
-exports.getAccountsFromCache = getAccountsFromCache;
-exports.getTransactionsFromCache = getTransactionsFromCache;
-exports.getInvestmentAccountsFromCache = getInvestmentAccountsFromCache;
-exports.getInvestmentsFromCache = getInvestmentsFromCache;
 exports.getCacheStats = getCacheStats;
 const prisma_1 = require("../../shared/lib/prisma");
 const logger_1 = require("../../logger");
@@ -38,15 +34,15 @@ function isCacheExpired(lastSyncedAt, cacheTtlSeconds) {
 /**
  * 获取或创建用户的同步日志记录
  */
-async function getOrCreateSyncLog(userId) {
-    const prismaAny = prisma_1.prisma;
-    const existingLog = await prismaAny.plaidSyncLog.findUnique({
+async function getOrCreateSyncLog(userId, db = prisma_1.prisma) {
+    const dbAny = db;
+    const existingLog = await dbAny.plaidSyncLog.findUnique({
         where: { userId },
     });
     if (existingLog) {
         return existingLog;
     }
-    return await prismaAny.plaidSyncLog.create({
+    return await dbAny.plaidSyncLog.create({
         data: { userId },
     });
 }
@@ -139,8 +135,8 @@ async function clearInvestmentsCache(userId) {
 /**
  * 更新同步时间戳
  */
-async function updateSyncTimestamp(userId, type, stats) {
-    const prismaAny = prisma_1.prisma;
+async function updateSyncTimestamp(userId, type, stats, db = prisma_1.prisma) {
+    const dbAny = db;
     const updateData = {};
     switch (type) {
         case 'accounts':
@@ -162,24 +158,26 @@ async function updateSyncTimestamp(userId, type, stats) {
             }
             break;
     }
-    await prismaAny.plaidSyncLog.update({
+    await dbAny.plaidSyncLog.update({
         where: { userId },
         data: updateData,
     });
     (0, logger_1.logDebug)('Updated sync timestamp', { userId, type, ...stats });
 }
+// ────────────────────────────────────────────────────────────────────
+// Phase 3 Zero-Access E2EE 寫入專用：每筆 row 只接 metadata + encrypted payload
+// ────────────────────────────────────────────────────────────────────
 /**
- * 批量插入或更新账户缓存
+ * 批量同步 Plaid 帳戶快取（snapshot 模式：先 delete 後 insert）。
+ * Plaid accounts API 永遠回完整列表，本函式保持「整體替換」語意。
  */
-async function upsertAccountsCache(userId, accounts) {
-    const prismaAny = prisma_1.prisma;
-    // 先删除旧缓存
-    await prismaAny.plaidAccountCache.deleteMany({ where: { userId } });
-    // 批量插入新缓存
+async function upsertAccountsCache(userId, accounts, db = prisma_1.prisma) {
+    const dbAny = db;
+    await dbAny.plaidAccountCache.deleteMany({ where: { userId } });
     if (accounts.length === 0) {
         return 0;
     }
-    await prismaAny.plaidAccountCache.createMany({
+    await dbAny.plaidAccountCache.createMany({
         data: accounts.map((account) => ({
             userId,
             ...account,
@@ -188,50 +186,70 @@ async function upsertAccountsCache(userId, accounts) {
     return accounts.length;
 }
 /**
- * 批量插入或更新交易缓存
+ * 批量同步 Plaid 交易快取（增量 upsert by transactionId）。
+ *
+ * 與 PR 5 之前的「by-month delete + insert」不同：
+ *   - Plaid transactionsSync 為增量 API，只回 added / modified / removed
+ *   - removedTransactionIds 由 caller 處理（在 fetchPlaintextFromPlaid 中直接 delete）
+ *   - 既有未變更的 row 必須保留在 DB（其加密 payloadCiphertext 仍由舊 SEK 保護）
  */
-async function upsertTransactionsCache(userId, transactions, removedTransactionIds = []) {
-    const prismaAny = prisma_1.prisma;
-    if (transactions.length === 0 && removedTransactionIds.length === 0) {
-        return 0;
-    }
-    if (removedTransactionIds.length > 0) {
-        await prismaAny.plaidTransactionCache.deleteMany({
-            where: {
-                userId,
-                transactionId: { in: removedTransactionIds },
-            },
-        });
-    }
-    // 对于交易，我们不删除旧的，而是按月份删除，然后插入
-    const months = new Set(transactions.map((t) => t.month));
-    for (const month of months) {
-        await prismaAny.plaidTransactionCache.deleteMany({
-            where: { userId, month },
-        });
-    }
+async function upsertTransactionsCache(userId, transactions, db = prisma_1.prisma) {
+    const dbAny = db;
     if (transactions.length === 0) {
         return 0;
     }
-    await prismaAny.plaidTransactionCache.createMany({
-        data: transactions.map((tx) => ({
-            userId,
-            ...tx,
-        })),
-    });
+    // IMPORTANT: do NOT switch this to `Promise.all`. When `db` is a
+    // `Prisma.TransactionClient` (i.e. we are inside `prisma.$transaction`),
+    // running upserts in parallel is a documented Prisma anti-pattern — it
+    // can deadlock the single transaction connection and is the cause of the
+    // "transactions never get cached" symptom. Sequential awaits also keep
+    // the transaction's wall-clock cost predictable.
+    for (const tx of transactions) {
+        await dbAny.plaidTransactionCache.upsert({
+            where: {
+                userId_transactionId: {
+                    userId,
+                    transactionId: tx.transactionId,
+                },
+            },
+            update: {
+                accountId: tx.accountId,
+                plaidItemId: tx.plaidItemId ?? null,
+                date: tx.date,
+                month: tx.month,
+                isPending: tx.isPending ?? false,
+                isRecurring: tx.isRecurring ?? false,
+                isSubscription: tx.isSubscription ?? false,
+                payloadCiphertext: tx.payloadCiphertext,
+                payloadKeyId: tx.payloadKeyId,
+            },
+            create: {
+                userId,
+                accountId: tx.accountId,
+                transactionId: tx.transactionId,
+                plaidItemId: tx.plaidItemId ?? null,
+                date: tx.date,
+                month: tx.month,
+                isPending: tx.isPending ?? false,
+                isRecurring: tx.isRecurring ?? false,
+                isSubscription: tx.isSubscription ?? false,
+                payloadCiphertext: tx.payloadCiphertext,
+                payloadKeyId: tx.payloadKeyId,
+            },
+        });
+    }
     return transactions.length;
 }
 /**
- * 批量插入或更新投资账户缓存
+ * 批量同步 Plaid 投資帳戶快取（snapshot 模式：先 delete 後 insert）。
  */
-async function upsertInvestmentAccountsCache(userId, investmentAccounts) {
-    const prismaAny = prisma_1.prisma;
-    // 删除旧缓存
-    await prismaAny.plaidInvestmentAccountCache.deleteMany({ where: { userId } });
+async function upsertInvestmentAccountsCache(userId, investmentAccounts, db = prisma_1.prisma) {
+    const dbAny = db;
+    await dbAny.plaidInvestmentAccountCache.deleteMany({ where: { userId } });
     if (investmentAccounts.length === 0) {
         return 0;
     }
-    await prismaAny.plaidInvestmentAccountCache.createMany({
+    await dbAny.plaidInvestmentAccountCache.createMany({
         data: investmentAccounts.map((account) => ({
             userId,
             ...account,
@@ -240,66 +258,21 @@ async function upsertInvestmentAccountsCache(userId, investmentAccounts) {
     return investmentAccounts.length;
 }
 /**
- * 批量插入或更新投资持仓缓存
+ * 批量同步 Plaid 投資持倉快取（snapshot 模式：先 delete 後 insert）。
  */
-async function upsertInvestmentsCache(userId, investments) {
-    const prismaAny = prisma_1.prisma;
-    // 删除旧缓存
-    await prismaAny.plaidInvestmentCache.deleteMany({ where: { userId } });
+async function upsertInvestmentsCache(userId, investments, db = prisma_1.prisma) {
+    const dbAny = db;
+    await dbAny.plaidInvestmentCache.deleteMany({ where: { userId } });
     if (investments.length === 0) {
         return 0;
     }
-    await prismaAny.plaidInvestmentCache.createMany({
+    await dbAny.plaidInvestmentCache.createMany({
         data: investments.map((inv) => ({
             userId,
             ...inv,
         })),
     });
     return investments.length;
-}
-/**
- * 从缓存获取账户数据
- */
-async function getAccountsFromCache(userId) {
-    const prismaAny = prisma_1.prisma;
-    return await prismaAny.plaidAccountCache.findMany({
-        where: { userId },
-        orderBy: { cachedAt: 'desc' },
-    });
-}
-/**
- * 从缓存获取交易数据（某个月份）
- */
-async function getTransactionsFromCache(userId, month) {
-    const prismaAny = prisma_1.prisma;
-    const where = { userId };
-    if (month) {
-        where.month = month;
-    }
-    return await prismaAny.plaidTransactionCache.findMany({
-        where,
-        orderBy: { date: 'desc' },
-    });
-}
-/**
- * 从缓存获取投资账户数据
- */
-async function getInvestmentAccountsFromCache(userId) {
-    const prismaAny = prisma_1.prisma;
-    return await prismaAny.plaidInvestmentAccountCache.findMany({
-        where: { userId },
-        orderBy: { cachedAt: 'desc' },
-    });
-}
-/**
- * 从缓存获取投资持仓数据
- */
-async function getInvestmentsFromCache(userId) {
-    const prismaAny = prisma_1.prisma;
-    return await prismaAny.plaidInvestmentCache.findMany({
-        where: { userId },
-        orderBy: { cachedAt: 'desc' },
-    });
 }
 /**
  * 获取用户的缓存统计信息

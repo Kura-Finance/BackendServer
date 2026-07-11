@@ -10,10 +10,9 @@ const logger_1 = require("../../logger");
 const auditLog_1 = require("../../logger/auditLog");
 const symbolsAndExchangesUtil_1 = require("../../shared/lib/symbolsAndExchangesUtil");
 const encryption_1 = require("../../shared/lib/encryption");
-/**
- * 交易所服務 - CCXT 整合層
- * 支持全球 100+ 加密貨幣交易所
- */
+const assetService_1 = require("../../asset/services/assetService");
+const crypto_1 = require("../../shared/crypto");
+const payloadKeyService_1 = require("../../shared/services/payloadKeyService");
 class ExchangeService {
     /**
      * 驗證交易所連接
@@ -190,8 +189,16 @@ class ExchangeService {
         }
     }
     /**
-     * 合併獲取交易所餘額和資產 (現貨持倉)
-     * 返回簡化的 JSON 結構，便於前端使用和未來擴展
+     * 同步交易所餘額 + 資產，並回傳「加密形式」snapshot（Phase 3 Zero-Access E2EE only）。
+     *
+     * 後端流程：
+     *   1. CCXT fetchBalance → 暫時持有明文 balances
+     *   2. 透過 CCXT 取得各 symbol 的 USD 價格（純算術，不持久化）
+     *   3. cacheBalances / cacheAssets 把明文 SEK 加密寫入 cache + AssetSnapshot
+     *   4. 立即 zeroize SEK，從加密 cache 撈出 row 回傳（前端解密渲染）
+     *
+     * 注意：期貨持倉（positions）目前未做 zero-access 加密儲存（只在同步當下回傳），
+     * PR 5 後 positions 不再寫入持久層；若需 zero-access 期貨歷史，需另闢儲存表。
      */
     static async getBalancesAndAssets(userId, exchangeAccountId) {
         const startTime = Date.now();
@@ -203,7 +210,6 @@ class ExchangeService {
             if (!exchangeAccountId || exchangeAccountId === 'undefined') {
                 throw new Error('Invalid account ID');
             }
-            // 從數據庫獲取帳戶信息
             const account = await prisma_1.prisma.exchangeAccount.findUnique({
                 where: { id: exchangeAccountId },
             });
@@ -213,13 +219,11 @@ class ExchangeService {
             if (!account.isActive) {
                 throw new Error('Account is inactive');
             }
-            // 解密敏感信息
             const decryptedApiKey = encryption_1.EncryptionUtil.decrypt(account.apiKey);
             const decryptedApiSecret = encryption_1.EncryptionUtil.decrypt(account.apiSecret);
             const decryptedPassphrase = account.passphrase
                 ? encryption_1.EncryptionUtil.decrypt(account.passphrase)
                 : undefined;
-            // 使用 CCXT 獲取餘額
             const ExchangeClass = ccxt_1.default[account.exchange];
             const exchangeInstance = new ExchangeClass({
                 apiKey: decryptedApiKey,
@@ -228,13 +232,9 @@ class ExchangeService {
                 enableRateLimit: true,
             });
             const balances = await exchangeInstance.fetchBalance();
-            // 快取餘額數據
             await this.cacheBalances(userId, exchangeAccountId, account.exchange, balances);
-            // 獲取期貨合約持倉 (非同步,不阻塞主流程)
-            const positions = await this.getPositions(userId, exchangeInstance, account.exchange, exchangeAccountId);
-            // 格式化餘額資料 balances - 只回傳有餘額的幣種
             const formattedBalances = Object.keys(balances)
-                .filter(symbol => {
+                .filter((symbol) => {
                 if (symbol === 'free' ||
                     symbol === 'used' ||
                     symbol === 'total' ||
@@ -249,85 +249,118 @@ class ExchangeService {
                     typeof balance.total === 'number' &&
                     balance.total > 0);
             })
-                .map(symbol => ({
+                .map((symbol) => ({
                 symbol,
                 free: Number(balances[symbol].free) || 0,
                 used: Number(balances[symbol].used) || 0,
                 total: Number(balances[symbol].total) || 0,
             }));
-            // 獲取所有幣種的 USD 價格和 24h 變化
-            const symbolsForPricing = formattedBalances.map(b => b.symbol);
+            const symbolsForPricing = formattedBalances.map((b) => b.symbol);
             const priceData = await this.getPrices(exchangeInstance, symbolsForPricing);
-            // 將 USD 價值與 24h 變化加入 balances
-            const balancesWithUsd = formattedBalances.map(balance => ({
+            const balancesWithUsd = formattedBalances.map((balance) => ({
                 ...balance,
-                logo: (0, symbolsAndExchangesUtil_1.getStockLogoUrl)(balance.symbol),
                 usdPrice: priceData[balance.symbol]?.price || 0,
-                change24h: priceData[balance.symbol]?.change24h || 0,
                 usdValue: balance.total * (priceData[balance.symbol]?.price || 0),
             }));
-            // 篩選出有自由餘額的資產 (現貨持倉)
-            const assets = balancesWithUsd.filter(b => b.free > 0);
-            // 計算 USD 總值
-            const balancesUsdTotal = balancesWithUsd.reduce((sum, b) => sum + b.usdValue, 0);
+            const assets = balancesWithUsd.filter((b) => b.free > 0);
             const assetsUsdTotal = assets.reduce((sum, a) => sum + a.usdValue, 0);
-            // 將 USD 價值加入 positions
-            // 取出 positions 中的基礎幣種以取得 24h 變化
-            const positionSymbols = positions.map((pos) => pos.symbol.split('/')[0]); // 從 BTC/USDT 提取 BTC
-            const positionPriceData = await this.getPrices(exchangeInstance, [...new Set(positionSymbols)]);
-            const positionsWithChange = positions.map((pos) => {
-                const baseSymbol = pos.symbol.split('/')[0];
-                return {
-                    ...pos,
-                    logo: (0, symbolsAndExchangesUtil_1.getStockLogoUrl)(baseSymbol),
-                    change24h: positionPriceData[baseSymbol]?.change24h || 0,
-                    usdValue: pos.contracts * pos.contractSize * pos.markPrice,
-                };
-            });
-            const positionsUsdTotal = positionsWithChange.reduce((sum, p) => sum + p.usdValue, 0);
+            await this.cacheAssets(userId, exchangeAccountId, account.exchange, assets, assetsUsdTotal);
             const duration = Date.now() - startTime;
             (0, logger_1.logBusinessEvent)('exchange_balances_and_assets_fetched', userId, {
                 exchange: account.exchange,
                 balanceCount: balancesWithUsd.length,
                 assetCount: assets.length,
-                positionCount: positionsWithChange.length,
-                balancesUsdTotal,
                 assetsUsdTotal,
-                positionsUsdTotal,
             });
-            // 記錄審計日誌
             auditLog_1.AuditLogger.logExchangeOperation('FETCH_BALANCES_AND_ASSETS', userId, exchangeAccountId, 'SUCCESS', {
                 exchange: account.exchange,
                 balanceCount: balancesWithUsd.length,
                 assetCount: assets.length,
-                positionCount: positionsWithChange.length,
-                balancesUsdTotal: balancesUsdTotal.toFixed(2),
                 assetsUsdTotal: assetsUsdTotal.toFixed(2),
-                positionsUsdTotal: positionsUsdTotal.toFixed(2),
             }, undefined, duration);
-            return {
-                account: {
-                    id: account.id,
-                    exchange: account.exchange,
-                    displayName: account.exchangeDisplayName,
-                },
-                balances: balancesWithUsd,
-                balancesUsdTotal,
-                assets,
-                assetsUsdTotal,
-                positions: positionsWithChange,
-                positionsUsdTotal,
-                totalUsdValue: balancesUsdTotal + positionsUsdTotal,
-                timestamp: new Date().toISOString(),
-            };
+            // 同步完成後從加密快取撈出新 row 回傳
+            return this.getEncryptedBalancesAndAssets(userId, exchangeAccountId);
         }
         catch (error) {
             const duration = Date.now() - startTime;
             const errorMsg = error instanceof Error ? error.message : String(error);
             (0, logger_1.logError)('Failed to fetch exchange balances and assets', error, { userId, exchangeAccountId });
-            // 記錄審計日誌（失敗）
             auditLog_1.AuditLogger.logExchangeOperation('FETCH_BALANCES_AND_ASSETS', userId, exchangeAccountId, 'FAILURE', {}, errorMsg, duration);
             throw error;
+        }
+    }
+    /**
+     * 寫入交易所現貨持倉（Phase 3 Zero-Access E2EE only）。
+     *
+     * 1. 為這次 sync 建立一把 SEK（scope=`exchange_asset:{accountId}:{ts}`），
+     *    沒 keypair 直接拋（caller 顯示「請先 setup keypair」）
+     * 2. 對 {holdings, price, value, percentageOfTotal} 整包加密成 payloadCiphertext
+     * 3. 同一把 SEK 加密 `cryptoSpot:exchange:{accountId}` AssetSnapshot
+     * 4. finally 立即釋放 SEK
+     */
+    static async cacheAssets(userId, exchangeAccountId, exchange, assets, assetsUsdTotal) {
+        let assetsKey;
+        try {
+            assetsKey = await payloadKeyService_1.PayloadKeyService.createForUser(userId, `exchange_asset:${exchangeAccountId}:${Date.now()}`);
+        }
+        catch (err) {
+            if (err instanceof payloadKeyService_1.KeyPairNotConfiguredError) {
+                logger_1.appLogger.warn('User has no E2EE key pair — exchange asset sync skipped. ' +
+                    'Client must POST /api/auth/keys/setup before syncing.', { userId, exchangeAccountId });
+            }
+            else {
+                (0, logger_1.logError)('Failed to create exchange asset payload key', err, {
+                    userId,
+                    exchangeAccountId,
+                });
+            }
+            throw err;
+        }
+        try {
+            await prisma_1.prisma.exchangeAssetCache.deleteMany({
+                where: { userId, exchangeAccountId },
+            });
+            if (assets.length > 0) {
+                await prisma_1.prisma.exchangeAssetCache.createMany({
+                    data: assets.map((asset) => {
+                        const holdings = Number(asset.total) || 0;
+                        const price = Number(asset.usdPrice) || 0;
+                        const value = Number(asset.usdValue) || 0;
+                        const percentageOfTotal = assetsUsdTotal > 0 ? (value / assetsUsdTotal) * 100 : 0;
+                        return {
+                            userId,
+                            exchangeAccountId,
+                            exchange,
+                            symbol: asset.symbol,
+                            payloadCiphertext: (0, crypto_1.encryptPayload)(assetsKey.sek, {
+                                holdings,
+                                price,
+                                value,
+                                percentageOfTotal,
+                            }),
+                            payloadKeyId: assetsKey.payloadKeyId,
+                        };
+                    }),
+                });
+            }
+            // 在 SEK 還在記憶體時，把本帳戶現貨 USD 總值加密寫入 AssetSnapshot。
+            // 用 sub-scoped metric "cryptoSpot:exchange:{accountId}"，
+            // 前端讀取 encrypted history 後按 base "cryptoSpot" 加總（含 debank token）。
+            try {
+                await assetService_1.AssetService.recordSnapshotFromPlaintext(userId, {
+                    [`cryptoSpot:exchange:${exchangeAccountId}`]: assetsUsdTotal,
+                });
+            }
+            catch (err) {
+                (0, logger_1.logDebug)('Failed to record encrypted cryptoSpot snapshot for exchange', {
+                    userId,
+                    exchangeAccountId,
+                    error: err instanceof Error ? err.message : String(err),
+                });
+            }
+        }
+        finally {
+            (0, crypto_1.zeroize)(assetsKey.sek);
         }
     }
     /**
@@ -391,63 +424,45 @@ class ExchangeService {
             return prices;
         }
     }
+    // getPositions（期貨合約持倉）已於 PR 5 移除：zero-access 模式下需另設加密表，
+    // 否則明文 positions 不能持久化。目前 sync 流程不再回傳 positions，
+    // 等未來 PR 補上 zero-access positions table 後再恢復。
     /**
-     * 獲取期貨合約持倉
-     * 支持 CCXT 交易所的合約持倉數據
-     */
-    static async getPositions(userId, exchangeInstance, exchange, exchangeAccountId) {
-        try {
-            // 檢查交易所是否支持合約
-            if (!exchangeInstance.has.fetchPositions) {
-                (0, logger_1.logDebug)('Exchange does not support positions', { exchange });
-                return [];
-            }
-            const positions = await exchangeInstance.fetchPositions();
-            // 篩選出開倉的持仓 (合約數量 > 0)
-            const openPositions = positions
-                .filter((pos) => pos.contracts > 0 || pos.contractSize > 0)
-                .map((pos) => ({
-                symbol: pos.symbol,
-                contractType: pos.type || 'linear', // linear 或 inverse
-                contracts: Number(pos.contracts) || 0,
-                contractSize: Number(pos.contractSize) || 0,
-                currentPrice: Number(pos.currentPrice) || 0,
-                markPrice: Number(pos.markPrice) || 0,
-                percentage: Number(pos.percentage) || 0, // 本金百分比營利
-                maintenanceMargin: Number(pos.maintenanceMargin) || 0,
-                collateral: Number(pos.collateral) || 0,
-                initialMargin: Number(pos.initialMargin) || 0,
-                unrealizedPnl: Number(pos.unrealizedPnl) || 0,
-                realizedPnl: Number(pos.realizedPnl) || 0,
-                leverage: Number(pos.leverage) || 1,
-                side: pos.side, // 'long' 或 'short'
-                info: pos.info,
-            }));
-            (0, logger_1.logDebug)('Fetched positions', {
-                exchange,
-                positionCount: openPositions.length,
-            });
-            return openPositions;
-        }
-        catch (error) {
-            (0, logger_1.logDebug)('Failed to fetch positions', { exchange, error: error instanceof Error ? error.message : String(error) });
-            // 不中斷主流程 - 如果合約獲取失敗,仍返回空陣列
-            return [];
-        }
-    }
-    /**
-     * 快取餘額數據
+     * 快取餘額數據（Phase 3 Zero-Access E2EE only）。
+     *
+     * 取得 SEK（scope=`exchange_balance:{accountId}:{ts}`），對 {free,used,total} 整包加密。
+     * 沒 keypair → 拋（caller 顯示「請先 setup keypair」）。
      */
     static async cacheBalances(userId, exchangeAccountId, exchange, balances) {
+        let balancesKey;
+        try {
+            balancesKey = await payloadKeyService_1.PayloadKeyService.createForUser(userId, `exchange_balance:${exchangeAccountId}:${Date.now()}`);
+        }
+        catch (err) {
+            if (err instanceof payloadKeyService_1.KeyPairNotConfiguredError) {
+                logger_1.appLogger.warn('User has no E2EE key pair — exchange balance sync skipped. ' +
+                    'Client must POST /api/auth/keys/setup before syncing.', { userId, exchangeAccountId });
+            }
+            else {
+                (0, logger_1.logError)('Failed to create exchange balance payload key', err, {
+                    userId,
+                    exchangeAccountId,
+                });
+            }
+            throw err;
+        }
         try {
             const operations = [];
             for (const symbol in balances) {
-                // 排除 CCXT 的元數據字段和無效項
-                if (symbol === 'free' || symbol === 'used' || symbol === 'total' || symbol === 'info' || symbol === 'datetime' || symbol === 'timestamp') {
+                if (symbol === 'free' ||
+                    symbol === 'used' ||
+                    symbol === 'total' ||
+                    symbol === 'info' ||
+                    symbol === 'datetime' ||
+                    symbol === 'timestamp') {
                     continue;
                 }
                 const balance = balances[symbol];
-                // 檢查餘額對象有效性
                 if (!balance || typeof balance !== 'object') {
                     (0, logger_1.logDebug)('Skipping invalid balance entry', { symbol, balanceType: typeof balance });
                     continue;
@@ -455,8 +470,9 @@ class ExchangeService {
                 const free = Number(balance.free) || 0;
                 const used = Number(balance.used) || 0;
                 const total = Number(balance.total) || 0;
-                // 只快取有餘額的幣種
                 if (total > 0) {
+                    const payloadCiphertext = (0, crypto_1.encryptPayload)(balancesKey.sek, { free, used, total });
+                    const payloadKeyId = balancesKey.payloadKeyId;
                     operations.push(prisma_1.prisma.exchangeBalanceCache.upsert({
                         where: {
                             userId_exchangeAccountId_symbol: {
@@ -466,9 +482,8 @@ class ExchangeService {
                             },
                         },
                         update: {
-                            free,
-                            used,
-                            total,
+                            payloadCiphertext,
+                            payloadKeyId,
                             updatedAt: new Date(),
                         },
                         create: {
@@ -476,9 +491,8 @@ class ExchangeService {
                             exchangeAccountId,
                             exchange,
                             symbol,
-                            free,
-                            used,
-                            total,
+                            payloadCiphertext,
+                            payloadKeyId,
                         },
                     }));
                 }
@@ -486,7 +500,6 @@ class ExchangeService {
             if (operations.length > 0) {
                 await Promise.all(operations);
             }
-            // 更新同步日誌
             await prisma_1.prisma.exchangeSyncLog.upsert({
                 where: { userId },
                 update: {
@@ -498,84 +511,91 @@ class ExchangeService {
                 },
             });
         }
-        catch (error) {
-            (0, logger_1.logError)('Failed to cache balances', error, { userId, exchangeAccountId });
+        finally {
+            (0, crypto_1.zeroize)(balancesKey.sek);
         }
     }
     /**
-     * 從緩存中獲取交易所餘額和資產
-     * 用於達到 API 限制時返回最後一次成功同步的數據
+     * Phase 3 Zero-Access E2EE：取得交易所「加密形式」餘額 + 資產快照。
+     *
+     * - 後端只 select metadata + payloadCiphertext + payloadKeyId，不解密
+     * - 額外回傳 payloadKeys（去重後的 wrappedSek 清單）
+     * - 沒有 payloadCiphertext 的 legacy row 會被跳過
      */
-    static async getBalancesAndAssetsFromCache(userId, exchangeAccountId) {
-        try {
-            (0, logger_1.logDebug)('Fetching exchange balances and assets from cache', {
-                userId,
-                exchangeAccountId,
-            });
-            if (!exchangeAccountId || exchangeAccountId === 'undefined') {
-                throw new Error('Invalid account ID');
-            }
-            // 從數據庫獲取帳戶信息
-            const account = await prisma_1.prisma.exchangeAccount.findUnique({
-                where: { id: exchangeAccountId },
-            });
-            if (!account || account.userId !== userId) {
-                throw new Error('Account not found or access denied');
-            }
-            // 從緩存獲取餘額
-            const cachedBalances = await prisma_1.prisma.exchangeBalanceCache.findMany({
+    static async getEncryptedBalancesAndAssets(userId, exchangeAccountId) {
+        if (!exchangeAccountId || exchangeAccountId === 'undefined') {
+            throw new Error('Invalid account ID');
+        }
+        const account = await prisma_1.prisma.exchangeAccount.findUnique({
+            where: { id: exchangeAccountId },
+            select: {
+                id: true,
+                userId: true,
+                exchange: true,
+                exchangeDisplayName: true,
+            },
+        });
+        if (!account || account.userId !== userId) {
+            throw new Error('Account not found or access denied');
+        }
+        const [balanceRows, assetRows] = await Promise.all([
+            prisma_1.prisma.exchangeBalanceCache.findMany({
                 where: {
                     userId,
                     exchangeAccountId,
+                    NOT: [{ payloadCiphertext: null }, { payloadKeyId: null }],
                 },
-            });
-            if (!cachedBalances || cachedBalances.length === 0) {
-                (0, logger_1.logDebug)('No cached balances found', { userId, exchangeAccountId });
-                throw new Error('No cached data available. Please run a manual sync first.');
-            }
-            // 格式化緩存數據
-            const balancesWithUsd = cachedBalances.map(balance => ({
-                symbol: balance.symbol,
-                logo: (0, symbolsAndExchangesUtil_1.getStockLogoUrl)(balance.symbol),
-                free: Number(balance.free) || 0,
-                used: Number(balance.used) || 0,
-                total: Number(balance.total) || 0,
-                usdPrice: 0, // 緩存數據不包含實時價格
-                change24h: 0,
-                usdValue: 0,
-            }));
-            // 篩選出有自由餘額的資產
-            const assets = balancesWithUsd.filter(b => b.free > 0);
-            // 計算 USD 總值（無法計算，因為沒有實時價格）
-            const balancesUsdTotal = 0;
-            const assetsUsdTotal = 0;
-            // 獲取同步時間戳
-            const syncLog = await prisma_1.prisma.exchangeSyncLog.findUnique({
-                where: { userId },
-            });
-            return {
-                account: {
-                    id: account.id,
-                    exchange: account.exchange,
-                    displayName: account.exchangeDisplayName,
-                    icon: (0, symbolsAndExchangesUtil_1.getExchangeIcon)(account.exchange),
+                select: {
+                    symbol: true,
+                    cachedAt: true,
+                    payloadCiphertext: true,
+                    payloadKeyId: true,
                 },
-                balances: balancesWithUsd,
-                balancesUsdTotal,
-                assets,
-                assetsUsdTotal,
-                positions: [],
-                positionsUsdTotal: 0,
-                totalUsdValue: 0,
-                timestamp: syncLog?.balancesSyncedAt?.toISOString() || new Date().toISOString(),
-                fromCache: true,
-                cacheNotice: 'Daily query limit reached. Showing last synced data (without real-time prices).',
-            };
-        }
-        catch (error) {
-            (0, logger_1.logError)('Failed to fetch exchange balances and assets from cache', error, { userId, exchangeAccountId });
-            throw error;
-        }
+                orderBy: { cachedAt: 'desc' },
+            }),
+            prisma_1.prisma.exchangeAssetCache.findMany({
+                where: {
+                    userId,
+                    exchangeAccountId,
+                    NOT: [{ payloadCiphertext: null }, { payloadKeyId: null }],
+                },
+                select: {
+                    symbol: true,
+                    cachedAt: true,
+                    payloadCiphertext: true,
+                    payloadKeyId: true,
+                },
+                orderBy: { cachedAt: 'desc' },
+            }),
+        ]);
+        const balances = balanceRows
+            .filter((r) => r.payloadCiphertext && r.payloadKeyId)
+            .map((r) => ({
+            symbol: r.symbol,
+            cachedAt: r.cachedAt,
+            payloadCiphertext: r.payloadCiphertext,
+            payloadKeyId: r.payloadKeyId,
+        }));
+        const assets = assetRows
+            .filter((r) => r.payloadCiphertext && r.payloadKeyId)
+            .map((r) => ({
+            symbol: r.symbol,
+            cachedAt: r.cachedAt,
+            payloadCiphertext: r.payloadCiphertext,
+            payloadKeyId: r.payloadKeyId,
+        }));
+        const payloadKeyIds = Array.from(new Set([...balances.map((b) => b.payloadKeyId), ...assets.map((a) => a.payloadKeyId)]));
+        const payloadKeys = await payloadKeyService_1.PayloadKeyService.getForRead(userId, payloadKeyIds);
+        return {
+            account: {
+                id: account.id,
+                exchange: account.exchange,
+                displayName: account.exchangeDisplayName,
+            },
+            payloadKeys,
+            balances,
+            assets,
+        };
     }
     /**
      * 獲取所有支持的交易所列表

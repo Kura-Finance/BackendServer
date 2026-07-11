@@ -1,10 +1,7 @@
-import { Prisma } from '@prisma/client';
 import { prisma } from '../../shared/lib/prisma';
 import {
   DeBankProtocolPosition,
-  DeBankProtocolQueryResult,
   DeBankTokenPosition,
-  DeBankTokenQueryResult,
 } from '../models/types';
 import {
   checkApiLimit,
@@ -12,6 +9,41 @@ import {
   getUserTier,
   recordApiOperation,
 } from '../../shared/lib/apiRateLimitUtil';
+import { AssetService } from '../../asset/services/assetService';
+import { appLogger, logDebug, logError } from '../../logger';
+import { encryptPayload, zeroize } from '../../shared/crypto';
+import {
+  PayloadKeyService,
+  KeyPairNotConfiguredError,
+  PayloadKeyHandle,
+} from '../../shared/services/payloadKeyService';
+
+/**
+ * Phase 3 Zero-Access E2EE：加密形式 DeBank 協議 / Token 快照。
+ */
+export interface EncryptedDeBankProtocolSnapshot {
+  address: string;
+  payloadKeys: Array<{ id: string; scope: string; wrappedSek: string; algorithm: string }>;
+  protocols: Array<{
+    protocolId: string;
+    chain: string;
+    cachedAt: Date;
+    payloadCiphertext: string;
+    payloadKeyId: string;
+  }>;
+}
+
+export interface EncryptedDeBankTokenSnapshot {
+  address: string;
+  payloadKeys: Array<{ id: string; scope: string; wrappedSek: string; algorithm: string }>;
+  tokens: Array<{
+    tokenId: string;
+    chain: string;
+    cachedAt: Date;
+    payloadCiphertext: string;
+    payloadKeyId: string;
+  }>;
+}
 
 /**
  * DeBank 服務
@@ -62,19 +94,77 @@ export class DeBankService {
     return `${token.chain || 'unknown'}:${token.symbol || token.name || 'unknown'}:${index}`;
   }
 
+  /**
+   * 嘗試為 DeBank sync 建立 SEK。
+   *
+   * Phase 3 Zero-Access only：使用者沒 keypair → 拋（caller 整個 sync flow 會 fail-fast，
+   * 因為 PR 5 已移除 legacy plaintext 寫入路徑）。
+   */
+  private static async createPayloadKey(
+    userId: string,
+    scope: string,
+  ): Promise<PayloadKeyHandle> {
+    try {
+      return await PayloadKeyService.createForUser(userId, scope);
+    } catch (err) {
+      if (err instanceof KeyPairNotConfiguredError) {
+        appLogger.warn(
+          'User has no E2EE key pair — DeBank sync skipped. ' +
+          'Client must POST /api/auth/keys/setup before syncing.',
+          { userId, scope },
+        );
+      } else {
+        logError('Failed to create DeBank payload key', err, { userId, scope });
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * 從 portfolio_item_list 計算單一 protocol 的 net USD value（DeFi 部位淨值）。
+   */
+  private static computeProtocolNetUsdValue(protocol: DeBankProtocolPosition): number {
+    const items = Array.isArray(protocol.portfolio_item_list)
+      ? protocol.portfolio_item_list
+      : [];
+    return items.reduce((sum: number, item: any) => {
+      const net = Number(item?.stats?.net_usd_value);
+      if (Number.isFinite(net)) return sum + net;
+      const asset = Number(item?.stats?.asset_usd_value || 0);
+      const debt = Number(item?.stats?.debt_usd_value || 0);
+      return sum + (asset - debt);
+    }, 0);
+  }
+
+  /**
+   * 單顆 token 的 USD 值，優先用 upstream 提供，沒給就用 amount * price。
+   */
+  private static computeTokenUsdValue(token: DeBankTokenPosition): number {
+    const usdValue = Number(token.usd_value);
+    if (Number.isFinite(usdValue) && usdValue !== 0) return usdValue;
+    const amount = Number(token.amount || 0);
+    const price = Number(token.price || 0);
+    return amount * price;
+  }
+
+  /**
+   * 取得指定地址的 DeBank protocol 快照（Phase 3 Zero-Access E2EE only）。
+   *
+   * 流程：
+   *   - forceRefresh=true 或快取過期：呼叫 DeBank API 取得明文 → 加密寫快取 → 回讀加密形式
+   *   - 否則：直接回讀加密形式（後端不解密任何 payload）
+   */
   static async getUserProtocolPositions(
     userId: string,
     address: string,
-    forceRefresh: boolean = false
-  ): Promise<DeBankProtocolQueryResult> {
+    forceRefresh: boolean = false,
+  ): Promise<EncryptedDeBankProtocolSnapshot> {
     this.assertValidAddress(address);
     const normalizedAddress = address.toLowerCase();
     const ttlSeconds = this.getCacheTtlSeconds();
 
-    // 僅手動強制刷新才檢查每日額度，普通快取流程不受限制
     if (forceRefresh) {
       const refreshCheck = await checkApiLimit(userId, 'debank_refresh');
-
       if (!refreshCheck.canOperate) {
         const tier = await getUserTier(userId);
         const refreshLimit = getApiLimitForTier('debank_refresh', tier);
@@ -86,28 +176,24 @@ export class DeBankService {
       }
     }
 
+    // 沒強制刷新時，只要快取仍新鮮就直接回讀加密形式
     if (!forceRefresh) {
       const staleAfter = new Date(Date.now() - ttlSeconds * 1000);
-      const cachedRows = await prisma.deBankProtocolCache.findMany({
+      const freshRow = await prisma.deBankProtocolCache.findFirst({
         where: {
           userId,
           address: normalizedAddress,
           cachedAt: { gte: staleAfter },
+          NOT: [{ payloadCiphertext: null }, { payloadKeyId: null }],
         },
-        orderBy: { cachedAt: 'desc' },
+        select: { id: true },
       });
-
-      if (cachedRows.length > 0) {
-        const protocols = cachedRows.map((row) => row.rawData as unknown as DeBankProtocolPosition);
-        const latestCachedAt = cachedRows[0]?.cachedAt.toISOString();
-        return {
-          protocols,
-          fromCache: true,
-          ...(latestCachedAt ? { cachedAt: latestCachedAt } : {}),
-        };
+      if (freshRow) {
+        return this.getEncryptedProtocolPositions(userId, normalizedAddress);
       }
     }
 
+    // 走 DeBank API 抓明文
     const accessKey = this.getAccessKey();
     const baseUrl = this.getBaseUrl();
     const url = `${baseUrl}/user/all_complex_protocol_list?id=${encodeURIComponent(normalizedAddress)}`;
@@ -132,33 +218,62 @@ export class DeBankService {
 
     const protocols = data as DeBankProtocolPosition[];
 
-    await prisma.$transaction(async (tx) => {
-      await tx.deBankProtocolCache.deleteMany({
-        where: {
-          userId,
-          address: normalizedAddress,
-        },
+    // Phase 3：必須有 keypair。沒有就拋（caller 顯示「請先 setup keypair」）。
+    const protocolKey = await this.createPayloadKey(
+      userId,
+      `debank_protocol:${normalizedAddress}:${Date.now()}`,
+    );
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.deBankProtocolCache.deleteMany({
+          where: {
+            userId,
+            address: normalizedAddress,
+          },
+        });
+
+        if (protocols.length === 0) {
+          return;
+        }
+
+        await tx.deBankProtocolCache.createMany({
+          data: protocols.map((protocol, index) => ({
+            userId,
+            address: normalizedAddress,
+            protocolId: this.buildStableProtocolId(protocol, index),
+            chain: protocol.chain || 'unknown',
+            cacheTtl: ttlSeconds,
+            cachedAt: new Date(),
+            payloadCiphertext: encryptPayload(protocolKey.sek, {
+              name: protocol.name || 'unknown',
+              rawData: protocol,
+            }),
+            payloadKeyId: protocolKey.payloadKeyId,
+          })),
+        });
       });
 
-      if (protocols.length === 0) {
-        return;
+      // 趁明文還在記憶體 → 加密寫 AssetSnapshot 的 defiProtocol sub-scoped metric
+      const totalDefiValue = protocols.reduce(
+        (sum, p) => sum + this.computeProtocolNetUsdValue(p),
+        0,
+      );
+      try {
+        await AssetService.recordSnapshotFromPlaintext(userId, {
+          [`defiProtocol:debank:${normalizedAddress}`]: totalDefiValue,
+        });
+      } catch (err) {
+        logDebug('Failed to record encrypted defiProtocol snapshot for debank', {
+          userId,
+          address: normalizedAddress,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
+    } finally {
+      zeroize(protocolKey.sek);
+    }
 
-      await tx.deBankProtocolCache.createMany({
-        data: protocols.map((protocol, index) => ({
-          userId,
-          address: normalizedAddress,
-          protocolId: this.buildStableProtocolId(protocol, index),
-          chain: protocol.chain || 'unknown',
-          name: protocol.name || 'unknown',
-          rawData: protocol as unknown as Prisma.InputJsonValue,
-          cacheTtl: ttlSeconds,
-          cachedAt: new Date(),
-        })),
-      });
-    });
-
-    // 手動刷新成功後記錄一次 API 操作
     if (forceRefresh) {
       try {
         await recordApiOperation(userId, 'debank_refresh');
@@ -167,26 +282,23 @@ export class DeBankService {
       }
     }
 
-    return {
-      protocols,
-      fromCache: false,
-      cachedAt: new Date().toISOString(),
-    };
+    return this.getEncryptedProtocolPositions(userId, normalizedAddress);
   }
 
+  /**
+   * 取得指定地址的 DeBank token 快照（Phase 3 Zero-Access E2EE only）。
+   */
   static async getUserTokenPositions(
     userId: string,
     address: string,
-    forceRefresh: boolean = false
-  ): Promise<DeBankTokenQueryResult> {
+    forceRefresh: boolean = false,
+  ): Promise<EncryptedDeBankTokenSnapshot> {
     this.assertValidAddress(address);
     const normalizedAddress = address.toLowerCase();
     const ttlSeconds = this.getCacheTtlSeconds();
 
-    // 僅手動強制刷新才檢查每日額度，普通快取流程不受限制
     if (forceRefresh) {
       const refreshCheck = await checkApiLimit(userId, 'debank_refresh');
-
       if (!refreshCheck.canOperate) {
         const tier = await getUserTier(userId);
         const refreshLimit = getApiLimitForTier('debank_refresh', tier);
@@ -200,23 +312,17 @@ export class DeBankService {
 
     if (!forceRefresh) {
       const staleAfter = new Date(Date.now() - ttlSeconds * 1000);
-      const cachedRows = await prisma.deBankTokenCache.findMany({
+      const freshRow = await prisma.deBankTokenCache.findFirst({
         where: {
           userId,
           address: normalizedAddress,
           cachedAt: { gte: staleAfter },
+          NOT: [{ payloadCiphertext: null }, { payloadKeyId: null }],
         },
-        orderBy: { cachedAt: 'desc' },
+        select: { id: true },
       });
-
-      if (cachedRows.length > 0) {
-        const tokens = cachedRows.map((row) => row.rawData as unknown as DeBankTokenPosition);
-        const latestCachedAt = cachedRows[0]?.cachedAt.toISOString();
-        return {
-          tokens,
-          fromCache: true,
-          ...(latestCachedAt ? { cachedAt: latestCachedAt } : {}),
-        };
+      if (freshRow) {
+        return this.getEncryptedTokenPositions(userId, normalizedAddress);
       }
     }
 
@@ -244,34 +350,61 @@ export class DeBankService {
 
     const tokens = data as DeBankTokenPosition[];
 
-    await prisma.$transaction(async (tx) => {
-      await tx.deBankTokenCache.deleteMany({
-        where: {
-          userId,
-          address: normalizedAddress,
-        },
+    const tokenKey = await this.createPayloadKey(
+      userId,
+      `debank_token:${normalizedAddress}:${Date.now()}`,
+    );
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.deBankTokenCache.deleteMany({
+          where: {
+            userId,
+            address: normalizedAddress,
+          },
+        });
+
+        if (tokens.length === 0) {
+          return;
+        }
+
+        await tx.deBankTokenCache.createMany({
+          data: tokens.map((token, index) => ({
+            userId,
+            address: normalizedAddress,
+            chain: token.chain || 'unknown',
+            tokenId: this.buildStableTokenId(token, index),
+            cacheTtl: ttlSeconds,
+            cachedAt: new Date(),
+            payloadCiphertext: encryptPayload(tokenKey.sek, {
+              symbol: token.symbol || 'UNKNOWN',
+              name: token.name || token.symbol || 'unknown',
+              rawData: token,
+            }),
+            payloadKeyId: tokenKey.payloadKeyId,
+          })),
+        });
       });
 
-      if (tokens.length === 0) {
-        return;
+      const totalSpotValue = tokens.reduce(
+        (sum, t) => sum + this.computeTokenUsdValue(t),
+        0,
+      );
+      try {
+        await AssetService.recordSnapshotFromPlaintext(userId, {
+          [`cryptoSpot:debank:${normalizedAddress}`]: totalSpotValue,
+        });
+      } catch (err) {
+        logDebug('Failed to record encrypted cryptoSpot snapshot for debank', {
+          userId,
+          address: normalizedAddress,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
+    } finally {
+      zeroize(tokenKey.sek);
+    }
 
-      await tx.deBankTokenCache.createMany({
-        data: tokens.map((token, index) => ({
-          userId,
-          address: normalizedAddress,
-          chain: token.chain || 'unknown',
-          tokenId: this.buildStableTokenId(token, index),
-          symbol: token.symbol || 'UNKNOWN',
-          name: token.name || token.symbol || 'unknown',
-          rawData: token as unknown as Prisma.InputJsonValue,
-          cacheTtl: ttlSeconds,
-          cachedAt: new Date(),
-        })),
-      });
-    });
-
-    // 手動刷新成功後記錄一次 API 操作
     if (forceRefresh) {
       try {
         await recordApiOperation(userId, 'debank_refresh');
@@ -280,10 +413,101 @@ export class DeBankService {
       }
     }
 
+    return this.getEncryptedTokenPositions(userId, normalizedAddress);
+  }
+
+  /**
+   * Phase 3 Zero-Access E2EE：取得指定地址的 protocol 加密快照。
+   *
+   * 後端只 select metadata + payloadCiphertext + payloadKeyId；
+   * 前端用 privateKey unwrap payloadKeys 後解 row。
+   */
+  static async getEncryptedProtocolPositions(
+    userId: string,
+    address: string,
+  ): Promise<EncryptedDeBankProtocolSnapshot> {
+    this.assertValidAddress(address);
+    const normalizedAddress = address.toLowerCase();
+
+    const rows = await prisma.deBankProtocolCache.findMany({
+      where: {
+        userId,
+        address: normalizedAddress,
+        NOT: [{ payloadCiphertext: null }, { payloadKeyId: null }],
+      },
+      select: {
+        protocolId: true,
+        chain: true,
+        cachedAt: true,
+        payloadCiphertext: true,
+        payloadKeyId: true,
+      },
+      orderBy: { cachedAt: 'desc' },
+    });
+
+    const protocols = rows
+      .filter((r: any) => r.payloadCiphertext && r.payloadKeyId)
+      .map((r: any) => ({
+        protocolId: r.protocolId,
+        chain: r.chain,
+        cachedAt: r.cachedAt,
+        payloadCiphertext: r.payloadCiphertext as string,
+        payloadKeyId: r.payloadKeyId as string,
+      }));
+
+    const payloadKeyIds = Array.from(new Set(protocols.map((p) => p.payloadKeyId)));
+    const payloadKeys = await PayloadKeyService.getForRead(userId, payloadKeyIds);
+
     return {
+      address: normalizedAddress,
+      payloadKeys,
+      protocols,
+    };
+  }
+
+  /**
+   * Phase 3 Zero-Access E2EE：取得指定地址的 EVM token 加密快照。
+   */
+  static async getEncryptedTokenPositions(
+    userId: string,
+    address: string,
+  ): Promise<EncryptedDeBankTokenSnapshot> {
+    this.assertValidAddress(address);
+    const normalizedAddress = address.toLowerCase();
+
+    const rows = await prisma.deBankTokenCache.findMany({
+      where: {
+        userId,
+        address: normalizedAddress,
+        NOT: [{ payloadCiphertext: null }, { payloadKeyId: null }],
+      },
+      select: {
+        tokenId: true,
+        chain: true,
+        cachedAt: true,
+        payloadCiphertext: true,
+        payloadKeyId: true,
+      },
+      orderBy: { cachedAt: 'desc' },
+    });
+
+    const tokens = rows
+      .filter((r: any) => r.payloadCiphertext && r.payloadKeyId)
+      .map((r: any) => ({
+        tokenId: r.tokenId,
+        chain: r.chain,
+        cachedAt: r.cachedAt,
+        payloadCiphertext: r.payloadCiphertext as string,
+        payloadKeyId: r.payloadKeyId as string,
+      }));
+
+    const payloadKeyIds = Array.from(new Set(tokens.map((t) => t.payloadKeyId)));
+    const payloadKeys = await PayloadKeyService.getForRead(userId, payloadKeyIds);
+
+    return {
+      address: normalizedAddress,
+      payloadKeys,
       tokens,
-      fromCache: false,
-      cachedAt: new Date().toISOString(),
     };
   }
 

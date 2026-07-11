@@ -13,10 +13,15 @@ export interface PlaidCacheInfo {
 }
 export interface UserProfile {
     id: string;
-    email: string;
+    email: string | null;
+    walletAddress?: string | null;
     displayName: string;
     avatarUrl: string;
     membershipLabel: string;
+    referCode?: string;
+    referredByCode?: string | null;
+    referralCount?: number;
+    cashbackBalance?: number;
     plaidCache?: PlaidCacheInfo;
 }
 export interface UpdateProfilePayload {

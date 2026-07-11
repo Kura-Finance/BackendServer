@@ -73,18 +73,32 @@ class PlaidInvestmentService {
             });
             const securitiesById = new Map(holdingsResponse.data.securities.map((security) => [security.security_id, security]));
             for (const account of holdingsResponse.data.accounts) {
-                investmentAccounts.push({
+                // investmentsHoldingsGet 在部分機構可能帶出非投資帳戶，需過濾避免誤標 Broker
+                const bucket = (0, plaidDataTransformer_1.classifyPlaidAccountBucket)(account.type, account.subtype);
+                if (bucket !== 'investment') {
+                    continue;
+                }
+                const invAccount = {
                     id: account.account_id,
                     name: `${item.institutionName} · ${account.name}`,
                     type: 'Broker',
-                    logo: '',
-                });
+                    logo: (0, symbolsAndExchangesUtil_1.getInstitutionLogoUrl)(item.institutionName),
+                };
+                if (account.logo) {
+                    invAccount.plaidLogo = account.logo;
+                }
+                investmentAccounts.push(invAccount);
             }
             for (const holding of holdingsResponse.data.holdings) {
                 const security = securitiesById.get(holding.security_id);
                 if (!security)
                     continue;
                 const investmentType = (0, plaidDataTransformer_1.mapPlaidInvestmentType)(security.type, security.ticker_symbol);
+                const quantity = Number(holding.quantity || 0);
+                const institutionPrice = Number(holding.institution_price || 0);
+                const institutionValue = Number(holding.institution_value || 0);
+                const fallbackPrice = quantity > 0 ? institutionValue / quantity : 0;
+                const effectivePrice = institutionPrice > 0 ? institutionPrice : fallbackPrice;
                 // 規範化加密貨幣 symbol 用於 API 查詢
                 let normalizedSymbol = security.ticker_symbol || '';
                 if (investmentType === 'crypto' && security.ticker_symbol) {
@@ -99,8 +113,8 @@ class PlaidInvestmentService {
                     accountId: holding.account_id,
                     symbol: normalizedSymbol || security.name || 'N/A',
                     name: security.name || normalizedSymbol || 'Unknown Asset',
-                    holdings: Number(holding.quantity || 0),
-                    currentPrice: Number(holding.institution_price || 0),
+                    holdings: quantity,
+                    currentPrice: effectivePrice,
                     change24h,
                     type: investmentType,
                     logo: (0, symbolsAndExchangesUtil_1.getStockLogoUrl)(normalizedSymbol || ''),

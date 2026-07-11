@@ -59,6 +59,26 @@ router.post('/exchange-public-token', auth_1.requireAuth, (0, validateRequest_1.
  */
 router.get('/finance-snapshot', auth_1.requireAuth, (0, validateRequest_1.validateRequest)({ query: plaidSchemas_1.getFinanceSnapshotQuerySchema }), wrapAsync(plaidController_1.getFinanceSnapshotOptimized));
 /**
+ * 路由：GET /api/plaid/finance-snapshot/encrypted
+ * 功能：取得「加密形式」財務快照（Phase 3 Zero-Access E2EE）
+ *
+ * 後端不解密任何 sensitive payload，只回傳：
+ *   - payloadKeys[]：每個 sync 批次的 wrappedSek（前端用 privateKey unwrap）
+ *   - accounts/transactions/investmentAccounts/investments：metadata + payloadCiphertext
+ *
+ * 前端必須先：
+ *   1. POST /api/auth/keys/setup 設定 X25519 keypair
+ *   2. GET  /api/auth/keys/me 取回 encryptedPrivateKey + 用 KEK 解開 privateKey
+ *
+ * 行為：
+ *   - 沒設定 keypair 且本地已有舊加密快取：回傳該快取（stale 好過 error）
+ *   - 沒設定 keypair 且快取也是空的：回傳 409 KEY_PAIR_REQUIRED
+ *   - 已設定 keypair：正常加密寫入並回傳最新加密快照
+ *
+ * 驗證：需要登入
+ */
+router.get('/finance-snapshot/encrypted', auth_1.requireAuth, wrapAsync(plaidController_1.getEncryptedFinanceSnapshot));
+/**
  * 路由：POST /api/plaid/disconnect-item
  * 功能：中斷 Plaid Item 連線（會移除整個 Item 底下所有帳戶）
  * 驗證：需要登入

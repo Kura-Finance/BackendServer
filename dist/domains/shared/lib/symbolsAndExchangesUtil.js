@@ -8,7 +8,6 @@ exports.EXCHANGES_REQUIRING_PASSPHRASE = exports.EXCHANGE_ICON_MAP = exports.EXC
 exports.getExchangeIcon = getExchangeIcon;
 exports.getStockLogoUrl = getStockLogoUrl;
 exports.getInstitutionLogoUrl = getInstitutionLogoUrl;
-exports.getMerchantLogoUrl = getMerchantLogoUrl;
 exports.buildLogoDevUrl = buildLogoDevUrl;
 exports.addStockDomainMapping = addStockDomainMapping;
 exports.addStockDomainMappings = addStockDomainMappings;
@@ -388,56 +387,6 @@ function getInstitutionLogoUrl(institutionName) {
         INSTITUTION_TO_DOMAIN[institutionName] ||
         inferDomainFromInstitution(cleanInstitutionName);
     return buildLogoDevUrl(domain, 'domain');
-}
-/**
- * 根據商家名稱獲取商家 logo URL
- * 使用 Logo.dev API (https://logo.dev/) - 與機構 logo 保持一致
- * @param merchantName 商家名稱（例如：'Netflix', 'Amazon', 'Spotify', 'Netflix Inc.'）
- * @returns logo URL
- */
-function getMerchantLogoUrl(merchantName) {
-    if (!merchantName) {
-        return FALLBACK_LOGO;
-    }
-    const normalized = merchantName.toLowerCase();
-    // 先走高信心品牌規則，避免誤判成 generic domain（例如 play.com、capital.com）
-    const merchantDomainRules = [
-        { pattern: /\bgoogle\s*play\b/, domain: 'play.google.com' },
-        { pattern: /^play$/, domain: 'play.google.com' },
-        { pattern: /\bcapital\s*one\b/, domain: 'capitalone.com' },
-        { pattern: /\bcredit[\s\-]*cash[\s\-]*back[\s\-]*reward\b/, domain: 'capitalone.com' },
-        { pattern: /\bcapital\s*one\s*mobile\s*(payment|pymt)\b/, domain: 'capitalone.com' },
-    ];
-    for (const rule of merchantDomainRules) {
-        if (rule.pattern.test(normalized)) {
-            return buildLogoDevUrl(rule.domain, 'domain');
-        }
-    }
-    const genericTokens = new Set([
-        'payment',
-        'pymt',
-        'mobile',
-        'credit',
-        'cash',
-        'back',
-        'reward',
-        'rewards',
-        'card',
-        'banking',
-        'purchase',
-        'debit',
-        'online',
-        'store',
-    ]);
-    const tokens = normalized
-        .split(/[^a-z0-9]+/)
-        .map((token) => token.trim())
-        .filter((token) => token.length >= 3);
-    const preferredToken = tokens.find((token) => !genericTokens.has(token));
-    if (!preferredToken) {
-        return FALLBACK_LOGO;
-    }
-    return buildLogoDevUrl(`${preferredToken}.com`, 'domain');
 }
 /**
  * 推導投資機構的 domain

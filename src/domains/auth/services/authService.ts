@@ -1,238 +1,155 @@
 import * as jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { prisma } from '../../shared/lib/prisma';
+import { getJwtSecret } from '../../../config/env';
 import { logAuthEvent, logError, logDatabaseOperation, logBusinessEvent, logDebug } from '../../logger';
 import { UserProfile, UpdateProfilePayload, PlaidCacheInfo } from '../models/types';
-import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
-import { EmailService } from '../../email';
 import { getCacheStats } from '../../plaid/lib/plaidCacheUtil';
-
-type SRPAuthPayload = {
-  srpSalt: string;
-  srpVerifier: string;
-  encryptedDataKey: string;
-  kekSalt: string;
-};
-
-/**
- * 註冊流程已整合為郵件驗證模式
- * 使用資料庫儲存驗證碼，而不是記憶體快取
- */
+import type { PrivyIdentity } from './privyService';
 
 /**
  * 認證服務 - 業務邏輯層
+ *
+ * 登入由 Privy 驅動：前端用 Privy 完成登入後，後端驗證 Privy token、
+ * 對應到內部 user（以 privyUserId 為主鍵），再核發自有的 JWT session token。
  */
 
 export class AuthService {
-  private static readonly JWT_SECRET = process.env.JWT_SECRET || 'secret';
-  private static readonly VERIFICATION_CODE_EXPIRY = 10 * 60 * 1000; // 10 分鐘
-
-  private static normalizeHex(value: string): string {
-    return value.trim().toLowerCase();
+  private static normalizeReferralCode(code: string): string {
+    return code.trim().toUpperCase();
   }
 
-  private static isHexString(value: string): boolean {
-    const normalized = this.normalizeHex(value);
-    return /^[a-f0-9]+$/.test(normalized) && normalized.length % 2 === 0;
-  }
-
-  private static assertRequiredSrpPayload(payload: SRPAuthPayload, missingMessage: string): void {
-    if (!payload.srpSalt || !payload.srpVerifier || !payload.encryptedDataKey || !payload.kekSalt) {
-      throw new Error(missingMessage);
+  private static async generateUniqueReferCode(): Promise<string> {
+    for (let i = 0; i < 10; i += 1) {
+      const referCode = `RF${crypto.randomBytes(5).toString('hex').toUpperCase()}`;
+      const existing = await prisma.user.findUnique({
+        where: { referCode },
+        select: { id: true },
+      });
+      if (!existing) {
+        return referCode;
+      }
     }
+    throw new Error('Unable to generate unique referral code');
   }
 
-  private static assertValidSrpPayload(payload: SRPAuthPayload): void {
-    if (
-      !this.isHexString(payload.srpSalt) ||
-      !this.isHexString(payload.srpVerifier) ||
-      !this.isHexString(payload.encryptedDataKey) ||
-      !this.isHexString(payload.kekSalt)
-    ) {
-      throw new Error('Invalid SRP payload format');
-    }
-  }
-
-  private static normalizeSrpPayload(payload: SRPAuthPayload): SRPAuthPayload {
-    return {
-      srpSalt: this.normalizeHex(payload.srpSalt),
-      srpVerifier: this.normalizeHex(payload.srpVerifier),
-      encryptedDataKey: this.normalizeHex(payload.encryptedDataKey),
-      kekSalt: this.normalizeHex(payload.kekSalt),
-    };
-  }
-
-  private static buildSrpAuthUpdateData(payload: SRPAuthPayload) {
-    const normalizedPayload = this.normalizeSrpPayload(payload);
-    return {
-      srpSalt: normalizedPayload.srpSalt,
-      srpVerifier: normalizedPayload.srpVerifier,
-      encryptedDataKey: normalizedPayload.encryptedDataKey,
-      kekSalt: normalizedPayload.kekSalt,
-    };
-  }
-
-  private static async updateUserSrpAuthById(userId: string, payload: SRPAuthPayload): Promise<void> {
-    await prisma.user.update({
-      where: { id: userId },
-      data: this.buildSrpAuthUpdateData(payload),
+  private static async resolveInviterByReferralCode(referralCode: string): Promise<{ id: string; referCode: string }> {
+    const inviter = await prisma.user.findUnique({
+      where: { referCode: this.normalizeReferralCode(referralCode) },
+      select: { id: true, referCode: true },
     });
+
+    if (!inviter) {
+      throw new Error('Invalid referral code');
+    }
+
+    return inviter;
   }
 
   /**
    * ============================================
-   * 統一驗證碼管理系統
+   * Privy 登入
    * ============================================
+   *
+   * 以 Privy DID 為主鍵 upsert 使用者，綁定 embedded wallet，回傳自有 JWT。
+   * 首次登入即註冊（無需獨立的註冊流程）。
    */
+  static async loginWithPrivy(
+    identity: PrivyIdentity,
+    referralCode?: string,
+  ): Promise<{ token: string; user: UserProfile; needsKeyPairSetup: boolean; needsProfileSetup: boolean }> {
+    const { privyUserId, email, walletAddress } = identity;
 
-  /**
-   * 發送驗證碼 (通用方法)
-   * @param email 目標郵箱
-   * @param type 驗證碼類型: 'register' | 'password-reset' | 'email-change'
-   * @param userId 使用者 ID (可選，註冊時不需要)
-   * @param metadata 額外資料 (例如：新郵箱、其他必要資訊)
-   */
-  static async sendVerificationCode(
-    email: string,
-    type: 'register' | 'password-reset' | 'email-change',
-    userId?: string,
-    metadata?: Record<string, unknown>
-  ): Promise<{ expiresIn: number }> {
-    logDebug('Sending verification code', { email, type, userId });
-
-    if (!email) {
-      throw new Error('Email is required');
+    if (!privyUserId) {
+      throw new Error('Missing Privy user id');
     }
 
-    if (type === 'register') {
-      const existingUser = await prisma.user.findUnique({
+    let resolved: { id: string; publicKey: string | null } | null = null;
+
+    // 1. 以 privyUserId 查找既有帳號
+    const byPrivy = await prisma.user.findUnique({
+      where: { privyUserId },
+      select: { id: true, publicKey: true },
+    });
+    if (byPrivy) {
+      resolved = byPrivy;
+    }
+
+    // 2. 尚未綁定 Privy 的同 email 帳號 → 連結到此 Privy 身分
+    if (!resolved && email) {
+      const byEmail = await prisma.user.findUnique({
         where: { email },
-        select: { id: true, srpVerifier: true },
+        select: { id: true, publicKey: true, privyUserId: true },
       });
-
-      // 已完成 SRP 註冊的帳號，不允許再走註冊流程重發驗證碼
-      if (existingUser?.srpVerifier) {
-        throw new Error('Email is already registered. Please sign in.');
+      if (byEmail) {
+        if (byEmail.privyUserId && byEmail.privyUserId !== privyUserId) {
+          throw new Error('Email is already linked to another account');
+        }
+        const linked = await prisma.user.update({
+          where: { id: byEmail.id },
+          data: {
+            privyUserId,
+            ...(walletAddress ? { walletAddress } : {}),
+          },
+          select: { id: true, publicKey: true },
+        });
+        resolved = linked;
+        logAuthEvent('login', linked.id, { method: 'privy', action: 'link_existing' });
       }
     }
 
-    // 生成 6 位驗證碼
-    const code = Math.random().toString().slice(2, 8).padStart(6, '0');
-    const expiresAt = new Date(Date.now() + this.VERIFICATION_CODE_EXPIRY);
+    // 3. 建立新帳號（首次登入即註冊）
+    if (!resolved) {
+      let inviter: { id: string; referCode: string } | undefined;
+      if (referralCode) {
+        try {
+          inviter = await this.resolveInviterByReferralCode(referralCode);
+        } catch {
+          // 邀請碼無效不應阻擋登入；忽略即可（之後可用 /me/referral-code 補填）
+          logDebug('Ignoring invalid referral code on Privy login', { referralCode });
+        }
+      }
 
-    try {
-      // 刪除同類型的舊驗證碼
-      const deleteStartTime = Date.now();
-      await prisma.verificationCode.deleteMany({
-        where: {
-          email,
-          type,
-          // 如果是已登入使用者，保持 userId 一致
-          ...(userId && { userId }),
-        },
-      });
-      logDatabaseOperation('DELETE', 'verification_codes', Date.now() - deleteStartTime, true);
-
-      // 建立新驗證碼
       const createStartTime = Date.now();
-      await prisma.verificationCode.create({
+      const created = await prisma.user.create({
         data: {
-          email,
-          code,
-          type,
-          userId: userId || null,
-          metadata: (metadata || {}) as any,
-          expiresAt,
+          privyUserId,
+          ...(email ? { email } : {}),
+          ...(walletAddress ? { walletAddress } : {}),
+          referCode: await this.generateUniqueReferCode(),
+          emailVerified: !!email,
+          ...(inviter ? { referredByUserId: inviter.id, referredAt: new Date() } : {}),
+        },
+        select: { id: true, publicKey: true },
+      });
+      logDatabaseOperation('CREATE', 'users', Date.now() - createStartTime, true);
+      logAuthEvent('register', created.id, { method: 'privy' });
+      logBusinessEvent('user_registered_privy', created.id, { hasEmail: !!email, hasWallet: !!walletAddress });
+      resolved = created;
+    } else {
+      // 既有帳號：補寫 / 更新 email 與 wallet（Privy 為身分來源）
+      await prisma.user.update({
+        where: { id: resolved.id },
+        data: {
+          ...(email ? { email } : {}),
+          ...(walletAddress ? { walletAddress } : {}),
         },
       });
-      logDatabaseOperation('CREATE', 'verification_codes', Date.now() - createStartTime, true);
-
-      logBusinessEvent('verification_code_sent', userId, { email, type });
-
-      // 發送郵件
-      const emailSent = await EmailService.sendVerificationEmail(
-        email,
-        code,
-        email.split('@')[0]
-      );
-
-      if (!emailSent) {
-        logError('Failed to send verification email', new Error('Email service failed'), { email, type });
-        throw new Error('Unable to send verification code. Please try again later.');
-      }
-
-      logAuthEvent('verification_code_sent', userId, { email, type });
-
-      return { expiresIn: this.VERIFICATION_CODE_EXPIRY };
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('Unable to send')) {
-        throw error;
-      }
-      logError('Failed to send verification code', error, { email, type });
-      throw new Error('Failed to send verification code. Please try again later.');
-    }
-  }
-
-  /**
-   * 驗證碼驗證 (通用方法)
-   * @param email 目標郵箱
-   * @param code 驗證碼
-   * @param type 驗證碼類型
-   * @returns { valid: boolean; metadata?: unknown }
-   */
-  static async verifyCode(
-    email: string,
-    code: string,
-    type: 'register' | 'password-reset' | 'email-change'
-  ): Promise<{ valid: boolean; metadata?: unknown }> {
-    logDebug('Verifying code', { email, type });
-
-    if (!email || !code) {
-      throw new Error('Email and verification code are required');
     }
 
-    try {
-      const startTime = Date.now();
-      const verificationCode = await prisma.verificationCode.findFirst({
-        where: {
-          email,
-          code,
-          type,
-        },
-      });
-      logDatabaseOperation('SELECT', 'verification_codes', Date.now() - startTime, true);
-
-      if (!verificationCode) {
-        logAuthEvent('failed_verification', undefined, { email, type, reason: 'invalid_code' });
-        throw new Error('Invalid verification code');
-      }
-
-      // 檢查過期
-      if (new Date() > verificationCode.expiresAt) {
-        logAuthEvent('failed_verification', verificationCode.userId ?? undefined, { email, type, reason: 'expired' });
-        throw new Error('Verification code has expired. Please request a new one.');
-      }
-
-      // 刪除已使用的驗證碼
-      const deleteStartTime = Date.now();
-      await prisma.verificationCode.delete({
-        where: { id: verificationCode.id },
-      });
-      logDatabaseOperation('DELETE', 'verification_codes', Date.now() - deleteStartTime, true);
-
-      logAuthEvent('verification_success', verificationCode.userId ?? undefined, { email, type });
-      logBusinessEvent('verification_code_verified', verificationCode.userId ?? undefined, { type });
-
-      return {
-        valid: true,
-        metadata: verificationCode.metadata,
-      };
-    } catch (error) {
-      if (error instanceof Error && (error.message.includes('Invalid') || error.message.includes('expired'))) {
-        throw error;
-      }
-      logError('Failed to verify code', error, { email, type });
-      throw new Error('Verification failed. Please try again later.');
+    const token = jwt.sign({ userId: resolved.id }, getJwtSecret(), { expiresIn: '7d' });
+    const profile = await this.buildUserProfile(resolved.id);
+    if (!profile) {
+      throw new Error('Unable to build user profile');
     }
+
+    logAuthEvent('login', resolved.id, { method: 'privy' });
+
+    // needsProfileSetup: 用戶尚未主動設定過 displayName（name 欄位）→ 提示前端引導補資料
+    // email 由 Privy 管理，後端不允許獨立修改，因此不納入判斷
+    const needsProfileSetup = !profile.hasName;
+
+    return { token, user: profile, needsKeyPairSetup: !resolved.publicKey, needsProfileSetup };
   }
 
   /**
@@ -244,9 +161,22 @@ export class AuthService {
       select: {
         id: true,
         email: true,
+        walletAddress: true,
         name: true,
         avatarUrl: true,
         tier: true,
+        cashbackBalance: true,
+        referCode: true,
+        referredBy: {
+          select: {
+            referCode: true,
+          },
+        },
+        _count: {
+          select: {
+            referredUsers: true,
+          },
+        },
       },
     });
 
@@ -254,14 +184,28 @@ export class AuthService {
       return null;
     }
 
+    // email 可能為 null（wallet / social 登入）；用 email → wallet → id 當顯示種子
+    const seed = user.email || user.walletAddress || user.id;
+    const fallbackName = user.email
+      ? user.email.split('@')[0]
+      : user.walletAddress
+        ? `${user.walletAddress.slice(0, 6)}…${user.walletAddress.slice(-4)}`
+        : 'User';
+
     return {
       id: user.id,
       email: user.email,
-      displayName: (user.name || user.email.split('@')[0]) as string,
+      walletAddress: user.walletAddress,
+      displayName: (user.name || fallbackName) as string,
+      hasName: !!user.name,
       avatarUrl:
         user.avatarUrl ||
-        `https://api.dicebear.com/7.x/notionists/svg?seed=${encodeURIComponent(user.email)}&backgroundColor=e2e8f0`,
+        `https://api.dicebear.com/7.x/notionists/svg?seed=${encodeURIComponent(seed)}&backgroundColor=e2e8f0`,
       membershipLabel: `${user.tier || 'Basic'} Member`,
+      cashbackBalance: user.cashbackBalance || 0,
+      referCode: user.referCode,
+      referredByCode: user.referredBy?.referCode ?? null,
+      referralCount: user._count.referredUsers,
     };
   }
 
@@ -356,150 +300,6 @@ export class AuthService {
   }
 
   /**
-   * 請求密碼重置 (整合郵件驗證碼模式)
-   * 發送 6 位驗證碼到郵箱，而不是回傳 token
-   */
-  static async requestPasswordReset(email: string): Promise<{ expiresIn: number }> {
-    logDebug('Processing password reset request', { email });
-
-    if (!email) {
-      throw new Error('Email is required');
-    }
-
-    try {
-      const startTime = Date.now();
-      const user = await prisma.user.findUnique({ where: { email } });
-      logDatabaseOperation('SELECT', 'users', Date.now() - startTime, true);
-
-      if (!user) {
-        // 不透露使用者是否存在，回傳通用訊息
-        logAuthEvent('failed_password_reset_request', undefined, { email, reason: 'user_not_found' });
-        // 回傳成功以保護使用者隱私
-        return { expiresIn: 10 * 60 };
-      }
-
-      // 刪除該使用者的舊重置碼
-      const deleteStartTime = Date.now();
-      await prisma.verificationCode.deleteMany({
-        where: {
-          email,
-          type: 'password-reset',
-        },
-      });
-      logDatabaseOperation('DELETE', 'verification_codes', Date.now() - deleteStartTime, true);
-
-      // 生成 6 位數字驗證碼
-      const resetCode = Math.random().toString().slice(2, 8).padStart(6, '0');
-      const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 分鐘過期
-
-      const createStartTime = Date.now();
-      await prisma.verificationCode.create({
-        data: {
-          email,
-          code: resetCode,
-          type: 'password-reset',
-          userId: user.id,
-          expiresAt,
-          metadata: {},
-        },
-      });
-      logDatabaseOperation('CREATE', 'verification_codes', Date.now() - createStartTime, true);
-
-      logAuthEvent('password_reset_requested', user.id, { email });
-      logBusinessEvent('password_reset_token_generated', user.id, { email });
-
-      // 發送密碼重置郵件
-      const emailSent = await EmailService.sendPasswordResetEmail(email, resetCode, user.name || undefined);
-      if (!emailSent) {
-        logError('Failed to send password reset email', new Error('Email service failed'), { email });
-        throw new Error('Unable to send reset code. Please try again later.');
-      }
-
-      logAuthEvent('password_reset_code_sent', user.id, { email });
-
-      return { expiresIn: 10 * 60 }; // 秒數
-    } catch (error) {
-      if (error instanceof PrismaClientKnownRequestError) {
-        logAuthEvent('failed_password_reset_request', undefined, { email, reason: 'database_error' });
-        throw new Error('Server error: unable to send reset code');
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * 驗證密碼重置碼並重置密碼 (整合郵件驗證碼模式)
-   */
-  static async resetPassword(
-    email: string,
-    resetCode: string,
-    srpSalt: string,
-    srpVerifier: string,
-    encryptedDataKey: string,
-    kekSalt: string,
-    preserveData = false
-  ): Promise<{ success: boolean; message: string }> {
-    logDebug('Processing password reset (SRP)', { email, preserveData });
-
-    const srpPayload: SRPAuthPayload = this.normalizeSrpPayload({
-      srpSalt,
-      srpVerifier,
-      encryptedDataKey,
-      kekSalt,
-    });
-
-    if (!email || !resetCode) {
-      throw new Error('Missing required parameters');
-    }
-    this.assertRequiredSrpPayload(srpPayload, 'Missing required parameters');
-
-    if (resetCode.length !== 6 || !/^\d{6}$/.test(resetCode)) {
-      throw new Error('Invalid verification code format');
-    }
-    this.assertValidSrpPayload(srpPayload);
-
-    try {
-      // 驗證重置碼
-      const { valid } = await this.verifyCode(email, resetCode, 'password-reset');
-      
-      if (!valid) {
-        throw new Error('Reset code is invalid or expired');
-      }
-
-      // 查詢使用者
-      const startTime = Date.now();
-      const user = await prisma.user.findUnique({ where: { email } });
-      logDatabaseOperation('SELECT', 'users', Date.now() - startTime, true);
-
-      if (!user) {
-        logAuthEvent('failed_password_reset', undefined, { email, reason: 'user_not_found' });
-        throw new Error('User not found');
-      }
-
-      // 重置碼有效，更新 SRP 認證資訊與新的資料金鑰（Data Key）
-      const updateStartTime = Date.now();
-      await this.updateUserSrpAuthById(user.id, srpPayload);
-      logDatabaseOperation('UPDATE', 'users', Date.now() - updateStartTime, true);
-
-      logAuthEvent('password_reset_success', user.id, { email, preserveData });
-      logBusinessEvent('user_password_reset_srp', user.id, { email, preserveData });
-
-      return {
-        success: true,
-        message: preserveData
-          ? 'Password changed successfully and encrypted data key preserved'
-          : 'Password reset successfully',
-      };
-    } catch (error) {
-      if (error instanceof PrismaClientKnownRequestError) {
-        logAuthEvent('failed_password_reset', undefined, { email, reason: 'database_error' });
-        throw new Error('Server error: unable to reset password');
-      }
-      throw error;
-    }
-  }
-
-  /**
    * 刪除使用者帳戶
    */
   static async deleteAccount(userId: string): Promise<{ success: boolean; message: string }> {
@@ -529,8 +329,8 @@ export class AuthService {
     });
     logDatabaseOperation('DELETE', 'users', Date.now() - deleteStartTime, true);
 
-    logAuthEvent('register', userId, { email: user.email, action: 'delete_account' });
-    logBusinessEvent('user_account_deleted', userId, { email: user.email });
+    logAuthEvent('register', userId, { email: user.email ?? undefined, action: 'delete_account' });
+    logBusinessEvent('user_account_deleted', userId, { email: user.email ?? undefined });
 
     return {
       success: true,
@@ -538,170 +338,138 @@ export class AuthService {
     };
   }
 
-  /**
-   * 請求修改郵箱 - 發送驗證碼到新郵箱
-   */
-  static async requestEmailChange(userId: string, newEmail: string): Promise<{ expiresIn: number }> {
-    logDebug('Processing email change request', { userId, newEmail });
+  static async applyReferralCode(userId: string, referralCode: string): Promise<UserProfile> {
+    const normalizedCode = this.normalizeReferralCode(referralCode);
 
-    if (!userId || !newEmail) {
-      throw new Error('Missing required parameters');
-    }
-
-    // 驗證新郵箱格式
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(newEmail)) {
-      throw new Error('Invalid email format');
-    }
-
-    // 檢查新郵箱是否已被使用
-    const existingUser = await prisma.user.findUnique({
-      where: { email: newEmail },
-    });
-
-    if (existingUser) {
-      throw new Error('Email is already registered');
-    }
-
-    // 使用統一的驗證碼系統
-    return this.sendVerificationCode(newEmail, 'email-change', userId, { newEmail });
-  }
-
-  /**
-   * 確認修改郵箱 - 驗證碼驗證成功則修改郵箱
-   */
-  static async confirmEmailChange(userId: string, newEmail: string, code: string): Promise<{ success: boolean; message: string; user: UserProfile }> {
-    logDebug('Processing email change confirmation', { userId });
-
-    if (!userId || !newEmail || !code) {
-      throw new Error('Missing required parameters');
-    }
-
-    // 驗證碼驗證
-    const verification = await this.verifyCode(newEmail, code, 'email-change');
-
-    if (!verification.valid) {
-      throw new Error('Verification failed');
-    }
-
-    // 取得當前使用者資訊
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { email: true },
+      select: {
+        id: true,
+        referCode: true,
+        referredByUserId: true,
+      },
     });
 
     if (!user) {
       throw new Error('User not found');
     }
+    if (user.referredByUserId) {
+      throw new Error('Referral code already applied');
+    }
+    if (normalizedCode === user.referCode) {
+      throw new Error('You cannot use your own referral code');
+    }
 
-    // 更新郵箱
-    const updateStartTime = Date.now();
+    const inviter = await this.resolveInviterByReferralCode(normalizedCode);
+
     await prisma.user.update({
       where: { id: userId },
       data: {
-        email: newEmail,
+        referredByUserId: inviter.id,
+        referredAt: new Date(),
       },
     });
-    logDatabaseOperation('UPDATE', 'users', Date.now() - updateStartTime, true);
 
-    logAuthEvent('email_changed', userId, { oldEmail: user.email, newEmail });
-    logBusinessEvent('email_changed', userId, { newEmail });
-
-    // 取得更新後的使用者資料
     const profile = await this.buildUserProfile(userId);
     if (!profile) {
-      throw new Error('Unable to fetch updated user profile');
+      throw new Error('Failed to fetch updated user profile');
     }
 
-    return {
-      success: true,
-      message: 'Email updated successfully',
-      user: profile,
-    };
+    return profile;
   }
 
-  /**
-   * 驗證郵箱驗證碼並註冊 (第二步)
-   */
-  static async verifyEmailAndRegister(
-    email: string,
-    verificationCode: string,
-    srpData: SRPAuthPayload
-  ): Promise<{ token: string; user: UserProfile }> {
-    logDebug('Verifying email and completing registration', { email });
+  static async getReferralCashbackHistory(
+    userId: string,
+    options?: { status?: 'pending' | 'available' | 'reversed'; limit?: number },
+  ): Promise<{
+    summary: {
+      pending: number;
+      available: number;
+      reversed: number;
+      totalEarned: number;
+    };
+    items: Array<{
+      id: string;
+      referredUserId: string;
+      referredUserEmail: string | null;
+      stripeInvoiceId: string;
+      stripeSubscriptionId: string | null;
+      grossAmount: number;
+      cashbackAmount: number;
+      currency: string;
+      status: 'pending' | 'available' | 'reversed';
+      availableAt: Date;
+      settledAt: Date | null;
+      reversedAt: Date | null;
+      reverseReason: string | null;
+      createdAt: Date;
+    }>;
+  }> {
+    const limit = options?.limit ?? 50;
+    const status = options?.status;
 
-    // 驗證驗證碼格式
-    if (!verificationCode || verificationCode.length !== 6) {
-      throw new Error('Invalid verification code format');
-    }
-
-    const normalizedSrpData = this.normalizeSrpPayload(srpData);
-    this.assertRequiredSrpPayload(normalizedSrpData, 'Missing SRP registration payload');
-    this.assertValidSrpPayload(normalizedSrpData);
-
-    try {
-      // 使用新的統一驗證碼系統驗證
-      const verification = await this.verifyCode(email, verificationCode, 'register');
-
-      if (!verification.valid) {
-        throw new Error('Verification failed');
-      }
-
-      // 取得使用者
-      const startTime = Date.now();
-      const user = await prisma.user.findUnique({ where: { email } });
-      logDatabaseOperation('SELECT', 'users', Date.now() - startTime, true);
-
-      let registeredUser;
-      if (!user) {
-        // 建立新使用者（首次註冊）
-        // 前端必須本地生成 DEK，並只上傳用 KEK 包裹後的 encryptedDataKey。
-        const createStartTime = Date.now();
-        registeredUser = await prisma.user.create({
-          data: {
-            email,
-            ...this.buildSrpAuthUpdateData(normalizedSrpData),
-            emailVerified: true,
+    const [rows, aggregates] = await Promise.all([
+      prisma.referralCashback.findMany({
+        where: {
+          inviterUserId: userId,
+          ...(status ? { status } : {}),
+        },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        select: {
+          id: true,
+          referredUserId: true,
+          stripeInvoiceId: true,
+          stripeSubscriptionId: true,
+          grossAmount: true,
+          cashbackAmount: true,
+          currency: true,
+          status: true,
+          availableAt: true,
+          settledAt: true,
+          reversedAt: true,
+          reverseReason: true,
+          createdAt: true,
+          referred: {
+            select: { email: true },
           },
-        });
-        logDatabaseOperation('CREATE', 'users', Date.now() - createStartTime, true);
-        logAuthEvent('register', registeredUser.id, { email });
-      } else {
-        // 防呆：已完成 SRP 註冊的帳號不可被註冊流程覆蓋。
-        if (user.srpVerifier) {
-          throw new Error('Registration already completed. Please sign in.');
-        }
+        },
+      }),
+      prisma.referralCashback.groupBy({
+        by: ['status'],
+        where: { inviterUserId: userId },
+        _sum: { cashbackAmount: true },
+      }),
+    ]);
 
-        // 更新既有使用者（郵箱已存在但尚未完成 SRP 註冊）
-        const updateStartTime = Date.now();
-        registeredUser = await prisma.user.update({
-          where: { id: user.id },
-          data: {
-            ...this.buildSrpAuthUpdateData(normalizedSrpData),
-            emailVerified: true,
-          },
-        });
-        logDatabaseOperation('UPDATE', 'users', Date.now() - updateStartTime, true);
-      }
+    const byStatus = new Map(
+      aggregates.map((agg) => [agg.status, Number(agg._sum.cashbackAmount || 0)]),
+    );
 
-      // 生成 JWT 權杖
-      const token = jwt.sign({ userId: registeredUser.id }, this.JWT_SECRET, { expiresIn: '7d' });
-      const userProfile = await this.buildUserProfile(registeredUser.id);
-
-      if (!userProfile) {
-        throw new Error('Unable to build user profile');
-      }
-
-      logAuthEvent('email_verified', registeredUser.id, { email });
-      logBusinessEvent('user_email_verified', registeredUser.id, { email });
-
-      return { token, user: userProfile };
-    } catch (error) {
-      if (error instanceof PrismaClientKnownRequestError) {
-        throw new Error('Server error: unable to complete verification');
-      }
-      throw error;
-    }
+    return {
+      summary: {
+        pending: byStatus.get('pending') || 0,
+        available: byStatus.get('available') || 0,
+        reversed: byStatus.get('reversed') || 0,
+        totalEarned: (byStatus.get('available') || 0) - (byStatus.get('reversed') || 0),
+      },
+      items: rows.map((row) => ({
+        id: row.id,
+        referredUserId: row.referredUserId,
+        referredUserEmail: row.referred?.email || null,
+        stripeInvoiceId: row.stripeInvoiceId,
+        stripeSubscriptionId: row.stripeSubscriptionId,
+        grossAmount: row.grossAmount,
+        cashbackAmount: row.cashbackAmount,
+        currency: row.currency,
+        status: row.status as 'pending' | 'available' | 'reversed',
+        availableAt: row.availableAt,
+        settledAt: row.settledAt,
+        reversedAt: row.reversedAt,
+        reverseReason: row.reverseReason,
+        createdAt: row.createdAt,
+      })),
+    };
   }
 
 }

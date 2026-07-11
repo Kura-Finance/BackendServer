@@ -4,6 +4,7 @@
  */
 import { PlaidTransactionPayload } from '../models/types';
 export declare class PlaidTransactionService {
+    private static normalizeMerchantName;
     private static extractPlaidMerchantLogo;
     static fetchTransactions(userPlaidClient: any, decryptedAccessToken: string, cursor?: string): Promise<{
         transactions: PlaidTransactionPayload[];
@@ -23,26 +24,5 @@ export declare class PlaidTransactionService {
      * 識別定期交易和訂閱
      */
     private static identifyRecurringTransactions;
-    /**
-     * 為緩存格式化交易
-     */
-    static formatTransactionsForCache(transactions: PlaidTransactionPayload[]): Array<{
-        accountId: string;
-        transactionId: string;
-        merchant: string;
-        amount: string;
-        category: string;
-        type: string;
-        date: string;
-        month: string;
-        personalFinanceCategory?: string;
-        isRecurring?: boolean;
-        recurringFrequency?: string;
-        isSubscription?: boolean;
-        enrichedMerchantName?: string;
-        merchantLogo?: string;
-        merchantCategory?: string;
-        isPending?: boolean;
-    }>;
 }
 //# sourceMappingURL=plaidTransactionService.d.ts.map

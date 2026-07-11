@@ -6,9 +6,13 @@ import { AuthRequest } from '../../auth/middleware/auth';
  */
 export declare const connectExchange: (req: AuthRequest, res: Response) => Promise<void>;
 /**
- * 獲取交易所餘額和資產 (合併端點)
- * 達到查詢上限時返回數據庫緩存內容
- * 受用戶等級限制：每天最多查詢次數
+ * 取得交易所餘額和資產（Phase 3 Zero-Access E2EE only）。
+ *
+ * 路由：GET /api/exchange/:exchangeAccountId/balances
+ *
+ * - 觸發 CCXT 同步 → 加密寫快取 → 回傳加密形式 snapshot
+ * - 達到查詢上限時，回退讀加密快取（不再呼叫 CCXT）
+ * - 後端不解密任何敏感欄位；前端用 privateKey unwrap payloadKeys 後解 row
  */
 export declare const getExchangeBalances: (req: AuthRequest, res: Response) => Promise<void>;
 /**

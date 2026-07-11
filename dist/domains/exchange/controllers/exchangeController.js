@@ -58,9 +58,13 @@ const connectExchange = async (req, res) => {
 };
 exports.connectExchange = connectExchange;
 /**
- * 獲取交易所餘額和資產 (合併端點)
- * 達到查詢上限時返回數據庫緩存內容
- * 受用戶等級限制：每天最多查詢次數
+ * 取得交易所餘額和資產（Phase 3 Zero-Access E2EE only）。
+ *
+ * 路由：GET /api/exchange/:exchangeAccountId/balances
+ *
+ * - 觸發 CCXT 同步 → 加密寫快取 → 回傳加密形式 snapshot
+ * - 達到查詢上限時，回退讀加密快取（不再呼叫 CCXT）
+ * - 後端不解密任何敏感欄位；前端用 privateKey unwrap payloadKeys 後解 row
  */
 const getExchangeBalances = async (req, res) => {
     try {
@@ -68,13 +72,11 @@ const getExchangeBalances = async (req, res) => {
             (0, apiResponse_1.sendError)(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
             return;
         }
-        // 檢查 API 操作限制
         const limitCheck = await (0, apiRateLimitUtil_1.checkApiLimit)(req.userId, 'exchange_balance');
         const exchangeAccountId = req.params.exchangeAccountId;
-        // 如果達到限制，返回緩存數據
         if (!limitCheck.canOperate) {
             try {
-                const cachedResult = await exchangeService_1.ExchangeService.getBalancesAndAssetsFromCache(req.userId, exchangeAccountId);
+                const cachedResult = await exchangeService_1.ExchangeService.getEncryptedBalancesAndAssets(req.userId, exchangeAccountId);
                 (0, apiResponse_1.sendSuccess)(res, {
                     ...cachedResult,
                     account: {
@@ -91,7 +93,6 @@ const getExchangeBalances = async (req, res) => {
                 return;
             }
             catch (cacheError) {
-                // 如果無法獲取緩存數據，返回錯誤
                 (0, apiResponse_1.sendError)(res, 429, {
                     code: 'RATE_LIMITED',
                     message: 'Daily balance query limit reached',
@@ -104,7 +105,6 @@ const getExchangeBalances = async (req, res) => {
             }
         }
         const result = await exchangeService_1.ExchangeService.getBalancesAndAssets(req.userId, exchangeAccountId);
-        // 記錄 API 操作
         await (0, apiRateLimitUtil_1.recordApiOperation)(req.userId, 'exchange_balance');
         (0, apiResponse_1.sendSuccess)(res, {
             ...result,

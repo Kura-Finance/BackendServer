@@ -10,8 +10,10 @@ const plaidAccountService_1 = require("./plaidAccountService");
 const plaidCacheService_1 = require("./plaidCacheService");
 const plaidWebhookSyncService_1 = require("./plaidWebhookSyncService");
 /**
- * 統一的 Plaid 服務門面
- * 提供簡潔的公開 API，內部委託給專門服務
+ * 統一的 Plaid 服務門面（Phase 3 Zero-Access E2EE only）。
+ *
+ * 所有對外 API 都回傳「加密形式」snapshot：後端永不解密 sensitive payload，
+ * 前端用 X25519 privateKey unwrap payloadKeys 後解每個 row 的 ciphertext。
  */
 class PlaidService {
     // ===== 驗證 =====
@@ -25,12 +27,18 @@ class PlaidService {
     static async disconnectItemByAccountId(userId, accountId) {
         return plaidAccountService_1.PlaidAccountService.disconnectItemByAccountId(userId, accountId);
     }
-    // ===== 快取與同步 =====
+    // ===== 快取與同步（全部加密形式）=====
+    /**
+     * 優化版：快取未過期 → 直接讀加密 row；過期或手動刷新 → 從 Plaid API 抓 → 加密寫入 → 回讀加密 row。
+     */
     static async getFinanceSnapshotOptimized(userId, isManualRefresh = false) {
         return plaidCacheService_1.PlaidCacheService.getFinanceSnapshotOptimized(userId, isManualRefresh);
     }
-    static async getFinanceSnapshot(userId) {
-        return plaidCacheService_1.PlaidCacheService.getFinanceSnapshot(userId);
+    /**
+     * 僅讀快取（不觸發 Plaid API）：回傳目前 cache 中的加密形式 snapshot。
+     */
+    static async getEncryptedFinanceSnapshot(userId) {
+        return plaidCacheService_1.PlaidCacheService.getEncryptedSnapshotFromCache(userId);
     }
     // ===== Webhook 同步 =====
     static async syncTransactionsFromWebhook(userId, itemId) {

@@ -1,12 +1,15 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.confirmEmailChange = exports.requestEmailChange = exports.verifyEmailAndRegister = exports.sendVerificationCode = exports.updateDisplayName = exports.updateAvatar = exports.deleteAccount = exports.logout = exports.resetPassword = exports.requestPasswordReset = exports.updateProfile = exports.me = void 0;
+exports.getMyCashbackHistory = exports.applyReferralCode = exports.updateDisplayName = exports.updateAvatar = exports.deleteAccount = exports.logout = exports.updateProfile = exports.me = void 0;
 const authService_1 = require("../services/authService");
 const logger_1 = require("../../logger");
 const library_1 = require("@prisma/client/runtime/library");
 const apiResponse_1 = require("../../shared/lib/apiResponse");
 /**
  * 認證控制器 - 請求與回應處理
+ *
+ * 登入流程改由 Privy 驅動（見 privyController），此控制器只負責登入後的
+ * 個人資料、登出、邀請碼、返現紀錄與帳號刪除。
  */
 function getAuthenticatedUserId(req, res) {
     if (!req.userId) {
@@ -53,52 +56,6 @@ const updateProfile = async (req, res) => {
     }
 };
 exports.updateProfile = updateProfile;
-const requestPasswordReset = async (req, res) => {
-    try {
-        const { email } = req.body;
-        const result = await authService_1.AuthService.requestPasswordReset(email);
-        (0, apiResponse_1.sendSuccess)(res, {
-            message: 'Password reset code sent. Please check your inbox.',
-            expiresIn: result.expiresIn,
-        });
-    }
-    catch (error) {
-        (0, logger_1.logError)('Request password reset failed', error, { email: req.body.email });
-        const isBusinessError = error instanceof Error &&
-            (error.message.toLowerCase().includes('unable to send') || error.message.toLowerCase().includes('email'));
-        const isDatabaseError = error instanceof library_1.PrismaClientKnownRequestError;
-        const statusCode = isBusinessError ? 400 : isDatabaseError ? 503 : 500;
-        const message = isBusinessError && error instanceof Error ? error.message : 'Internal server error';
-        (0, apiResponse_1.sendError)(res, statusCode, {
-            code: isBusinessError ? 'BUSINESS_ERROR' : isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR',
-            message,
-        });
-    }
-};
-exports.requestPasswordReset = requestPasswordReset;
-const resetPassword = async (req, res) => {
-    try {
-        const { email, resetCode, srpSalt, srpVerifier, encryptedDataKey, kekSalt, preserveData } = req.body;
-        const result = await authService_1.AuthService.resetPassword(email, resetCode, srpSalt, srpVerifier, encryptedDataKey, kekSalt, preserveData);
-        (0, apiResponse_1.sendSuccess)(res, result);
-    }
-    catch (error) {
-        (0, logger_1.logError)('Reset password failed', error);
-        // 驗證錯誤回傳 400，資料庫錯誤回傳 503，其他錯誤回傳 500
-        const isValidationError = error instanceof Error &&
-            (error.message.toLowerCase().includes('code') || error.message.toLowerCase().includes('expired') ||
-                error.message.toLowerCase().includes('invalid') || error.message.toLowerCase().includes('password') ||
-                error.message.toLowerCase().includes('missing') || error.message.toLowerCase().includes('not found'));
-        const isDatabaseError = error instanceof library_1.PrismaClientKnownRequestError;
-        const statusCode = isValidationError ? 400 : isDatabaseError ? 503 : 500;
-        const message = isValidationError && error instanceof Error ? error.message : 'Internal server error';
-        (0, apiResponse_1.sendError)(res, statusCode, {
-            code: isValidationError ? 'VALIDATION_ERROR' : isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR',
-            message,
-        });
-    }
-};
-exports.resetPassword = resetPassword;
 /**
  * 登出 - 清除 Cookie（網頁客戶端）
  */
@@ -184,135 +141,57 @@ const updateDisplayName = async (req, res) => {
     }
 };
 exports.updateDisplayName = updateDisplayName;
-const sendVerificationCode = async (req, res) => {
-    try {
-        const { email } = req.body;
-        const result = await authService_1.AuthService.sendVerificationCode(email, 'register');
-        (0, apiResponse_1.sendSuccess)(res, {
-            message: 'Verification code sent to your email',
-            expiresIn: result.expiresIn,
-        });
-    }
-    catch (error) {
-        (0, logger_1.logError)('Send verification code failed', error, { email: req.body.email });
-        // 業務錯誤回傳具體訊息，資料庫錯誤回傳 503，其他錯誤回傳 500
-        const isBusinessError = error instanceof Error &&
-            (error.message.toLowerCase().includes('already registered') || error.message.toLowerCase().includes('email') ||
-                error.message.toLowerCase().includes('unable to send'));
-        const isDatabaseError = error instanceof library_1.PrismaClientKnownRequestError;
-        const statusCode = isBusinessError ? 400 : isDatabaseError ? 503 : 500;
-        const message = isBusinessError && error instanceof Error ? error.message : 'Internal server error';
-        (0, apiResponse_1.sendError)(res, statusCode, {
-            code: isBusinessError ? 'BUSINESS_ERROR' : isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR',
-            message,
-        });
-    }
-};
-exports.sendVerificationCode = sendVerificationCode;
-/**
- * 驗證郵箱驗證碼並完成註冊 (新註冊流程第二步)
- */
-const verifyEmailAndRegister = async (req, res) => {
-    try {
-        const { email, verificationCode, srpSalt, srpVerifier, encryptedDataKey, kekSalt } = req.body;
-        const clientType = (req.headers['x-client-type'] || 'web');
-        const result = await authService_1.AuthService.verifyEmailAndRegister(email, verificationCode, {
-            srpSalt,
-            srpVerifier,
-            encryptedDataKey,
-            kekSalt,
-        });
-        if (clientType === 'web') {
-            // 網頁客戶端：回傳 HttpOnly Cookie
-            res.cookie('authToken', result.token, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: 'strict',
-                maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-            });
-            // 不回傳 token 給網頁客戶端
-            (0, apiResponse_1.sendSuccess)(res, { message: 'Registration successful', user: result.user });
-        }
-        else {
-            // 行動客戶端：回傳 JWT 權杖
-            (0, apiResponse_1.sendSuccess)(res, result);
-        }
-    }
-    catch (error) {
-        (0, logger_1.logError)('Verify email and register failed', error, { email: req.body.email });
-        // 驗證錯誤回傳 400，資料庫錯誤回傳 503，其他錯誤回傳 500
-        const isValidationError = error instanceof Error &&
-            (error.message.toLowerCase().includes('registration') || error.message.toLowerCase().includes('verification') ||
-                error.message.toLowerCase().includes('srp') || error.message.toLowerCase().includes('expired') ||
-                error.message.toLowerCase().includes('invalid') || error.message.toLowerCase().includes('missing'));
-        const isDatabaseError = error instanceof library_1.PrismaClientKnownRequestError;
-        const statusCode = isValidationError ? 400 : isDatabaseError ? 503 : 500;
-        const message = isValidationError && error instanceof Error ? error.message : 'Internal server error';
-        (0, apiResponse_1.sendError)(res, statusCode, {
-            code: isValidationError ? 'VALIDATION_ERROR' : isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR',
-            message,
-        });
-    }
-};
-exports.verifyEmailAndRegister = verifyEmailAndRegister;
-/**
- * 請求修改郵箱 - 發送驗證碼到新郵箱
- */
-const requestEmailChange = async (req, res) => {
+const applyReferralCode = async (req, res) => {
     try {
         const userId = getAuthenticatedUserId(req, res);
         if (!userId) {
             return;
         }
-        const { newEmail } = req.body;
-        const result = await authService_1.AuthService.requestEmailChange(userId, newEmail);
+        const { referralCode } = req.body;
+        const user = await authService_1.AuthService.applyReferralCode(userId, referralCode);
         (0, apiResponse_1.sendSuccess)(res, {
-            message: 'Verification code sent to your new email. Please check your inbox.',
-            expiresIn: result.expiresIn,
+            message: 'Referral code applied successfully',
+            user,
         });
     }
     catch (error) {
-        (0, logger_1.logError)('Request email change failed', error, { userId: req.userId });
-        const isBusinessError = error instanceof Error &&
-            (error.message.toLowerCase().includes('invalid') || error.message.toLowerCase().includes('already') ||
-                error.message.toLowerCase().includes('unable to send'));
-        const isDatabaseError = error instanceof library_1.PrismaClientKnownRequestError;
-        const statusCode = isBusinessError ? 400 : isDatabaseError ? 503 : 500;
-        const message = isBusinessError && error instanceof Error ? error.message : 'Internal server error';
+        (0, logger_1.logError)('Apply referral code failed', error, { userId: req.userId });
+        const message = error instanceof Error ? error.message : 'Failed to apply referral code';
+        const normalized = message.toLowerCase();
+        const isValidationError = normalized.includes('invalid') ||
+            normalized.includes('already') ||
+            normalized.includes('cannot use your own');
+        const statusCode = isValidationError ? 400 : 500;
         (0, apiResponse_1.sendError)(res, statusCode, {
-            code: isBusinessError ? 'BUSINESS_ERROR' : isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR',
+            code: isValidationError ? 'VALIDATION_ERROR' : 'INTERNAL_ERROR',
             message,
         });
     }
 };
-exports.requestEmailChange = requestEmailChange;
-/**
- * 確認修改郵箱 - 驗證碼驗證成功則修改郵箱
- */
-const confirmEmailChange = async (req, res) => {
+exports.applyReferralCode = applyReferralCode;
+const getMyCashbackHistory = async (req, res) => {
     try {
         const userId = getAuthenticatedUserId(req, res);
         if (!userId) {
             return;
         }
-        const { newEmail, code } = req.body;
-        const result = await authService_1.AuthService.confirmEmailChange(userId, newEmail, code);
+        const status = req.query.status;
+        const limit = Number(req.query.limit) || 50;
+        const result = await authService_1.AuthService.getReferralCashbackHistory(userId, {
+            limit,
+            ...(status ? { status } : {}),
+        });
         (0, apiResponse_1.sendSuccess)(res, result);
     }
     catch (error) {
-        (0, logger_1.logError)('Confirm email change failed', error, { userId: req.userId });
-        const isValidationError = error instanceof Error &&
-            (error.message.toLowerCase().includes('verification') || error.message.toLowerCase().includes('expired') ||
-                error.message.toLowerCase().includes('pending') || error.message.toLowerCase().includes('invalid') ||
-                error.message.toLowerCase().includes('missing'));
+        (0, logger_1.logError)('Get cashback history failed', error, { userId: req.userId });
         const isDatabaseError = error instanceof library_1.PrismaClientKnownRequestError;
-        const statusCode = isValidationError ? 400 : isDatabaseError ? 503 : 500;
-        const message = isValidationError && error instanceof Error ? error.message : 'Internal server error';
+        const statusCode = isDatabaseError ? 503 : 500;
         (0, apiResponse_1.sendError)(res, statusCode, {
-            code: isValidationError ? 'VALIDATION_ERROR' : isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR',
-            message,
+            code: isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR',
+            message: 'Internal server error',
         });
     }
 };
-exports.confirmEmailChange = confirmEmailChange;
+exports.getMyCashbackHistory = getMyCashbackHistory;
 //# sourceMappingURL=authController.js.map

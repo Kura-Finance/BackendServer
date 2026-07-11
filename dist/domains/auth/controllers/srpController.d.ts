@@ -38,9 +38,4 @@ export declare const srpSetup: (req: AuthRequest, res: Response) => Promise<void
  * 用戶端使用 KEK 解密後使用
  */
 export declare const srpDataKey: (req: AuthRequest, res: Response) => Promise<void>;
-/**
- * POST /api/auth/srp/generate-data-key
- * 停用：Zero Access/Zero Knowledge 模式下，DEK 必須由用戶端本地生成。
- */
-export declare const srpGenerateDataKeyDisabled: (_req: AuthRequest, res: Response) => Promise<void>;
 //# sourceMappingURL=srpController.d.ts.map

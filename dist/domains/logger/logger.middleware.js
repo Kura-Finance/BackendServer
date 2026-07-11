@@ -2,54 +2,34 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.errorLogger = exports.requestBodyLogger = exports.httpLogger = void 0;
 const logger_1 = require("./logger");
-const logger_util_1 = require("./logger.util");
 /**
- * HTTP 日志中间件
- * 记录所有请求和响应
+ * HTTP / request-body middlewares.
+ *
+ * These used to log every request, response status, and body shape. They are
+ * now pure pass-throughs: HTTP access logs are emitted by the platform
+ * (Cloud Run / load balancer) and we don't want app-level duplication that
+ * also has to be redacted for secrets.
+ *
+ * Kept exported so existing `app.use(httpLogger)` / `app.use(requestBodyLogger)`
+ * call sites in `index.ts` keep compiling without churn.
  */
-const httpLogger = (req, res, next) => {
-    const startTime = Date.now();
-    const method = req.method;
-    const url = req.originalUrl || req.url;
-    // 拦截响应的 send 方法
-    const originalSend = res.send;
-    res.send = function (data) {
-        const duration = Date.now() - startTime;
-        const statusCode = res.statusCode;
-        const userId = req.userId || req.user?.id;
-        (0, logger_util_1.logHttpRequest)(method, url, statusCode, duration, userId);
-        // 调用原始 send 方法
-        return originalSend.call(this, data);
-    };
+const httpLogger = (_req, _res, next) => {
     next();
 };
 exports.httpLogger = httpLogger;
-/**
- * 请求体日志中间件（用于调试）
- */
-const requestBodyLogger = (req, res, next) => {
-    if (process.env.LOG_LEVEL === 'debug') {
-        logger_1.appLogger.debug('Incoming request', {
-            method: req.method,
-            url: req.originalUrl,
-            ip: req.ip,
-            userAgent: req.get('user-agent'),
-            body: req.body,
-            query: req.query,
-        });
-    }
+const requestBodyLogger = (_req, _res, next) => {
     next();
 };
 exports.requestBodyLogger = requestBodyLogger;
 /**
- * 错误日志中间件
+ * Express error middleware — kept active because an unhandled error in a
+ * request handler is exactly the kind of event we still want to see.
  */
 const errorLogger = (err, req, res, next) => {
-    const duration = Date.now();
     const method = req.method;
     const url = req.originalUrl || req.url;
     const statusCode = res.statusCode || 500;
-    const userId = req.userId || req.user?.id;
+    const userId = req.userId;
     logger_1.appLogger.error(`${method} ${url} - ${statusCode}`, {
         method,
         url,

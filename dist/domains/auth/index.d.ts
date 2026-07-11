@@ -1,7 +1,10 @@
-export { me, updateProfile, updateAvatar, updateDisplayName, requestPasswordReset, resetPassword, deleteAccount, sendVerificationCode, verifyEmailAndRegister, requestEmailChange, confirmEmailChange, } from './controllers/authController';
+export { me, updateProfile, updateAvatar, updateDisplayName, applyReferralCode, getMyCashbackHistory, logout, deleteAccount, } from './controllers/authController';
+export { login } from './controllers/privyController';
+export * as PasskeyService from './services/passkeyService';
 export type { AuthRequest } from './middleware/auth';
 export { requireAuth } from './middleware/auth';
 export { default as authRouter } from './router';
 export { AuthService } from './services/authService';
+export * as PrivyService from './services/privyService';
 export type { UserProfile, UpdateProfilePayload } from './models/types';
 //# sourceMappingURL=index.d.ts.map

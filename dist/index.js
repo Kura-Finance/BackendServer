@@ -15,6 +15,7 @@ const exchange_1 = require("./domains/exchange");
 const notification_1 = require("./domains/notification");
 const debank_1 = require("./domains/debank");
 const stripe_1 = require("./domains/stripe");
+const card_1 = require("./domains/card");
 const logger_1 = require("./domains/logger");
 const rateLimiter_1 = require("./domains/shared/middleware/rateLimiter");
 // ========================================
@@ -29,6 +30,25 @@ const PORT = Number(process.env.PORT || 8080);
 app.set('trust proxy', 1); // 信任第一層代理 (適用於 Cloud Run、Nginx 等)
 // Stripe webhook 必須使用原始請求內容做簽章驗證
 app.use('/api/stripe/webhook', express_1.default.raw({ type: 'application/json' }));
+// Lithic webhook signature is computed over the raw body bytes:
+//   signedContent = "{webhook-id}.{webhook-timestamp}.{rawBody}"
+// Capture it before Express parses JSON, attach as req.rawBody.
+app.use('/api/card/webhooks/authorization', (req, _res, next) => {
+    let raw = '';
+    req.on('data', (chunk) => { raw += chunk.toString('utf8'); });
+    req.on('end', () => {
+        req.rawBody = raw;
+        try {
+            req.body = raw ? JSON.parse(raw) : {};
+        }
+        catch {
+            req.body = {};
+        }
+        next();
+    });
+});
+// Didit X-Signature-V2 signs a canonical re-serialised JSON — works with
+// standard Express JSON parsing, no raw body needed for /webhooks/kyc.
 // ========================================
 // 2. 設置 CORS
 // ========================================
@@ -101,6 +121,7 @@ app.use('/api/exchange', exchange_1.exchangeRouter);
 app.use('/api/notifications', notification_1.notificationRouter);
 app.use('/api/debank', debank_1.debankRouter);
 app.use('/api/stripe', stripe_1.stripeRouter);
+app.use('/api/card', card_1.cardRouter);
 // ========================================
 // 6. 錯誤處理中間件
 // ========================================

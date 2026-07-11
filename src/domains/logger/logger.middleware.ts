@@ -1,58 +1,39 @@
 import { Request, Response, NextFunction } from 'express';
 import { appLogger } from './logger';
-import { logHttpRequest } from './logger.util';
 
 /**
- * HTTP 日志中间件
- * 记录所有请求和响应
+ * HTTP / request-body middlewares.
+ *
+ * These used to log every request, response status, and body shape. They are
+ * now pure pass-throughs: HTTP access logs are emitted by the platform
+ * (Cloud Run / load balancer) and we don't want app-level duplication that
+ * also has to be redacted for secrets.
+ *
+ * Kept exported so existing `app.use(httpLogger)` / `app.use(requestBodyLogger)`
+ * call sites in `index.ts` keep compiling without churn.
  */
-export const httpLogger = (req: Request, res: Response, next: NextFunction) => {
-  const startTime = Date.now();
-  const method = req.method;
-  const url = req.originalUrl || req.url;
+export const httpLogger = (_req: Request, _res: Response, next: NextFunction): void => {
+  next();
+};
 
-  // 拦截响应的 send 方法
-  const originalSend = res.send;
-  res.send = function (data: any) {
-    const duration = Date.now() - startTime;
-    const statusCode = res.statusCode;
-    const userId = (req as any).userId || (req as any).user?.id;
-
-    logHttpRequest(method, url, statusCode, duration, userId);
-
-    // 调用原始 send 方法
-    return originalSend.call(this, data);
-  };
-
+export const requestBodyLogger = (_req: Request, _res: Response, next: NextFunction): void => {
   next();
 };
 
 /**
- * 请求体日志中间件（用于调试）
+ * Express error middleware — kept active because an unhandled error in a
+ * request handler is exactly the kind of event we still want to see.
  */
-export const requestBodyLogger = (req: Request, res: Response, next: NextFunction) => {
-  if (process.env.LOG_LEVEL === 'debug') {
-    appLogger.debug('Incoming request', {
-      method: req.method,
-      url: req.originalUrl,
-      ip: req.ip,
-      userAgent: req.get('user-agent'),
-      body: req.body,
-      query: req.query,
-    });
-  }
-  next();
-};
-
-/**
- * 错误日志中间件
- */
-export const errorLogger = (err: Error, req: Request, res: Response, next: NextFunction) => {
-  const duration = Date.now();
+export const errorLogger = (
+  err: Error,
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void => {
   const method = req.method;
   const url = req.originalUrl || req.url;
   const statusCode = res.statusCode || 500;
-  const userId = (req as any).userId || (req as any).user?.id;
+  const userId = (req as Request & { userId?: string }).userId;
 
   appLogger.error(`${method} ${url} - ${statusCode}`, {
     method,

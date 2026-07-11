@@ -10,6 +10,9 @@ import { exchangeRouter } from './domains/exchange';
 import { notificationRouter } from './domains/notification';
 import { debankRouter } from './domains/debank';
 import { stripeRouter } from './domains/stripe';
+import { cardRouter } from './domains/card';
+import { walletRouter } from './domains/wallet';
+import { bridgeRouter } from './domains/bridge';
 import {
   appLogger,
   httpLogger,
@@ -35,6 +38,30 @@ app.set('trust proxy', 1); // 信任第一層代理 (適用於 Cloud Run、Nginx
 
 // Stripe webhook 必須使用原始請求內容做簽章驗證
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
+
+// Gnosis Pay webhook: Ed25519 signature over "{timestamp}.{rawBody}"
+// Capture raw body before JSON parsing.
+app.use('/api/card/webhooks/gp', (req: Request, _res: Response, next: NextFunction) => {
+  let raw = '';
+  req.on('data', (chunk: Buffer) => { raw += chunk.toString('utf8'); });
+  req.on('end', () => {
+    (req as Request & { rawBody?: string }).rawBody = raw;
+    try { req.body = raw ? JSON.parse(raw) : {}; } catch { req.body = {}; }
+    next();
+  });
+});
+
+// Bridge webhook: RSA signature over "{timestamp}.{rawBody}".
+// Capture raw body (string) before JSON parsing for signature verification.
+app.use('/api/bridge/webhook', (req: Request, _res: Response, next: NextFunction) => {
+  let raw = '';
+  req.on('data', (chunk: Buffer) => { raw += chunk.toString('utf8'); });
+  req.on('end', () => {
+    (req as Request & { rawBody?: string }).rawBody = raw;
+    try { req.body = raw ? JSON.parse(raw) : {}; } catch { req.body = {}; }
+    next();
+  });
+});
 
 // ========================================
 // 2. 設置 CORS
@@ -94,6 +121,51 @@ app.use('/api/auth', authRateLimiter);
 app.use('/api/', rateLimiter); // 速率限制中間件 - 防止 API 被攻擊
 
 // ========================================
+// 4. Well-known endpoints (Universal Links / Passkey / Associated Domains)
+// ========================================
+
+// iOS: Apple App Site Association
+// Served at https://api.kura-finance.com/.well-known/apple-app-site-association
+// Required for Universal Links AND Passkeys (WebAuthn) on iOS.
+// Team ID: K7FVP5GGP9  |  Bundle ID: com.kurafinance.app
+app.get('/.well-known/apple-app-site-association', (_req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.json({
+    applinks: {
+      apps: [],
+      details: [
+        {
+          appID: 'K7FVP5GGP9.com.kurafinance.app',
+          paths: ['*'],
+        },
+      ],
+    },
+    webcredentials: {
+      apps: ['K7FVP5GGP9.com.kurafinance.app'],
+    },
+  });
+});
+
+// Android: Digital Asset Links
+// Served at https://api.kura-finance.com/.well-known/assetlinks.json
+// Required for Android Passkeys (WebAuthn).
+// TODO: replace sha256_cert_fingerprints with your APK signing cert fingerprint
+//   Run: keytool -list -v -keystore <your.keystore> -alias <alias>
+app.get('/.well-known/assetlinks.json', (_req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.json([
+    {
+      relation: ['delegate_permission/common.handle_all_urls', 'delegate_permission/common.get_login_creds'],
+      target: {
+        namespace: 'android_app',
+        package_name: 'com.kurafinance.app',
+        sha256_cert_fingerprints: [],
+      },
+    },
+  ]);
+});
+
+// ========================================
 // 4. Health Check 端點
 // ========================================
 app.get('/health', (req: Request, res: Response) => {
@@ -115,6 +187,9 @@ app.use('/api/exchange', exchangeRouter);
 app.use('/api/notifications', notificationRouter);
 app.use('/api/debank', debankRouter);
 app.use('/api/stripe', stripeRouter);
+app.use('/api/card', cardRouter);
+app.use('/api/wallet', walletRouter);
+app.use('/api/bridge', bridgeRouter);
 
 // ========================================
 // 6. 錯誤處理中間件

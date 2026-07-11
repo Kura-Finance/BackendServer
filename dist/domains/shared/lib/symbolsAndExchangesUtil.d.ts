@@ -40,13 +40,6 @@ export declare function getStockLogoUrl(symbol: string): string;
  */
 export declare function getInstitutionLogoUrl(institutionName: string): string;
 /**
- * 根據商家名稱獲取商家 logo URL
- * 使用 Logo.dev API (https://logo.dev/) - 與機構 logo 保持一致
- * @param merchantName 商家名稱（例如：'Netflix', 'Amazon', 'Spotify', 'Netflix Inc.'）
- * @returns logo URL
- */
-export declare function getMerchantLogoUrl(merchantName: string): string;
-/**
  * 建立 Logo.dev URL
  * @param identifier domain、symbol 或其他識別符
  * @param type 類型：'domain'、'ticker' 或 'crypto'

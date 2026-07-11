@@ -103,6 +103,47 @@ export function validateEnvironment(): void {
     if (isProduction) process.exit(1);
   }
 
+  // 驗證 Privy 認證配置（登入系統核心）
+  const privyVars = ['PRIVY_APP_ID', 'PRIVY_APP_SECRET', 'PRIVY_VERIFICATION_KEY'];
+  const missingPrivyVars = privyVars.filter((key) => !process.env[key]);
+
+  if (missingPrivyVars.length > 0) {
+    console.warn(`⚠️ Privy auth not fully configured: ${missingPrivyVars.join(', ')}`);
+    console.warn('💡 Set PRIVY_APP_ID, PRIVY_APP_SECRET, PRIVY_VERIFICATION_KEY (from the Privy Dashboard)');
+    // Login will fail until configured, but the server should still boot.
+  }
+
+  // 驗證 WebAuthn / Passkey 配置（E2EE 資料層解鎖）
+  const webauthnVars = ['WEBAUTHN_RP_ID', 'WEBAUTHN_RP_NAME', 'WEBAUTHN_ORIGIN'];
+  const missingWebauthnVars = webauthnVars.filter((key) => !process.env[key]);
+
+  if (missingWebauthnVars.length > 0) {
+    console.warn(`⚠️ WebAuthn/Passkey not fully configured: ${missingWebauthnVars.join(', ')}`);
+    console.warn('💡 Set WEBAUTHN_RP_ID (domain), WEBAUTHN_RP_NAME, WEBAUTHN_ORIGIN (comma-separated allowed origins)');
+    // Passkey endpoints will fail until configured, but the server should still boot.
+  }
+
+  // Gnosis Pay 為 permissionless（無 API key），PARTNER_ID 僅用於 webhook 訂閱，可選
+  if (!process.env.GNOSIS_PAY_PARTNER_ID) {
+    console.warn('⚠️ GNOSIS_PAY_PARTNER_ID not set — running in permissionless mode (webhooks unavailable)');
+  }
+
+  // 驗證 Bridge API 配置（on/off ramp）
+  const bridgeVars = ['BRIDGE_API_KEY'];
+  const missingBridgeVars = bridgeVars.filter((key) => !process.env[key]);
+
+  if (missingBridgeVars.length > 0) {
+    console.error(`❌ Bridge API not fully configured: ${missingBridgeVars.join(', ')}`);
+    console.error('💡 Set BRIDGE_API_KEY (from the Bridge Dashboard) to enable on/off ramp');
+    if (isProduction) process.exit(1);
+  }
+
+  // Webhook 簽章公鑰為可選：未設定時 webhook 端點會拒絕所有事件（fail-closed）
+  if (!process.env.BRIDGE_WEBHOOK_PUBLIC_KEY) {
+    console.warn('⚠️ BRIDGE_WEBHOOK_PUBLIC_KEY not set — Bridge webhooks will be rejected until configured');
+  }
+
+
   // 在生產環境檢查數據庫配置
   if (isProduction) {
     const dbVars = {
@@ -123,6 +164,24 @@ export function validateEnvironment(): void {
       process.exit(1);
     }
   }
+}
+
+/**
+ * Single source of truth for reading `JWT_SECRET`.
+ *
+ * Returns the env value or throws if it is not configured. We must never fall
+ * back to a literal default like `'secret'` — `validateEnvironment()` runs at
+ * boot and exits the process if the var is missing, so any caller of this
+ * helper after startup is guaranteed to get a real secret. The throw is a
+ * defence-in-depth guard for code paths that bypass `initializeEnv()` (tests,
+ * scripts, ad-hoc imports).
+ */
+export function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error('JWT_SECRET is not configured. Did initializeEnv() run?');
+  }
+  return secret;
 }
 
 /**

@@ -15,8 +15,8 @@
   "type": "commonjs",
   "dependencies": {
     "@prisma/client": "^6.19.3",
-    "argon2": "^0.44.0",
-    "bcryptjs": "^3.0.3",
+    "@privy-io/node": "^0.21.0",
+    "@simplewebauthn/server": "^13.3.1",
     "ccxt": "^4.5.47",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
@@ -24,25 +24,25 @@
     "express": "^5.2.1",
     "jose": "^6.2.2",
     "jsonwebtoken": "^9.0.3",
+    "libsodium-wrappers": "^0.8.4",
     "plaid": "^41.4.0",
     "resend": "^3.5.0",
     "stripe": "^18.5.0",
-    "tssrp6a": "^3.0.0",
     "winston": "^3.17.0",
     "winston-daily-rotate-file": "^5.0.0",
     "yahoo-finance2": "^3.14.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/argon2": "^0.14.1",
-    "@types/bcryptjs": "^2.4.6",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
+    "@types/libsodium-wrappers": "^0.7.14",
     "@types/node": "^25.5.2",
     "prisma": "^6.19.3",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "viem": "^2.52.2"
   }
 }

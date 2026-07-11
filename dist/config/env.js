@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildDatabaseUrl = buildDatabaseUrl;
 exports.validateEnvironment = validateEnvironment;
+exports.getJwtSecret = getJwtSecret;
 exports.initializeEnv = initializeEnv;
 const dotenv_1 = __importDefault(require("dotenv"));
 /**
@@ -87,6 +88,47 @@ function validateEnvironment() {
         if (isProduction)
             process.exit(1);
     }
+    // 驗證 DeBank API 配置
+    const debankVars = ['DEBANK_ACCESS_KEY'];
+    const missingDeBankVars = debankVars.filter((key) => !process.env[key]);
+    if (missingDeBankVars.length > 0) {
+        console.error(`❌ DeBank API not fully configured: ${missingDeBankVars.join(', ')}`);
+        console.error('💡 Set DEBANK_ACCESS_KEY environment variable');
+        if (isProduction)
+            process.exit(1);
+    }
+    // 驗證 Privy 認證配置（登入系統核心）
+    const privyVars = ['PRIVY_APP_ID', 'PRIVY_APP_SECRET', 'PRIVY_VERIFICATION_KEY'];
+    const missingPrivyVars = privyVars.filter((key) => !process.env[key]);
+    if (missingPrivyVars.length > 0) {
+        console.warn(`⚠️ Privy auth not fully configured: ${missingPrivyVars.join(', ')}`);
+        console.warn('💡 Set PRIVY_APP_ID, PRIVY_APP_SECRET, PRIVY_VERIFICATION_KEY (from the Privy Dashboard)');
+        // Login will fail until configured, but the server should still boot.
+    }
+    // 驗證 WebAuthn / Passkey 配置（E2EE 資料層解鎖）
+    const webauthnVars = ['WEBAUTHN_RP_ID', 'WEBAUTHN_RP_NAME', 'WEBAUTHN_ORIGIN'];
+    const missingWebauthnVars = webauthnVars.filter((key) => !process.env[key]);
+    if (missingWebauthnVars.length > 0) {
+        console.warn(`⚠️ WebAuthn/Passkey not fully configured: ${missingWebauthnVars.join(', ')}`);
+        console.warn('💡 Set WEBAUTHN_RP_ID (domain), WEBAUTHN_RP_NAME, WEBAUTHN_ORIGIN (comma-separated allowed origins)');
+        // Passkey endpoints will fail until configured, but the server should still boot.
+    }
+    // 驗證 Didit KYC 配置（Card 功能，尚未全面上線前只 warn）
+    const diditVars = ['DIDIT_API_KEY', 'DIDIT_WEBHOOK_SECRET', 'DIDIT_WORKFLOW_ID'];
+    const missingDiditVars = diditVars.filter((key) => !process.env[key]);
+    if (missingDiditVars.length > 0) {
+        console.warn(`⚠️ Didit KYC not fully configured: ${missingDiditVars.join(', ')}`);
+        console.warn('💡 Set DIDIT_API_KEY, DIDIT_WEBHOOK_SECRET, DIDIT_WORKFLOW_ID');
+        // Card feature: warn only — do not block server startup until feature is live
+    }
+    // 驗證 Lithic 卡片發卡配置（Card 功能，尚未全面上線前只 warn）
+    const lithicVars = ['LITHIC_API_KEY', 'LITHIC_WEBHOOK_SECRET'];
+    const missingLithicVars = lithicVars.filter((key) => !process.env[key]);
+    if (missingLithicVars.length > 0) {
+        console.warn(`⚠️ Lithic card issuer not fully configured: ${missingLithicVars.join(', ')}`);
+        console.warn('💡 Set LITHIC_API_KEY, LITHIC_WEBHOOK_SECRET (LITHIC_ENV defaults to sandbox)');
+        // Card feature: warn only — do not block server startup until feature is live
+    }
     // 在生產環境檢查數據庫配置
     if (isProduction) {
         const dbVars = {
@@ -105,6 +147,23 @@ function validateEnvironment() {
             process.exit(1);
         }
     }
+}
+/**
+ * Single source of truth for reading `JWT_SECRET`.
+ *
+ * Returns the env value or throws if it is not configured. We must never fall
+ * back to a literal default like `'secret'` — `validateEnvironment()` runs at
+ * boot and exits the process if the var is missing, so any caller of this
+ * helper after startup is guaranteed to get a real secret. The throw is a
+ * defence-in-depth guard for code paths that bypass `initializeEnv()` (tests,
+ * scripts, ad-hoc imports).
+ */
+function getJwtSecret() {
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+        throw new Error('JWT_SECRET is not configured. Did initializeEnv() run?');
+    }
+    return secret;
 }
 /**
  * 初始化環境配置

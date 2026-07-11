@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import * as jwt from 'jsonwebtoken';
 import { appLogger } from '../../logger';
+import { getJwtSecret } from '../../../config/env';
 
 export interface AuthRequest extends Request {
   userId?: string;
@@ -35,7 +36,7 @@ export const requireAuth = (req: AuthRequest, res: Response, next: NextFunction)
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as { userId: string };
+    const decoded = jwt.verify(token, getJwtSecret()) as { userId: string };
     req.userId = decoded.userId; // 將解析出的 userId 塞入 request
     appLogger.debug('Token verified successfully', { userId: decoded.userId, clientType: req.clientType });
     next();

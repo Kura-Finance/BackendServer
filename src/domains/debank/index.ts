@@ -15,7 +15,5 @@ export {
 export type {
   DeBankProtocolPosition,
   DeBankProtocolPortfolio,
-  DeBankProtocolQueryResult,
   DeBankTokenPosition,
-  DeBankTokenQueryResult,
 } from './models/types';

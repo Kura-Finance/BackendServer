@@ -1,25 +1,59 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AuthService = exports.authRouter = exports.requireAuth = exports.confirmEmailChange = exports.requestEmailChange = exports.verifyEmailAndRegister = exports.sendVerificationCode = exports.deleteAccount = exports.resetPassword = exports.requestPasswordReset = exports.updateDisplayName = exports.updateAvatar = exports.updateProfile = exports.me = void 0;
+exports.PrivyService = exports.AuthService = exports.authRouter = exports.requireAuth = exports.PasskeyService = exports.login = exports.deleteAccount = exports.logout = exports.getMyCashbackHistory = exports.applyReferralCode = exports.updateDisplayName = exports.updateAvatar = exports.updateProfile = exports.me = void 0;
 var authController_1 = require("./controllers/authController");
 Object.defineProperty(exports, "me", { enumerable: true, get: function () { return authController_1.me; } });
 Object.defineProperty(exports, "updateProfile", { enumerable: true, get: function () { return authController_1.updateProfile; } });
 Object.defineProperty(exports, "updateAvatar", { enumerable: true, get: function () { return authController_1.updateAvatar; } });
 Object.defineProperty(exports, "updateDisplayName", { enumerable: true, get: function () { return authController_1.updateDisplayName; } });
-Object.defineProperty(exports, "requestPasswordReset", { enumerable: true, get: function () { return authController_1.requestPasswordReset; } });
-Object.defineProperty(exports, "resetPassword", { enumerable: true, get: function () { return authController_1.resetPassword; } });
+Object.defineProperty(exports, "applyReferralCode", { enumerable: true, get: function () { return authController_1.applyReferralCode; } });
+Object.defineProperty(exports, "getMyCashbackHistory", { enumerable: true, get: function () { return authController_1.getMyCashbackHistory; } });
+Object.defineProperty(exports, "logout", { enumerable: true, get: function () { return authController_1.logout; } });
 Object.defineProperty(exports, "deleteAccount", { enumerable: true, get: function () { return authController_1.deleteAccount; } });
-Object.defineProperty(exports, "sendVerificationCode", { enumerable: true, get: function () { return authController_1.sendVerificationCode; } });
-Object.defineProperty(exports, "verifyEmailAndRegister", { enumerable: true, get: function () { return authController_1.verifyEmailAndRegister; } });
-Object.defineProperty(exports, "requestEmailChange", { enumerable: true, get: function () { return authController_1.requestEmailChange; } });
-Object.defineProperty(exports, "confirmEmailChange", { enumerable: true, get: function () { return authController_1.confirmEmailChange; } });
+var privyController_1 = require("./controllers/privyController");
+Object.defineProperty(exports, "login", { enumerable: true, get: function () { return privyController_1.login; } });
+exports.PasskeyService = __importStar(require("./services/passkeyService"));
 var auth_1 = require("./middleware/auth");
 Object.defineProperty(exports, "requireAuth", { enumerable: true, get: function () { return auth_1.requireAuth; } });
 var router_1 = require("./router");
 Object.defineProperty(exports, "authRouter", { enumerable: true, get: function () { return __importDefault(router_1).default; } });
 var authService_1 = require("./services/authService");
 Object.defineProperty(exports, "AuthService", { enumerable: true, get: function () { return authService_1.AuthService; } });
+exports.PrivyService = __importStar(require("./services/privyService"));
 //# sourceMappingURL=index.js.map

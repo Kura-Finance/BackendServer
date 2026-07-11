@@ -4,61 +4,68 @@ import { DeBankService } from '../services/debankService';
 import { logError } from '../../logger';
 import type { GetProtocolsQuery } from '../schemas/debankSchemas';
 import type { UnlinkAddressParams } from '../schemas/debankSchemas';
-import type { DeBankTokenPosition } from '../models/types';
-import { getStockLogoUrl } from '../../shared/lib/symbolsAndExchangesUtil';
 import { sendError, sendSuccess } from '../../shared/lib/apiResponse';
 
-function toNumber(value: unknown): number {
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? value : 0;
-  }
-  if (typeof value === 'string') {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-  return 0;
-}
+/**
+ * 將 DeBank 服務錯誤統一映射為 HTTP 回應。
+ */
+function sendDeBankError(
+  res: Response,
+  err: unknown,
+  fallbackMessage: string,
+  refreshRequested: boolean,
+  retryCachedRead: () => Promise<void>,
+): Promise<void> | void {
+  const message = err instanceof Error ? err.message : fallbackMessage;
+  const normalized = message.toLowerCase();
+  const isValidationError = normalized.includes('address');
+  const isConfigurationError = normalized.includes('configured');
+  const isUpstreamError = normalized.includes('debank api request failed');
+  const isLimitError = (err as any)?.statusCode === 429;
 
-function formatTokenPortfolio(tokens: DeBankTokenPosition[]) {
-  const balances = tokens.map((token) => {
-    const total = toNumber(token.amount);
-    const usdPrice = toNumber(token.price);
-    const fallbackUsdValue = total * usdPrice;
-    const usdValue = toNumber(token.usd_value) || fallbackUsdValue;
-    const symbol = (token.symbol || token.name || 'UNKNOWN').toUpperCase();
+  if (refreshRequested && isLimitError) {
+    return retryCachedRead();
+  }
 
-    return {
-      symbol,
-      free: total,
-      used: 0,
-      total,
-      logo: token.logo_url || getStockLogoUrl(symbol),
-      usdPrice,
-      change24h: 0, // DeBank token endpoint 不提供統一的 24h 變化欄位
-      usdValue,
-      chain: token.chain || 'unknown',
-      name: token.name || symbol,
-    };
+  const statusCode = isValidationError
+    ? 400
+    : isConfigurationError
+    ? 503
+    : isUpstreamError
+    ? 502
+    : isLimitError
+    ? 429
+    : 500;
+
+  sendError(res, statusCode, {
+    code: isValidationError
+      ? 'VALIDATION_ERROR'
+      : isConfigurationError
+      ? 'SERVICE_UNAVAILABLE'
+      : isUpstreamError
+      ? 'UPSTREAM_ERROR'
+      : isLimitError
+      ? 'RATE_LIMITED'
+      : 'INTERNAL_ERROR',
+    message,
+    ...(isLimitError
+      ? {
+          details: {
+            refreshLimit: (err as any)?.refreshLimit,
+            refreshCountRemaining: (err as any)?.refreshCountRemaining ?? 0,
+            retryAfter: 86400,
+          },
+        }
+      : {}),
   });
-
-  const assets = balances.filter((token) => token.free > 0);
-  const balancesUsdTotal = balances.reduce((sum, token) => sum + token.usdValue, 0);
-  const assetsUsdTotal = assets.reduce((sum, token) => sum + token.usdValue, 0);
-
-  return {
-    balances,
-    balancesUsdTotal,
-    assets,
-    assetsUsdTotal,
-    positions: [],
-    positionsUsdTotal: 0,
-    totalUsdValue: balancesUsdTotal,
-  };
 }
 
 /**
- * 取得使用者在 DeBank 的協議資料
- * 路由：GET /api/debank/protocols?address=0x...
+ * 取得使用者在 DeBank 的協議資料（Phase 3 Zero-Access E2EE only）
+ * 路由：GET /api/debank/protocols?address=0x...&refresh=true|false
+ *
+ * 回傳：{ address, payloadKeys[], protocols: encryptedRows[], total }
+ * - 後端不解密；前端用 privateKey unwrap payloadKeys 後解每個 row 的 payloadCiphertext
  */
 export const getUserProtocolPositions = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -71,11 +78,10 @@ export const getUserProtocolPositions = async (req: AuthRequest, res: Response):
     const forceRefresh = refresh ?? false;
     const result = await DeBankService.getUserProtocolPositions(req.userId, address, forceRefresh);
     sendSuccess(res, {
-      address,
+      address: result.address,
+      payloadKeys: result.payloadKeys,
       protocols: result.protocols,
       total: result.protocols.length,
-      fromCache: result.fromCache,
-      cachedAt: result.cachedAt,
     });
   } catch (error) {
     logError('Get DeBank protocol positions failed', error, {
@@ -83,72 +89,34 @@ export const getUserProtocolPositions = async (req: AuthRequest, res: Response):
       address: req.query.address,
     });
 
-    const message = error instanceof Error ? error.message : 'Failed to fetch protocol positions';
-    const normalized = message.toLowerCase();
-    const isValidationError = normalized.includes('address');
-    const isConfigurationError = normalized.includes('configured');
-    const isUpstreamError = normalized.includes('debank api request failed');
-
     const refreshRequested = String(req.query.refresh || '').toLowerCase() === 'true';
-    const isLimitError = (error as any)?.statusCode === 429;
-
-    // 與 Plaid 一致：手動刷新達限時，回退為快取資料回傳
-    if (refreshRequested && isLimitError && req.userId) {
-      try {
+    await sendDeBankError(
+      res,
+      error,
+      'Failed to fetch protocol positions',
+      refreshRequested,
+      async () => {
         const address = String(req.query.address || '').trim();
-        const cached = await DeBankService.getUserProtocolPositions(req.userId, address, false);
+        const cached = await DeBankService.getUserProtocolPositions(req.userId!, address, false);
         sendSuccess(res, {
-          address,
+          address: cached.address,
+          payloadKeys: cached.payloadKeys,
           protocols: cached.protocols,
           total: cached.protocols.length,
-          fromCache: true,
-          cachedAt: cached.cachedAt,
         }, 200, {
           limitReached: true,
-          message,
+          message: error instanceof Error ? error.message : undefined,
         });
-        return;
-      } catch {
-        sendError(res, 429, {
-          code: 'RATE_LIMITED',
-          message,
-          details: {
-            refreshLimit: (error as any)?.refreshLimit,
-            refreshCountRemaining: (error as any)?.refreshCountRemaining ?? 0,
-            retryAfter: 86400,
-          },
-        });
-        return;
-      }
-    }
-
-    const statusCode = isValidationError
-      ? 400
-      : isConfigurationError
-      ? 503
-      : isUpstreamError
-      ? 502
-      : isLimitError
-      ? 429
-      : 500;
-    sendError(res, statusCode, {
-      code: isValidationError
-        ? 'VALIDATION_ERROR'
-        : isConfigurationError
-        ? 'SERVICE_UNAVAILABLE'
-        : isUpstreamError
-        ? 'UPSTREAM_ERROR'
-        : isLimitError
-        ? 'RATE_LIMITED'
-        : 'INTERNAL_ERROR',
-      message,
-    });
+      },
+    );
   }
 };
 
 /**
- * 取得使用者在 DeBank 的 EVM Token 持倉
- * 路由：GET /api/debank/tokens?address=0x...
+ * 取得使用者在 DeBank 的 EVM Token 持倉（Phase 3 Zero-Access E2EE only）
+ * 路由：GET /api/debank/tokens?address=0x...&refresh=true|false
+ *
+ * 回傳：{ address, payloadKeys[], tokens: encryptedRows[], total }
  */
 export const getUserTokenPositions = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -160,20 +128,12 @@ export const getUserTokenPositions = async (req: AuthRequest, res: Response): Pr
     const { address, refresh } = req.query as unknown as GetProtocolsQuery;
     const forceRefresh = refresh ?? false;
     const result = await DeBankService.getUserTokenPositions(req.userId, address, forceRefresh);
-    const portfolio = formatTokenPortfolio(result.tokens);
 
     sendSuccess(res, {
-      account: {
-        id: address.toLowerCase(),
-        exchange: 'debank',
-        displayName: 'DeBank EVM Wallet',
-        walletAddress: address.toLowerCase(),
-      },
-      ...portfolio,
-      tokenCount: result.tokens.length,
-      fromCache: result.fromCache,
-      cachedAt: result.cachedAt,
-      timestamp: result.cachedAt || new Date().toISOString(),
+      address: result.address,
+      payloadKeys: result.payloadKeys,
+      tokens: result.tokens,
+      total: result.tokens.length,
     });
   } catch (error) {
     logError('Get DeBank token positions failed', error, {
@@ -181,74 +141,26 @@ export const getUserTokenPositions = async (req: AuthRequest, res: Response): Pr
       address: req.query.address,
     });
 
-    const message = error instanceof Error ? error.message : 'Failed to fetch token positions';
-    const normalized = message.toLowerCase();
-    const isValidationError = normalized.includes('address');
-    const isConfigurationError = normalized.includes('configured');
-    const isUpstreamError = normalized.includes('debank api request failed');
-
     const refreshRequested = String(req.query.refresh || '').toLowerCase() === 'true';
-    const isLimitError = (error as any)?.statusCode === 429;
-
-    // 與 Plaid 一致：手動刷新達限時，回退為快取資料回傳
-    if (refreshRequested && isLimitError && req.userId) {
-      try {
+    await sendDeBankError(
+      res,
+      error,
+      'Failed to fetch token positions',
+      refreshRequested,
+      async () => {
         const address = String(req.query.address || '').trim();
-        const cached = await DeBankService.getUserTokenPositions(req.userId, address, false);
-        const portfolio = formatTokenPortfolio(cached.tokens);
-
+        const cached = await DeBankService.getUserTokenPositions(req.userId!, address, false);
         sendSuccess(res, {
-          account: {
-            id: address.toLowerCase(),
-            exchange: 'debank',
-            displayName: 'DeBank EVM Wallet',
-            walletAddress: address.toLowerCase(),
-          },
-          ...portfolio,
-          tokenCount: cached.tokens.length,
-          fromCache: true,
-          cachedAt: cached.cachedAt,
-          timestamp: cached.cachedAt || new Date().toISOString(),
+          address: cached.address,
+          payloadKeys: cached.payloadKeys,
+          tokens: cached.tokens,
+          total: cached.tokens.length,
         }, 200, {
           limitReached: true,
-          message,
+          message: error instanceof Error ? error.message : undefined,
         });
-        return;
-      } catch {
-        sendError(res, 429, {
-          code: 'RATE_LIMITED',
-          message,
-          details: {
-            refreshLimit: (error as any)?.refreshLimit,
-            refreshCountRemaining: (error as any)?.refreshCountRemaining ?? 0,
-            retryAfter: 86400,
-          },
-        });
-        return;
-      }
-    }
-
-    const statusCode = isValidationError
-      ? 400
-      : isConfigurationError
-      ? 503
-      : isUpstreamError
-      ? 502
-      : isLimitError
-      ? 429
-      : 500;
-    sendError(res, statusCode, {
-      code: isValidationError
-        ? 'VALIDATION_ERROR'
-        : isConfigurationError
-        ? 'SERVICE_UNAVAILABLE'
-        : isUpstreamError
-        ? 'UPSTREAM_ERROR'
-        : isLimitError
-        ? 'RATE_LIMITED'
-        : 'INTERNAL_ERROR',
-      message,
-    });
+      },
+    );
   }
 };
 

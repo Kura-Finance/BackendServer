@@ -68,9 +68,13 @@ export const connectExchange = async (req: AuthRequest, res: Response) => {
 };
 
 /**
- * 獲取交易所餘額和資產 (合併端點)
- * 達到查詢上限時返回數據庫緩存內容
- * 受用戶等級限制：每天最多查詢次數
+ * 取得交易所餘額和資產（Phase 3 Zero-Access E2EE only）。
+ *
+ * 路由：GET /api/exchange/:exchangeAccountId/balances
+ *
+ * - 觸發 CCXT 同步 → 加密寫快取 → 回傳加密形式 snapshot
+ * - 達到查詢上限時，回退讀加密快取（不再呼叫 CCXT）
+ * - 後端不解密任何敏感欄位；前端用 privateKey unwrap payloadKeys 後解 row
  */
 export const getExchangeBalances = async (req: AuthRequest, res: Response) => {
   try {
@@ -79,17 +83,14 @@ export const getExchangeBalances = async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    // 檢查 API 操作限制
     const limitCheck = await checkApiLimit(req.userId, 'exchange_balance');
-
     const exchangeAccountId = req.params.exchangeAccountId as string;
 
-    // 如果達到限制，返回緩存數據
     if (!limitCheck.canOperate) {
       try {
-        const cachedResult = await ExchangeService.getBalancesAndAssetsFromCache(
+        const cachedResult = await ExchangeService.getEncryptedBalancesAndAssets(
           req.userId,
-          exchangeAccountId
+          exchangeAccountId,
         );
 
         sendSuccess(res, {
@@ -107,7 +108,6 @@ export const getExchangeBalances = async (req: AuthRequest, res: Response) => {
         });
         return;
       } catch (cacheError) {
-        // 如果無法獲取緩存數據，返回錯誤
         sendError(res, 429, {
           code: 'RATE_LIMITED',
           message: 'Daily balance query limit reached',
@@ -122,10 +122,9 @@ export const getExchangeBalances = async (req: AuthRequest, res: Response) => {
 
     const result = await ExchangeService.getBalancesAndAssets(
       req.userId,
-      exchangeAccountId
+      exchangeAccountId,
     );
 
-    // 記錄 API 操作
     await recordApiOperation(req.userId, 'exchange_balance');
 
     sendSuccess(res, {

@@ -1,50 +1,47 @@
 /**
  * 資產領域模型型別
- *
- * NOTE: 加密只發生在 service → DB 這一層。
- * 所有 TypeScript interface 使用 number，service 負責在寫入前加密、讀取後解密。
  */
-export interface AssetSnapshotData {
-    assetId: string;
-    name: string;
-    type: 'bank_account' | 'investment' | 'crypto_wallet';
-    value: number;
-    currency?: string;
-    recordedAt?: Date;
-}
-export interface AssetSnapshotResponse {
-    id: string;
-    assetId: string;
-    name: string;
-    type: string;
-    value: number;
-    currency: string;
-    recordedAt: Date;
-    createdAt: Date;
-}
-export interface AssetPerformanceResponse {
-    totalAssets: number;
-    lastRecordedTime: Date | null;
-    assets: AssetSnapshotResponse[];
-}
 export interface AssetHistoryPoint {
     timestamp: Date;
-    value: number;
-    assetId: string;
-    name: string;
-    type: string;
+    cashFlow: number;
+    plaidInvestment: number;
+    cryptoSpot: number;
+    defiProtocol: number;
 }
 export interface AssetHistoryResponse {
     userId: string;
-    totalAssets: number;
+    cashFlow: number;
     lastRecordedTime: Date | null;
     history: AssetHistoryPoint[];
     summary: {
-        minValue: number;
-        maxValue: number;
-        averageValue: number;
-        change: number;
-        changePercent: number;
+        cashFlow: {
+            minValue: number;
+            maxValue: number;
+            averageValue: number;
+            change: number;
+            changePercent: number;
+        };
+        plaidInvestment: {
+            minValue: number;
+            maxValue: number;
+            averageValue: number;
+            change: number;
+            changePercent: number;
+        };
+        cryptoSpot: {
+            minValue: number;
+            maxValue: number;
+            averageValue: number;
+            change: number;
+            changePercent: number;
+        };
+        defiProtocol: {
+            minValue: number;
+            maxValue: number;
+            averageValue: number;
+            change: number;
+            changePercent: number;
+        };
     };
 }
 //# sourceMappingURL=types.d.ts.map

@@ -15,11 +15,18 @@ export interface PlaidCacheInfo {
 
 export interface UserProfile {
   id: string;
-  email: string;
+  email: string | null;
+  walletAddress?: string | null;
   displayName: string;
+  /** true 當 displayName 來自用戶主動設定的 name 欄位（非 fallback） */
+  hasName: boolean;
   avatarUrl: string;
   membershipLabel: string;
-  plaidCache?: PlaidCacheInfo; // 可選的 Plaid 快取統計資訊
+  referCode?: string;
+  referredByCode?: string | null;
+  referralCount?: number;
+  cashbackBalance?: number;
+  plaidCache?: PlaidCacheInfo;
 }
 
 export interface UpdateProfilePayload {

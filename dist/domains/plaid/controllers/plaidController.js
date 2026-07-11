@@ -1,12 +1,27 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.handlePlaidWebhook = exports.getCacheInfo = exports.clearPlaidCache = exports.refreshPlaidCache = exports.getFinanceSnapshotOptimized = exports.getFinanceSnapshot = exports.disconnectPlaidItem = exports.exchangePublicToken = exports.createLinkToken = void 0;
+exports.handlePlaidWebhook = exports.getCacheInfo = exports.getEncryptedFinanceSnapshot = exports.clearPlaidCache = exports.getFinanceSnapshotOptimized = exports.disconnectPlaidItem = exports.exchangePublicToken = exports.createLinkToken = void 0;
 const plaidService_1 = require("../services/plaidService");
 const logger_1 = require("../../logger");
 const plaidCacheUtil_1 = require("../lib/plaidCacheUtil");
 const webhookVerification_1 = require("../lib/webhookVerification");
 const prisma_1 = require("../../shared/lib/prisma");
 const apiResponse_1 = require("../../shared/lib/apiResponse");
+const payloadKeyService_1 = require("../../shared/services/payloadKeyService");
+function resolvePlaidLastSyncedAt(cacheStats) {
+    const timestamps = [
+        cacheStats.lastSynced,
+        cacheStats.accountsSynced,
+        cacheStats.transactionsSynced,
+        cacheStats.investmentsSynced,
+    ]
+        .filter((value) => Boolean(value))
+        .map((value) => value.getTime());
+    if (timestamps.length === 0) {
+        return null;
+    }
+    return new Date(Math.max(...timestamps)).toISOString();
+}
 const createLinkToken = async (req, res) => {
     try {
         if (!req.userId) {
@@ -49,7 +64,7 @@ const exchangePublicToken = async (req, res) => {
         }
         const { public_token, institution_name } = req.body;
         await plaidService_1.PlaidService.exchangePublicToken(req.userId, public_token, institution_name);
-        // 第一次連接時取得財務快照（isManualRefresh=false，不受限制）
+        // Phase 3：第一次連接時觸發加密快照同步（前端會用 /encrypted endpoint 取資料）
         try {
             const snapshot = await plaidService_1.PlaidService.getFinanceSnapshotOptimized(req.userId, false);
             (0, apiResponse_1.sendSuccess)(res, {
@@ -61,7 +76,7 @@ const exchangePublicToken = async (req, res) => {
             // 即使快照失敗，也不影響連結成功狀態
             (0, logger_1.logDebug)('Failed to fetch initial snapshot after successful connection', snapshotError?.message || snapshotError);
             (0, apiResponse_1.sendSuccess)(res, {
-                message: 'Bank account linked successfully'
+                message: 'Bank account linked successfully',
             });
         }
     }
@@ -101,24 +116,6 @@ const disconnectPlaidItem = async (req, res) => {
     }
 };
 exports.disconnectPlaidItem = disconnectPlaidItem;
-const getFinanceSnapshot = async (req, res) => {
-    try {
-        if (!req.userId) {
-            (0, apiResponse_1.sendError)(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
-            return;
-        }
-        const snapshot = await plaidService_1.PlaidService.getFinanceSnapshot(req.userId);
-        (0, apiResponse_1.sendSuccess)(res, snapshot);
-    }
-    catch (error) {
-        (0, logger_1.logError)('Get finance snapshot failed', error, {
-            userId: req.userId,
-            errorData: error.response?.data,
-        });
-        (0, apiResponse_1.sendError)(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to fetch Plaid financial data' });
-    }
-};
-exports.getFinanceSnapshot = getFinanceSnapshot;
 /**
  * 獲取財務快照（仅使用緩存架構）
  * - API 層面只返回數據庫內容，Server 通過 Webhooks 自動更新數據庫
@@ -137,10 +134,16 @@ const getFinanceSnapshotOptimized = async (req, res) => {
         const isManualRefresh = refresh === true || req.body?.isManualRefresh === true;
         try {
             const snapshot = await plaidService_1.PlaidService.getFinanceSnapshotOptimized(req.userId, isManualRefresh);
+            const cacheStats = await (0, plaidCacheUtil_1.getCacheStats)(req.userId);
+            const lastSyncedAt = isManualRefresh
+                ? new Date().toISOString()
+                : resolvePlaidLastSyncedAt(cacheStats);
+            const status = snapshot.partial ? 207 : 200;
             (0, apiResponse_1.sendSuccess)(res, {
                 ...snapshot,
                 _cacheSource: isManualRefresh ? 'Forced refresh from Plaid API' : 'From cache',
-            });
+                lastSyncedAt,
+            }, status);
         }
         catch (error) {
             // 處理刷新限制錯誤 - 達到限制時返回緩存數據
@@ -148,9 +151,11 @@ const getFinanceSnapshotOptimized = async (req, res) => {
                 try {
                     (0, logger_1.logDebug)('Refresh limit reached, returning cached data', { userId: req.userId });
                     const cachedSnapshot = await plaidService_1.PlaidService.getFinanceSnapshotOptimized(req.userId, false); // 獲取緩存不受限制
+                    const cacheStats = await (0, plaidCacheUtil_1.getCacheStats)(req.userId);
                     (0, apiResponse_1.sendSuccess)(res, {
                         ...cachedSnapshot,
                         _cacheSource: 'Daily refresh limit reached, showing last synced data',
+                        lastSyncedAt: resolvePlaidLastSyncedAt(cacheStats),
                         _limitReached: true,
                         _message: error.message,
                     });
@@ -175,6 +180,13 @@ const getFinanceSnapshotOptimized = async (req, res) => {
         }
     }
     catch (error) {
+        if (error instanceof payloadKeyService_1.KeyPairNotConfiguredError) {
+            (0, apiResponse_1.sendError)(res, 409, {
+                code: 'KEY_PAIR_REQUIRED',
+                message: 'E2EE key pair not configured. Call POST /api/auth/keys/setup to enable encrypted sync.',
+            });
+            return;
+        }
         (0, logger_1.logError)('Get finance snapshot failed', error, {
             userId: req.userId,
             errorData: error.response?.data,
@@ -183,74 +195,6 @@ const getFinanceSnapshotOptimized = async (req, res) => {
     }
 };
 exports.getFinanceSnapshotOptimized = getFinanceSnapshotOptimized;
-/**
- * 手動刷新 Plaid 緩存
- * 達到限制時返回緩存數據
- */
-const refreshPlaidCache = async (req, res) => {
-    try {
-        if (!req.userId) {
-            (0, apiResponse_1.sendError)(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
-            return;
-        }
-        try {
-            // 手動刷新，強制從 API 獲取數據
-            const snapshot = await plaidService_1.PlaidService.getFinanceSnapshotOptimized(req.userId, true);
-            (0, apiResponse_1.sendSuccess)(res, {
-                message: 'Cache refreshed successfully',
-                dataRefreshed: {
-                    accounts: snapshot.accounts.length,
-                    transactions: snapshot.transactions.length,
-                    investmentAccounts: snapshot.investmentAccounts.length,
-                    investments: snapshot.investments.length,
-                },
-            });
-        }
-        catch (error) {
-            // 處理刷新限制錯誤 - 達到限制時返回緩存數據
-            if (error.statusCode === 429) {
-                try {
-                    (0, logger_1.logDebug)('Refresh limit reached, returning cached data', { userId: req.userId });
-                    const cachedSnapshot = await plaidService_1.PlaidService.getFinanceSnapshotOptimized(req.userId, false);
-                    (0, apiResponse_1.sendSuccess)(res, {
-                        status: 'cache_limit_reached',
-                        message: 'Daily refresh limit reached, returning last synced data',
-                        limitMessage: error.message,
-                        dataRefreshed: {
-                            accounts: cachedSnapshot.accounts.length,
-                            transactions: cachedSnapshot.transactions.length,
-                            investmentAccounts: cachedSnapshot.investmentAccounts.length,
-                            investments: cachedSnapshot.investments.length,
-                        },
-                        _limitReached: true,
-                    });
-                    return;
-                }
-                catch (cacheError) {
-                    // 如果無法獲取緩存數據，返回錯誤
-                    (0, apiResponse_1.sendError)(res, 429, {
-                        code: 'RATE_LIMITED',
-                        message: 'Daily refresh limit reached and no cached data is available',
-                        details: {
-                            limitMessage: error.message,
-                            retryAfter: 86400,
-                        },
-                    });
-                    return;
-                }
-            }
-            throw error;
-        }
-    }
-    catch (error) {
-        (0, logger_1.logError)('Refresh Plaid cache failed', error, {
-            userId: req.userId,
-            errorData: error.response?.data,
-        });
-        (0, apiResponse_1.sendError)(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to refresh cache' });
-    }
-};
-exports.refreshPlaidCache = refreshPlaidCache;
 /**
  * 清空 Plaid 緩存（完整清除）
  */
@@ -273,6 +217,48 @@ const clearPlaidCache = async (req, res) => {
     }
 };
 exports.clearPlaidCache = clearPlaidCache;
+/**
+ * 取得「加密形式」財務快照（Phase 3 Zero-Access E2EE）
+ *
+ * 回傳：
+ *   {
+ *     payloadKeys: [{ id, scope, wrappedSek, algorithm }, ...],
+ *     accounts:    [{ accountId, plaidItemId, type, bucket, cachedAt, payloadCiphertext, payloadKeyId }, ...],
+ *     transactions:[{ transactionId, accountId, date, month, isPending, ..., payloadCiphertext, payloadKeyId }, ...],
+ *     investmentAccounts: [{ accountId, cachedAt, payloadCiphertext, payloadKeyId }, ...],
+ *     investments: [{ investmentId, accountId, type, ..., payloadCiphertext, payloadKeyId }, ...],
+ *     lastSyncedAt
+ *   }
+ *
+ * 前端流程：
+ *   1. 用 KEK 解 encryptedPrivateKey → privateKey
+ *   2. for each payloadKey: SEK = sealed_box_open(wrappedSek, privateKey, publicKey)
+ *   3. for each row: plain = AES-GCM_decrypt(SEK, payloadCiphertext)
+ *   4. 合併 metadata + plain → 渲染
+ */
+const getEncryptedFinanceSnapshot = async (req, res) => {
+    try {
+        if (!req.userId) {
+            (0, apiResponse_1.sendError)(res, 401, { code: 'UNAUTHORIZED', message: 'Unauthorized' });
+            return;
+        }
+        const snapshot = await plaidService_1.PlaidService.getEncryptedFinanceSnapshot(req.userId);
+        const cacheStats = await (0, plaidCacheUtil_1.getCacheStats)(req.userId);
+        const lastSyncedAt = resolvePlaidLastSyncedAt(cacheStats);
+        (0, apiResponse_1.sendSuccess)(res, {
+            ...snapshot,
+            lastSyncedAt,
+        });
+    }
+    catch (error) {
+        (0, logger_1.logError)('Get encrypted finance snapshot failed', error, {
+            userId: req.userId,
+            errorData: error.response?.data,
+        });
+        (0, apiResponse_1.sendError)(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to fetch encrypted financial snapshot' });
+    }
+};
+exports.getEncryptedFinanceSnapshot = getEncryptedFinanceSnapshot;
 /**
  * 獲取 Plaid 緩存統計信息
  */

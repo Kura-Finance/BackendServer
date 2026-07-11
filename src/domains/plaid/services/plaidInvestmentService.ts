@@ -4,9 +4,14 @@
  */
 
 import { logDebug } from '../../logger';
-import { getStockLogoUrl } from '../../shared/lib/symbolsAndExchangesUtil';
+import { getStockLogoUrl, getInstitutionLogoUrl } from '../../shared/lib/symbolsAndExchangesUtil';
 import { PlaidInvestmentPayload, PlaidInvestmentAccountPayload } from '../models/types';
-import { mapPlaidInvestmentType, normalizeCryptoSymbol, isCurrencyOrUnsupported } from '../lib/plaidDataTransformer';
+import {
+  classifyPlaidAccountBucket,
+  mapPlaidInvestmentType,
+  normalizeCryptoSymbol,
+  isCurrencyOrUnsupported,
+} from '../lib/plaidDataTransformer';
 import ccxt from 'ccxt';
 import yahooFinance from 'yahoo-finance2';
 
@@ -76,12 +81,22 @@ export class PlaidInvestmentService {
       const securitiesById = new Map(holdingsResponse.data.securities.map((security: any) => [security.security_id, security]));
 
       for (const account of holdingsResponse.data.accounts) {
-        investmentAccounts.push({
+        // investmentsHoldingsGet 在部分機構可能帶出非投資帳戶，需過濾避免誤標 Broker
+        const bucket = classifyPlaidAccountBucket((account as any).type, (account as any).subtype);
+        if (bucket !== 'investment') {
+          continue;
+        }
+
+        const invAccount: PlaidInvestmentAccountPayload = {
           id: account.account_id,
           name: `${item.institutionName} · ${account.name}`,
           type: 'Broker',
-          logo: '',
-        });
+          logo: getInstitutionLogoUrl(item.institutionName),
+        };
+        if ((account as any).logo) {
+          invAccount.plaidLogo = (account as any).logo;
+        }
+        investmentAccounts.push(invAccount);
       }
 
       for (const holding of holdingsResponse.data.holdings) {
@@ -89,6 +104,11 @@ export class PlaidInvestmentService {
         if (!security) continue;
 
         const investmentType = mapPlaidInvestmentType(security.type, security.ticker_symbol);
+        const quantity = Number(holding.quantity || 0);
+        const institutionPrice = Number(holding.institution_price || 0);
+        const institutionValue = Number((holding as any).institution_value || 0);
+        const fallbackPrice = quantity > 0 ? institutionValue / quantity : 0;
+        const effectivePrice = institutionPrice > 0 ? institutionPrice : fallbackPrice;
 
         // 規範化加密貨幣 symbol 用於 API 查詢
         let normalizedSymbol = security.ticker_symbol || '';
@@ -106,8 +126,8 @@ export class PlaidInvestmentService {
           accountId: holding.account_id,
           symbol: normalizedSymbol || security.name || 'N/A',
           name: security.name || normalizedSymbol || 'Unknown Asset',
-          holdings: Number(holding.quantity || 0),
-          currentPrice: Number(holding.institution_price || 0),
+          holdings: quantity,
+          currentPrice: effectivePrice,
           change24h,
           type: investmentType,
           logo: getStockLogoUrl(normalizedSymbol || ''),

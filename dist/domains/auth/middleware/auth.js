@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.requireAuth = void 0;
 const jwt = __importStar(require("jsonwebtoken"));
 const logger_1 = require("../../logger");
+const env_1 = require("../../../config/env");
 /**
  * 認證中間件 - 支援兩種認證方式:
  * 1. 網頁端：Cookie 中的 authToken (HttpOnly)
@@ -60,7 +61,7 @@ const requireAuth = (req, res, next) => {
         return;
     }
     try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const decoded = jwt.verify(token, (0, env_1.getJwtSecret)());
         req.userId = decoded.userId; // 將解析出的 userId 塞入 request
         logger_1.appLogger.debug('Token verified successfully', { userId: decoded.userId, clientType: req.clientType });
         next();
