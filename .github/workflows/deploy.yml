@@ -46,7 +46,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
       # 步驟 6: 安裝依賴（migration 需要 Prisma CLI）
       - name: Install dependencies

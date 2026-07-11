@@ -10,6 +10,7 @@ import type {
   BridgeEndorsementType,
   CreatePayoutAddressParams,
   CustomerStatusResult,
+  DepositPayerInfo,
   DepositResult,
   EndorsementLinkResult,
   ExternalAccountResult,
@@ -21,6 +22,7 @@ import type {
   VirtualAccountResult,
 } from '../bridge/models/types';
 import {
+  EMPTY_DEPOSIT_PAYER,
   LIQUIDATION_ADDRESS_TRON_USDT_TO_BASE_USDC,
   resolveOnRampMinDeposit,
   resolvePayoutMinDeposit,
@@ -254,6 +256,54 @@ function isoDate(d: Date): string {
 
 function monthKey(d: Date): string {
   return d.toISOString().slice(0, 7);
+}
+
+function demoDepositPayer(currency: DemoOnrampCurrency): DepositPayerInfo {
+  const payers: Record<DemoOnrampCurrency, DepositPayerInfo> = {
+    usd: {
+      paymentRail: 'ach_push',
+      senderName: 'Demo Sender LLC',
+      accountLast4: null,
+      senderBankRoutingNumber: '021000021',
+      senderDescription: 'ACH DEMO DEPOSIT',
+    },
+    eur: {
+      paymentRail: 'sepa',
+      senderName: 'Demo Sender GmbH',
+      accountLast4: '4321',
+      senderBankRoutingNumber: null,
+      senderDescription: null,
+    },
+    gbp: {
+      paymentRail: 'faster_payments',
+      senderName: 'John Smith',
+      accountLast4: '5678',
+      senderBankRoutingNumber: null,
+      senderDescription: 'Invoice demo',
+    },
+    mxn: {
+      paymentRail: 'spei',
+      senderName: 'Demo Sender SA',
+      accountLast4: null,
+      senderBankRoutingNumber: null,
+      senderDescription: null,
+    },
+    brl: {
+      paymentRail: 'pix',
+      senderName: 'Demo Sender LTDA',
+      accountLast4: null,
+      senderBankRoutingNumber: null,
+      senderDescription: null,
+    },
+    cop: {
+      paymentRail: 'pse',
+      senderName: 'Demo Sender SAS',
+      accountLast4: null,
+      senderBankRoutingNumber: null,
+      senderDescription: null,
+    },
+  };
+  return payers[currency];
 }
 
 export class DemoService {
@@ -668,6 +718,7 @@ export class DemoService {
       tosStatus: 'approved',
       endorsements,
       canTransact: true,
+      customerNamedPayoutConfigured: true,
     };
   }
 
@@ -725,6 +776,7 @@ export class DemoService {
         cop: '1800000.00',
       };
       const amount = sampleAmounts[currency];
+      const payer = demoDepositPayer(currency);
 
       deposits.push({
         depositId: `demo-deposit-${currency}-completed`,
@@ -740,6 +792,7 @@ export class DemoService {
         destinationTxHash: `0xdemoBridgeDeposit${currency}TxHash000001`,
         createdAt: completedAt,
         updatedAt: completedAt,
+        ...payer,
         events: [
           {
             type: 'funds_received',
@@ -751,6 +804,7 @@ export class DemoService {
             gasFee: null,
             destinationTxHash: null,
             occurredAt: completedAt,
+            ...payer,
           },
           {
             type: 'payment_processed',
@@ -762,12 +816,14 @@ export class DemoService {
             gasFee: '0.00',
             destinationTxHash: `0xdemoBridgeDeposit${currency}TxHash000001`,
             occurredAt: completedAt,
+            ...EMPTY_DEPOSIT_PAYER,
           },
         ],
       });
     }
 
     // USD 額外一筆處理中入金
+    const pendingPayer = demoDepositPayer('usd');
     deposits.unshift({
       depositId: 'demo-deposit-usd-pending',
       bridgeVirtualAccountId: demoVaId('usd'),
@@ -782,6 +838,7 @@ export class DemoService {
       destinationTxHash: null,
       createdAt: DemoService.demoDaysAgoIso(1),
       updatedAt: DemoService.demoDaysAgoIso(1),
+      ...pendingPayer,
       events: [
         {
           type: 'funds_received',
@@ -793,6 +850,7 @@ export class DemoService {
           gasFee: null,
           destinationTxHash: null,
           occurredAt: DemoService.demoDaysAgoIso(1),
+          ...pendingPayer,
         },
       ],
     });

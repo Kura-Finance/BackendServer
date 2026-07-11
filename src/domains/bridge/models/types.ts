@@ -140,6 +140,21 @@ export interface BridgeExternalAccountResponse {
   [key: string]: unknown;
 }
 
+/** Bridge fiat payout identity: who appears as sender on off-ramp payouts. */
+export type BridgeFiatPayoutName = 'bridge' | 'developer' | 'payment_provider' | 'customer';
+
+/** PATCH/GET /customers/{id}/fiat_payout_configuration — currency → rail → payout name. */
+export type BridgeFiatPayoutConfiguration = Record<string, Record<string, BridgeFiatPayoutName>>;
+
+/**
+ * Customer-named payout rails we enable automatically after KYC approval.
+ * @see https://apidocs.bridge.xyz/platform/orchestration/more/fiat-payout-configuration
+ * Currently only usd.wire supports `customer` (premium; contact Bridge to enable).
+ */
+export const CUSTOMER_NAMED_PAYOUT_CONFIGURATION: BridgeFiatPayoutConfiguration = {
+  usd: { wire: 'customer' },
+};
+
 // ── Virtual Accounts（持久法幣入金帳戶）─────────────────────────────────
 
 // 單一 rail 的 developer fee 設定（fee_config，Bridge Beta 功能）
@@ -191,6 +206,11 @@ export interface BridgeVirtualAccountEventResponse {
   virtual_account_id?: string;
   source?: Record<string, unknown>;
   created_at?: string;
+}
+
+export interface BridgeVirtualAccountHistoryResponse {
+  count?: number;
+  data?: BridgeVirtualAccountEventResponse[];
 }
 
 export interface BridgeLiquidationAddressResponse {
@@ -314,6 +334,8 @@ export interface CustomerStatusResult {
   tosStatus: string;
   endorsements: BridgeEndorsement[];
   canTransact: boolean;
+  /** 是否已向 Bridge 設定 customer-named fiat payout（目前僅 USD wire）。 */
+  customerNamedPayoutConfigured: boolean;
 }
 
 export interface TransferResult {
@@ -573,6 +595,61 @@ export interface VirtualAccountResult {
 }
 
 // 單一入金事件（VA activity 帳本中的一筆）
+export interface DepositPayerInfo {
+  paymentRail: string | null;
+  senderName: string | null;
+  accountLast4: string | null;
+  senderBankRoutingNumber: string | null;
+  senderDescription: string | null;
+}
+
+/** Normalize Bridge VA event `source` into payer fields for API responses. */
+export function parseDepositPayerSource(
+  source: Record<string, unknown> | null | undefined,
+): DepositPayerInfo | null {
+  if (!source || typeof source !== 'object') return null;
+
+  const str = (key: string): string | null => {
+    const value = source[key];
+    return typeof value === 'string' && value.length > 0 ? value : null;
+  };
+
+  const paymentRail = str('payment_rail');
+  const senderName = str('sender_name');
+  const accountLast4 = str('last_4') ?? str('iban_last_4');
+  const senderBankRoutingNumber =
+    str('sender_bank_routing_number') ??
+    str('sender_routing_number') ??
+    str('bank_routing_number');
+  const senderDescription = str('description');
+
+  if (
+    !paymentRail &&
+    !senderName &&
+    !accountLast4 &&
+    !senderBankRoutingNumber &&
+    !senderDescription
+  ) {
+    return null;
+  }
+
+  return {
+    paymentRail,
+    senderName,
+    accountLast4,
+    senderBankRoutingNumber,
+    senderDescription,
+  };
+}
+
+export const EMPTY_DEPOSIT_PAYER: DepositPayerInfo = {
+  paymentRail: null,
+  senderName: null,
+  accountLast4: null,
+  senderBankRoutingNumber: null,
+  senderDescription: null,
+};
+
 export interface DepositEvent {
   type: string; // funds_received | payment_submitted | payment_processed | refunded | ...
   amount: string | null;
@@ -583,6 +660,11 @@ export interface DepositEvent {
   gasFee: string | null;
   destinationTxHash: string | null;
   occurredAt: string | null;
+  paymentRail: string | null;
+  senderName: string | null;
+  accountLast4: string | null;
+  senderBankRoutingNumber: string | null;
+  senderDescription: string | null;
 }
 
 // 一筆入金（依 depositId 聚合多個事件），供前端輪詢顯示狀態
@@ -601,5 +683,10 @@ export interface DepositResult {
   destinationTxHash: string | null;
   createdAt: string; // 最早事件時間
   updatedAt: string; // 最新事件時間
+  paymentRail: string | null;
+  senderName: string | null;
+  accountLast4: string | null;
+  senderBankRoutingNumber: string | null;
+  senderDescription: string | null;
   events: DepositEvent[]; // 完整事件明細（時間升序）
 }

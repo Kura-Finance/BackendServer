@@ -139,7 +139,10 @@ export const listDeposits = async (req: AuthRequest, res: Response): Promise<voi
     if (!userId) return;
 
     const { virtualAccountId } = req.params as { virtualAccountId?: string };
-    const result = await BridgeService.listDeposits(userId, virtualAccountId);
+    const { force } = req.query as { force?: boolean };
+    const result = await BridgeService.listDeposits(userId, virtualAccountId, {
+      ...(force ? { force: true } : {}),
+    });
     sendSuccess(res, result);
   } catch (error) {
     logError('Bridge list deposits failed', error, { userId: req.userId });

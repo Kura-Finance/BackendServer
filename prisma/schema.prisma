@@ -930,6 +930,7 @@ model BridgeCustomer {
   tosStatus String  @default("pending") // pending | approved
 
   endorsements Json? // Bridge 回傳的 endorsements 陣列（base / sepa / spei ...）
+  customerNamedPayoutAt DateTime? // 已向 Bridge 設定 customer-named fiat payout
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1056,6 +1057,7 @@ model BridgeVirtualAccountEvent {
   gasFee             String?
   depositId          String? // 同一筆存款的關聯 id（多個事件共用）
   destinationTxHash  String?
+  source             Json? // Bridge event source（付款人、payment rail 等）
 
   occurredAt DateTime?
   createdAt  DateTime @default(now())

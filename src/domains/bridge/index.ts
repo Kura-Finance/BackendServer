@@ -56,7 +56,13 @@ export type {
   VirtualAccountResult,
   DepositResult,
   DepositEvent,
+  DepositPayerInfo,
   ExternalAccountResult,
   PayoutOption,
 } from './models/types';
-export { PAYOUT_OPTION_BASES } from './models/types';
+export {
+  CUSTOMER_NAMED_PAYOUT_CONFIGURATION,
+  EMPTY_DEPOSIT_PAYER,
+  PAYOUT_OPTION_BASES,
+  parseDepositPayerSource,
+} from './models/types';

@@ -293,3 +293,10 @@ export const externalAccountIdParamSchema = z.object({
 export const liquidationAddressIdParamSchema = z.object({
   liquidationAddressId: z.string().trim().min(1, 'liquidationAddressId is required'),
 });
+
+export const bridgeDepositsQuerySchema = z.object({
+  force: z
+    .enum(['true', 'false', '1', '0'])
+    .optional()
+    .transform((value) => value === 'true' || value === '1'),
+});

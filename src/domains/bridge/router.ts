@@ -31,6 +31,7 @@ import {
   createPayoutAddressBodySchema,
   createOnRampBodySchema,
   liquidationAddressIdParamSchema,
+  bridgeDepositsQuerySchema,
   transferIdParamSchema,
   virtualAccountIdParamSchema,
 } from './schemas/bridgeSchemas';
@@ -74,11 +75,15 @@ router.get('/onramp', requireAuth, wrapAsync(listVirtualAccounts));
 router.get(
   '/onramp/:virtualAccountId/deposits',
   requireAuth,
-  validateRequest({ params: virtualAccountIdParamSchema }),
+  validateRequest({ params: virtualAccountIdParamSchema, query: bridgeDepositsQuerySchema }),
   wrapAsync(listDeposits),
 );
-// 使用者所有入金紀錄（跨 VA）
-router.get('/deposits', requireAuth, wrapAsync(listDeposits));
+router.get(
+  '/deposits',
+  requireAuth,
+  validateRequest({ query: bridgeDepositsQuerySchema }),
+  wrapAsync(listDeposits),
+);
 
 // ── Off-ramp（出金）：Payout Liquidation Address（Base USDC → 法幣）────
 router.get('/payout-options', requireAuth, wrapAsync(listPayoutOptions));

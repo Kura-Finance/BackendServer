@@ -18,6 +18,11 @@ import * as crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { prisma } from '../../shared/lib/prisma';
+import {
+  getBridgeDepositsPendingSyncMinIntervalMs,
+  getBridgeDepositsSyncMinIntervalMs,
+  isWithinInterval,
+} from '../../shared/lib/lazyUpdate';
 import { appLogger, logDebug, logError } from '../../logger';
 import { DemoService } from '../../demo/demoService';
 import type {
@@ -30,6 +35,7 @@ import type {
   BridgeKycLinkResponse,
   BridgeTransferResponse,
   BridgeVirtualAccountEventResponse,
+  BridgeVirtualAccountHistoryResponse,
   BridgeVirtualAccountResponse,
   CreateKycLinkParams,
   CreateVirtualAccountParams,
@@ -50,17 +56,24 @@ import type {
   PayoutDrainResult,
   BridgeDrainListResponse,
   BridgeDrainResponse,
+  BridgeFiatPayoutConfiguration,
+  DepositEvent,
+  DepositPayerInfo,
 } from '../models/types';
 import {
+  CUSTOMER_NAMED_PAYOUT_CONFIGURATION,
+  EMPTY_DEPOSIT_PAYER,
   LIQUIDATION_ADDRESS_TRON_USDT_TO_BASE_USDC,
   PAYOUT_OPTION_BASES,
   PAYOUT_LIQUIDATION_SOURCE,
+  parseDepositPayerSource,
   resolveOnRampMinDeposit,
   resolvePayoutMinDeposit,
   resolveTronUsdtMinDeposit,
 } from '../models/types';
 
 const DEFAULT_BRIDGE_API = 'https://api.bridge.xyz/v0';
+const VA_HISTORY_PAGE_LIMIT = 100;
 
 function bridgeApiBase(): string {
   return (process.env.BRIDGE_API_URL || DEFAULT_BRIDGE_API).replace(/\/+$/, '');
@@ -348,6 +361,52 @@ function asJson(value: unknown): Prisma.InputJsonValue {
   return value as unknown as Prisma.InputJsonValue;
 }
 
+function depositPayerFromRecord(source: Prisma.JsonValue | null): DepositPayerInfo {
+  return (
+    parseDepositPayerSource(source as Record<string, unknown> | null | undefined) ??
+    EMPTY_DEPOSIT_PAYER
+  );
+}
+
+function depositEventFromRecord(e: {
+  type: string;
+  amount: string | null;
+  currency: string | null;
+  subtotalAmount: string | null;
+  developerFeeAmount: string | null;
+  exchangeFeeAmount: string | null;
+  gasFee: string | null;
+  destinationTxHash: string | null;
+  source: Prisma.JsonValue | null;
+  occurredAt: Date | null;
+}): DepositEvent {
+  return {
+    type: e.type,
+    amount: e.amount,
+    currency: e.currency,
+    subtotalAmount: e.subtotalAmount,
+    developerFeeAmount: e.developerFeeAmount,
+    exchangeFeeAmount: e.exchangeFeeAmount,
+    gasFee: e.gasFee,
+    destinationTxHash: e.destinationTxHash,
+    occurredAt: e.occurredAt ? e.occurredAt.toISOString() : null,
+    ...depositPayerFromRecord(e.source),
+  };
+}
+
+function depositPayerFromEvents(
+  events: Array<{ type: string; source: Prisma.JsonValue | null }>,
+): DepositPayerInfo {
+  const sourceEvent =
+    events.find((e) => e.type === 'funds_received' && e.source) ??
+    events.find((e) => e.source);
+  return depositPayerFromRecord(sourceEvent?.source ?? null);
+}
+
+function shouldUseCustomerNamedPayout(): boolean {
+  return process.env.BRIDGE_CUSTOMER_NAMED_PAYOUT !== 'false';
+}
+
 /** 判斷 customer 是否至少有一個 approved 的 endorsement（可交易）。 */
 function canTransact(kycStatus: string, endorsements: BridgeEndorsement[]): boolean {
   if (!APPROVED_KYC_STATUSES.has(kycStatus)) return false;
@@ -369,6 +428,17 @@ function isBridgeNotFound(error: unknown): boolean {
     // body 非 JSON，落到 message 後備比對
   }
   return /not[_\s]?found|customer not found/i.test(error.bridgeBody);
+}
+
+function parseVirtualAccountHistory(body: unknown): BridgeVirtualAccountEventResponse[] {
+  if (Array.isArray(body)) {
+    return body as BridgeVirtualAccountEventResponse[];
+  }
+  if (body && typeof body === 'object') {
+    const data = (body as BridgeVirtualAccountHistoryResponse).data;
+    if (Array.isArray(data)) return data;
+  }
+  return [];
 }
 
 function isDuplicateLiquidationAddress(error: unknown): boolean {
@@ -611,8 +681,57 @@ export class BridgeService {
         kycStatus: 'not_started',
         tosStatus: 'pending',
         endorsements: Prisma.JsonNull,
+        customerNamedPayoutAt: null,
       },
     });
+  }
+
+  /**
+   * 向 Bridge 設定 customer-named fiat payout（出金顯示用戶法定姓名）。
+   * 目前僅 usd.wire 支援 customer；需 Bridge 帳戶開通 premium。
+   * @see https://apidocs.bridge.xyz/platform/orchestration/more/fiat-payout-configuration
+   */
+  private static async ensureCustomerNamedPayout(userId: string): Promise<void> {
+    if (!shouldUseCustomerNamedPayout()) return;
+    if (await DemoService.isDemoUser(userId)) return;
+
+    const record = await prisma.bridgeCustomer.findUnique({
+      where: { userId },
+      select: {
+        bridgeCustomerId: true,
+        kycStatus: true,
+        customerNamedPayoutAt: true,
+      },
+    });
+
+    if (!record?.bridgeCustomerId || record.customerNamedPayoutAt) return;
+    if (!APPROVED_KYC_STATUSES.has(record.kycStatus)) return;
+
+    try {
+      await bridgeFetch<BridgeFiatPayoutConfiguration>(
+        `/customers/${record.bridgeCustomerId}/fiat_payout_configuration`,
+        {
+          method: 'PATCH',
+          body: CUSTOMER_NAMED_PAYOUT_CONFIGURATION,
+        },
+      );
+
+      await prisma.bridgeCustomer.update({
+        where: { userId },
+        data: { customerNamedPayoutAt: new Date() },
+      });
+
+      appLogger.info('[BridgeService] Customer named payout configured', {
+        userId,
+        bridgeCustomerId: record.bridgeCustomerId,
+        configuration: CUSTOMER_NAMED_PAYOUT_CONFIGURATION,
+      });
+    } catch (error) {
+      logError('[BridgeService] Failed to configure customer named payout', error as Error, {
+        userId,
+        bridgeCustomerId: record.bridgeCustomerId,
+      });
+    }
   }
 
   /** 透過 kyc_link ID 向 Bridge 拉取最新 KYC / TOS 狀態並同步 DB。 */
@@ -632,6 +751,10 @@ export class BridgeService {
         ...(link.tos_status ? { tosStatus: link.tos_status } : {}),
       },
     });
+
+    if (APPROVED_KYC_STATUSES.has(record.kycStatus)) {
+      await this.ensureCustomerNamedPayout(userId);
+    }
 
     return {
       bridgeCustomerId: record.bridgeCustomerId,
@@ -747,6 +870,7 @@ export class BridgeService {
         tosStatus: reloaded?.tosStatus ?? 'pending',
         endorsements: [],
         canTransact: false,
+        customerNamedPayoutConfigured: false,
       };
     }
 
@@ -771,6 +895,7 @@ export class BridgeService {
         tosStatus: 'pending',
         endorsements: [],
         canTransact: false,
+        customerNamedPayoutConfigured: false,
       };
     }
 
@@ -787,6 +912,15 @@ export class BridgeService {
       },
     });
 
+    if (canTransact(kycStatus, endorsements)) {
+      await this.ensureCustomerNamedPayout(userId);
+    }
+
+    const payoutRecord = await prisma.bridgeCustomer.findUnique({
+      where: { userId },
+      select: { customerNamedPayoutAt: true },
+    });
+
     return {
       bridgeCustomerId: record.bridgeCustomerId,
       customerType: record.customerType as BridgeCustomerType,
@@ -794,6 +928,7 @@ export class BridgeService {
       tosStatus,
       endorsements,
       canTransact: canTransact(kycStatus, endorsements),
+      customerNamedPayoutConfigured: !!payoutRecord?.customerNamedPayoutAt,
     };
   }
 
@@ -981,10 +1116,13 @@ export class BridgeService {
 
   /**
    * 列出使用者的入金紀錄（供前端輪詢）。
-   * 把 VA 活動事件依 depositId 聚合成「一筆入金」，帶出狀態與金額。
-   * @param virtualAccountId 選填，只查特定 VA 的入金。
+   * 資料偏舊時向 Bridge 拉 VA history 補同步，不完全依賴 webhook。
    */
-  static async listDeposits(userId: string, virtualAccountId?: string): Promise<DepositResult[]> {
+  static async listDeposits(
+    userId: string,
+    virtualAccountId?: string,
+    options?: { force?: boolean },
+  ): Promise<DepositResult[]> {
     if (await DemoService.isDemoUser(userId)) {
       const deposits = DemoService.bridgeDeposits();
       if (virtualAccountId) {
@@ -993,17 +1131,138 @@ export class BridgeService {
       return deposits;
     }
 
+    if (await this.shouldSyncDeposits(userId, virtualAccountId, options?.force)) {
+      try {
+        await this.syncDepositsFromBridge(userId, virtualAccountId);
+      } catch (error) {
+        logError('[BridgeService] Deposit sync from Bridge failed', error as Error, {
+          userId,
+          virtualAccountId,
+        });
+      }
+    }
+
+    return this.aggregateDeposits(userId, virtualAccountId);
+  }
+
+  private static async shouldSyncDeposits(
+    userId: string,
+    virtualAccountId?: string,
+    force?: boolean,
+  ): Promise<boolean> {
+    if (force) return true;
+
+    const vaCount = await prisma.bridgeVirtualAccount.count({
+      where: {
+        userId,
+        ...(virtualAccountId ? { bridgeVirtualAccountId: virtualAccountId } : {}),
+      },
+    });
+    if (vaCount === 0) return false;
+
+    const latestEvent = await prisma.bridgeVirtualAccountEvent.findFirst({
+      where: {
+        userId,
+        ...(virtualAccountId ? { bridgeVirtualAccountId: virtualAccountId } : {}),
+      },
+      orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
+      select: { occurredAt: true, createdAt: true, type: true, depositId: true },
+    });
+
+    if (!latestEvent) return true;
+
+    const lastAt = latestEvent.occurredAt ?? latestEvent.createdAt;
+    const hasPendingDeposit = await this.hasPendingDeposit(userId, virtualAccountId);
+    const minIntervalMs = hasPendingDeposit
+      ? getBridgeDepositsPendingSyncMinIntervalMs()
+      : getBridgeDepositsSyncMinIntervalMs();
+
+    return !isWithinInterval(lastAt, minIntervalMs);
+  }
+
+  /** 是否有進行中入金（已 funds_received 但尚未 payment_processed）。 */
+  private static async hasPendingDeposit(
+    userId: string,
+    virtualAccountId?: string,
+  ): Promise<boolean> {
     const events = await prisma.bridgeVirtualAccountEvent.findMany({
       where: {
         userId,
-        // 只聚合屬於某筆存款的事件（排除 account_update / activation 等無 depositId 的）
+        depositId: { not: null },
+        ...(virtualAccountId ? { bridgeVirtualAccountId: virtualAccountId } : {}),
+      },
+      select: { depositId: true, type: true },
+    });
+
+    const byDeposit = new Map<string, Set<string>>();
+    for (const event of events) {
+      if (!event.depositId) continue;
+      const types = byDeposit.get(event.depositId) ?? new Set<string>();
+      types.add(event.type);
+      byDeposit.set(event.depositId, types);
+    }
+
+    for (const types of byDeposit.values()) {
+      if (types.has('funds_received') && !types.has('payment_processed')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** 向 Bridge 拉 VA activity history 並 upsert 至本地帳本。 */
+  static async syncDepositsFromBridge(userId: string, virtualAccountId?: string): Promise<void> {
+    const customer = await prisma.bridgeCustomer.findUnique({
+      where: { userId },
+      select: { bridgeCustomerId: true },
+    });
+    if (!customer?.bridgeCustomerId) return;
+
+    const virtualAccounts = await prisma.bridgeVirtualAccount.findMany({
+      where: {
+        userId,
+        ...(virtualAccountId ? { bridgeVirtualAccountId: virtualAccountId } : {}),
+      },
+      select: { bridgeVirtualAccountId: true },
+    });
+    if (virtualAccounts.length === 0) return;
+
+    let syncedEvents = 0;
+    for (const va of virtualAccounts) {
+      const history = await bridgeFetch<unknown>(
+        `/customers/${customer.bridgeCustomerId}/virtual_accounts/${va.bridgeVirtualAccountId}/history?limit=${VA_HISTORY_PAGE_LIMIT}`,
+      );
+      const events = parseVirtualAccountHistory(history);
+      for (const event of events) {
+        await this.syncVirtualAccountActivity({
+          ...event,
+          virtual_account_id: event.virtual_account_id ?? va.bridgeVirtualAccountId,
+        });
+        syncedEvents += 1;
+      }
+    }
+
+    appLogger.info('[BridgeService] Deposits synced from Bridge', {
+      userId,
+      virtualAccountId,
+      virtualAccountCount: virtualAccounts.length,
+      syncedEvents,
+    });
+  }
+
+  private static async aggregateDeposits(
+    userId: string,
+    virtualAccountId?: string,
+  ): Promise<DepositResult[]> {
+    const events = await prisma.bridgeVirtualAccountEvent.findMany({
+      where: {
+        userId,
         depositId: { not: null },
         ...(virtualAccountId ? { bridgeVirtualAccountId: virtualAccountId } : {}),
       },
       orderBy: { occurredAt: 'asc' },
     });
 
-    // 依 depositId 分組
     const groups = new Map<string, typeof events>();
     for (const e of events) {
       const key = e.depositId as string;
@@ -1014,7 +1273,6 @@ export class BridgeService {
 
     const deposits: DepositResult[] = [];
     for (const [depositId, group] of groups) {
-      // group 已依 occurredAt 升序（null 在前），保險起見再排一次
       const sorted = [...group].sort(
         (a, b) => this.eventTime(a).getTime() - this.eventTime(b).getTime(),
       );
@@ -1025,6 +1283,7 @@ export class BridgeService {
         .reverse()
         .find((e) => e.type === 'payment_processed' || e.type === 'payment_submitted');
       const txHashEvent = [...sorted].reverse().find((e) => e.destinationTxHash);
+      const payer = depositPayerFromEvents(sorted);
 
       deposits.push({
         depositId,
@@ -1040,21 +1299,11 @@ export class BridgeService {
         destinationTxHash: txHashEvent?.destinationTxHash ?? null,
         createdAt: this.eventTime(first).toISOString(),
         updatedAt: this.eventTime(latest).toISOString(),
-        events: sorted.map((e) => ({
-          type: e.type,
-          amount: e.amount,
-          currency: e.currency,
-          subtotalAmount: e.subtotalAmount,
-          developerFeeAmount: e.developerFeeAmount,
-          exchangeFeeAmount: e.exchangeFeeAmount,
-          gasFee: e.gasFee,
-          destinationTxHash: e.destinationTxHash,
-          occurredAt: e.occurredAt ? e.occurredAt.toISOString() : null,
-        })),
+        ...payer,
+        events: sorted.map((e) => depositEventFromRecord(e)),
       });
     }
 
-    // 最新的入金排前面
     deposits.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     return deposits;
   }
@@ -1164,6 +1413,7 @@ export class BridgeService {
       gasFee: event.gas_fee ?? null,
       depositId: event.deposit_id ?? null,
       destinationTxHash: event.destination_tx_hash ?? null,
+      source: event.source ? asJson(event.source) : Prisma.JsonNull,
       occurredAt,
     };
 
@@ -1253,6 +1503,8 @@ export class BridgeService {
     }
 
     await this.assertEndorsementForCurrency(userId, params.destinationCurrency);
+
+    await this.ensureCustomerNamedPayout(userId);
 
     const returnAddress = params.returnAddress ?? (await this.resolveUserScaAddress(userId));
 
@@ -2087,21 +2339,27 @@ export class BridgeService {
     if (!customer.id) return;
     const existing = await prisma.bridgeCustomer.findFirst({
       where: { bridgeCustomerId: customer.id },
-      select: { id: true },
+      select: { id: true, userId: true },
     });
     if (!existing) {
-      logDebug('[BridgeService] Webhook customer not tracked locally', { customerId: customer.id });
+      logDebug('[BridgeWebhook] Webhook customer not tracked locally', { customerId: customer.id });
       return;
     }
+
+    const kycStatus = customer.kyc_status ?? customer.status;
 
     await prisma.bridgeCustomer.update({
       where: { id: existing.id },
       data: {
-        ...(customer.kyc_status ? { kycStatus: customer.kyc_status } : {}),
+        ...(kycStatus ? { kycStatus } : {}),
         ...(customer.tos_status ? { tosStatus: customer.tos_status } : {}),
         ...(customer.endorsements ? { endorsements: asJson(customer.endorsements) } : {}),
       },
     });
+
+    if (kycStatus && APPROVED_KYC_STATUSES.has(kycStatus)) {
+      await this.ensureCustomerNamedPayout(existing.userId);
+    }
   }
 
   /** Bridge liquidation address drain（webhook 用）。 */
@@ -2122,21 +2380,27 @@ export class BridgeService {
     if (!link.id) return;
     const existing = await prisma.bridgeCustomer.findFirst({
       where: { kycLinkId: link.id },
-      select: { id: true },
+      select: { id: true, userId: true },
     });
     if (!existing) {
-      logDebug('[BridgeService] Webhook kyc_link not tracked locally', { kycLinkId: link.id });
+      logDebug('[BridgeWebhook] Webhook kyc_link not tracked locally', { kycLinkId: link.id });
       return;
     }
+
+    const kycStatus = link.kyc_status;
 
     await prisma.bridgeCustomer.update({
       where: { id: existing.id },
       data: {
         ...(link.customer_id ? { bridgeCustomerId: link.customer_id } : {}),
-        ...(link.kyc_status ? { kycStatus: link.kyc_status } : {}),
+        ...(kycStatus ? { kycStatus } : {}),
         ...(link.tos_status ? { tosStatus: link.tos_status } : {}),
       },
     });
+
+    if (kycStatus && APPROVED_KYC_STATUSES.has(kycStatus)) {
+      await this.ensureCustomerNamedPayout(existing.userId);
+    }
   }
 }
 

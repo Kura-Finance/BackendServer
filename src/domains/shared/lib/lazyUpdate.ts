@@ -26,6 +26,23 @@ export function getPlatformBackfillMinIntervalMs(): number {
   );
 }
 
+const DEFAULT_BRIDGE_DEPOSITS_SYNC_MIN_INTERVAL_MS = 2 * 60 * 1000; // 2m
+const DEFAULT_BRIDGE_DEPOSITS_PENDING_SYNC_MIN_INTERVAL_MS = 30 * 1000; // 30s
+
+export function getBridgeDepositsSyncMinIntervalMs(): number {
+  return parseIntervalMs(
+    process.env.BRIDGE_DEPOSITS_SYNC_MIN_INTERVAL_MS,
+    DEFAULT_BRIDGE_DEPOSITS_SYNC_MIN_INTERVAL_MS,
+  );
+}
+
+export function getBridgeDepositsPendingSyncMinIntervalMs(): number {
+  return parseIntervalMs(
+    process.env.BRIDGE_DEPOSITS_PENDING_SYNC_MIN_INTERVAL_MS,
+    DEFAULT_BRIDGE_DEPOSITS_PENDING_SYNC_MIN_INTERVAL_MS,
+  );
+}
+
 export type LazyUpdateSkipReason = 'fresh' | 'scan_in_progress';
 
 export interface LazyUpdateSkipped {
