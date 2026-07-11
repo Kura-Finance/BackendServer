@@ -1,6 +1,7 @@
 import { Response, Request } from 'express';
 import { AuthRequest } from '../../auth/middleware/auth';
 import { PlaidService } from '../services/plaidService';
+import { PlaidAccountNotFoundError } from '../services/plaidAccountService';
 import { logError, logDebug, logBusinessEvent } from '../../logger';
 import { clearAllPlaidCache, getCacheStats } from '../lib/plaidCacheUtil';
 import { verifyPlaidWebhook } from '../lib/webhookVerification';
@@ -156,6 +157,13 @@ export const disconnectPlaidItem = async (req: AuthRequest, res: Response) => {
       },
     });
   } catch (error: any) {
+    if (error instanceof PlaidAccountNotFoundError) {
+      sendError(res, 404, {
+        code: 'PLAID_ACCOUNT_NOT_FOUND',
+        message: error.message,
+      });
+      return;
+    }
     logError('Disconnect Plaid item failed', error, {
       userId: req.userId,
       errorData: error.response?.data,

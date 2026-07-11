@@ -134,7 +134,7 @@ export const rotateKeyPair = async (req: AuthRequest, res: Response): Promise<vo
  * 回到「未設定」狀態。之後客戶端走一次全新的 keypair setup + passkey 註冊，
  * 並重新同步被保護的資料（Plaid / 交易所 / DeBank 快取）。
  *
- * 保留銀行 / 交易所連線（PlaidItem / ExchangeAccount），不需重連。
+ * 會撤銷所有 Plaid Item（需重新 Link）；交易所連線（ExchangeAccount）仍保留。
  * 僅需 Privy 登入授權，不要求舊 passkey assertion（用戶正是遺失了 passkey）。
  */
 export const resetE2EE = async (req: AuthRequest, res: Response): Promise<void> => {

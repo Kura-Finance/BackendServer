@@ -14,9 +14,8 @@
  *   - 所有 zero-access 加密快取 + AssetSnapshot 歷史
  *   - Plaid / 交易所同步狀態（讓下次讀取重新抓資料）
  *
- * 刻意「保留」連線本身（不需重連）：
- *   - PlaidItem.accessToken、ExchangeAccount.apiKey/apiSecret
- *     （以伺服器金鑰加密，與 E2EE / passkey 無關）
+ * Plaid 連線會一併撤銷（itemRemove + 刪除 PlaidItem），使用者需重新走 Link 流程。
+ * 交易所連線（ExchangeAccount.apiKey/apiSecret）仍保留，不需重連。
  *
  * 授權：呼叫者必須已透過 Privy 登入（requireAuth）。本流程「不」要求舊 passkey
  * assertion —— 因為用戶正是遺失了 passkey，Privy 登入即為足夠的身分證明。
@@ -24,15 +23,19 @@
 
 import { prisma } from '../../shared/lib/prisma';
 import { logBusinessEvent, logDebug } from '../../logger';
+import { PlaidAccountService } from '../../plaid/services/plaidAccountService';
 
 export interface E2EEResetResult {
   passkeysDeleted: number;
   payloadKeysDeleted: number;
+  plaidItemsRevoked: number;
   cachesCleared: Record<string, number>;
 }
 
 export class E2EEResetService {
   static async resetForUser(userId: string): Promise<E2EEResetResult> {
+    const { revoked: plaidItemsRevoked } = await PlaidAccountService.revokeAllItemsForUser(userId);
+
     const result = await prisma.$transaction(async (tx) => {
       // 1. 清除 zero-access 加密快取（可重新同步取得）
       const [
@@ -101,9 +104,10 @@ export class E2EEResetService {
     logBusinessEvent('e2ee_reset', userId, {
       passkeysDeleted: result.passkeysDeleted,
       payloadKeysDeleted: result.payloadKeysDeleted,
+      plaidItemsRevoked,
     });
-    logDebug('E2EE layer reset for user', { userId, ...result });
+    logDebug('E2EE layer reset for user', { userId, plaidItemsRevoked, ...result });
 
-    return result;
+    return { ...result, plaidItemsRevoked };
   }
 }

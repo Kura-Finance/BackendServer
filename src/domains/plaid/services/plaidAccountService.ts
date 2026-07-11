@@ -14,6 +14,22 @@ import {
 } from '../models/types';
 import { classifyPlaidAccountBucket, mapPlaidAccountType } from '../lib/plaidDataTransformer';
 import { PlaidAuthService } from './plaidAuthService';
+import { PayloadKeyService } from '../../shared/services/payloadKeyService';
+
+type PlaidItemRef = {
+  id: string;
+  itemId: string;
+  accessToken: string;
+  institutionName: string;
+};
+
+/** disconnect 時找不到 accountId 對應的 Plaid Item。 */
+export class PlaidAccountNotFoundError extends Error {
+  constructor(public readonly accountId: string) {
+    super(`No linked Plaid account matched accountId: ${accountId}`);
+    this.name = 'PlaidAccountNotFoundError';
+  }
+}
 
 export class PlaidAccountService {
   /**
@@ -22,117 +38,193 @@ export class PlaidAccountService {
   static async disconnectItemByAccountId(
     userId: string,
     accountId: string
-  ): Promise<{ plaidRequestId?: string; accountId: string; disconnectedItemId?: string; institution?: string }> {
+  ): Promise<{ plaidRequestId?: string; accountId: string; disconnectedItemId: string; institution?: string }> {
     const startTime = Date.now();
     try {
       logDebug('Disconnecting Plaid account', { userId, accountId });
 
-      // 根據用戶 ID 取得對應的 Plaid Client
-      const userPlaidClient = createPlaidClientForUser(userId);
-
-      const dbStartTime = Date.now();
-      const plaidItems = await prisma.plaidItem.findMany({
-        where: { userId },
-        select: {
-          id: true,
-          itemId: true,
-          accessToken: true,
-          institutionName: true,
-        },
-        orderBy: { createdAt: 'desc' },
-      });
-      logDatabaseOperation('SELECT', 'plaid_items', Date.now() - dbStartTime, true);
-
-      let matchedPlaidItemId: string | null = null;
-      let matchedAccessToken: string | null = null;
-      let institutionName: string | null = null;
-
-      for (const item of plaidItems) {
-        try {
-          const { decryptedAccessToken } = PlaidAuthService.decryptPlaidItem({ accessToken: item.accessToken, itemId: item.itemId });
-          const accountsResponse = await userPlaidClient.accountsGet({
-            access_token: decryptedAccessToken,
-          });
-
-          const hasAccount = accountsResponse.data.accounts.some((account) => account.account_id === accountId);
-
-          if (hasAccount) {
-            matchedPlaidItemId = item.id;
-            matchedAccessToken = decryptedAccessToken;
-            institutionName = item.institutionName;
-            break;
-          }
-        } catch (error: any) {
-          appLogger.warn('Failed to inspect Plaid item during disconnect', {
-            error: error.response?.data || error.message || error,
-            userId,
-            plaidItemId: item.id,
-          });
-        }
+      const item = await this.resolvePlaidItemByAccountId(userId, accountId);
+      if (!item) {
+        throw new PlaidAccountNotFoundError(accountId);
       }
 
-      if (!matchedPlaidItemId || !matchedAccessToken) {
-        return { accountId };
-      }
-
-      // 調用 Plaid itemRemove API 以禁用訪問令牌
-      let plaidRequestId: string | undefined;
-      try {
-        const removeResponse = await userPlaidClient.itemRemove({
-          access_token: matchedAccessToken,
-        });
-        plaidRequestId = removeResponse.data.request_id;
-        logDebug('Plaid itemRemove called successfully', { userId, accountId, requestId: plaidRequestId });
-      } catch (error: any) {
-        // 記錄警告但繼續刪除本地記錄（防止壞帳）
-        appLogger.warn('Failed to call itemRemove on Plaid API', {
-          error: error.response?.data || error.message || error,
-          userId,
-          accountId,
-          plaidItemId: matchedPlaidItemId,
-        });
-        logError('Plaid itemRemove failed during disconnect', error, { userId, accountId });
-      }
-
-      const deleteStartTime = Date.now();
-      // 刪除 Plaid Item 即可：四張快取表（account / transaction / investmentAccount /
-      // investment）皆以 plaidItemId relation 對 PlaidItem 設定 onDelete: Cascade，
-      // 因此底下所有帳戶、交易、投資快取會由資料庫連帶刪除，不會殘留舊資料。
-      await prisma.plaidItem.delete({
-        where: { id: matchedPlaidItemId },
-      });
-      logDatabaseOperation('DELETE', 'plaid_items', Date.now() - deleteStartTime, true);
+      const { plaidRequestId } = await this.revokePlaidItem(userId, item, { accountId });
 
       const duration = Date.now() - startTime;
       logBusinessEvent('bank_account_disconnected', userId, {
         accountId,
-        institution: institutionName,
+        institution: item.institutionName,
       });
 
-      // 記錄審計日誌
-      AuditLogger.logPlaidOperation('DISCONNECT', userId, 'SUCCESS', matchedPlaidItemId, {
-        institution: institutionName,
+      AuditLogger.logPlaidOperation('DISCONNECT', userId, 'SUCCESS', item.id, {
+        institution: item.institutionName,
         accountId,
       }, undefined, duration);
 
-      const response: { plaidRequestId?: string; accountId: string; disconnectedItemId?: string; institution?: string } = {
+      const response: {
+        plaidRequestId?: string;
+        accountId: string;
+        disconnectedItemId: string;
+        institution?: string;
+      } = {
         accountId,
-        disconnectedItemId: matchedPlaidItemId,
+        disconnectedItemId: item.id,
+        institution: item.institutionName,
       };
       if (plaidRequestId) response.plaidRequestId = plaidRequestId;
-      if (institutionName) response.institution = institutionName;
       return response;
     } catch (error) {
+      if (error instanceof PlaidAccountNotFoundError) {
+        throw error;
+      }
+
       const duration = Date.now() - startTime;
       const errorMsg = error instanceof Error ? error.message : String(error);
 
-      // 記錄審計日誌（失敗）
       AuditLogger.logPlaidOperation('DISCONNECT', userId, 'FAILURE', undefined, {
         accountId,
       }, errorMsg, duration);
 
       throw error;
     }
+  }
+
+  /**
+   * 撤銷使用者所有 Plaid Item（呼叫 itemRemove + 刪除本地紀錄）。
+   * 用於 E2EE reset、帳號刪除等需完全斷開銀行連線的場景。
+   */
+  static async revokeAllItemsForUser(userId: string): Promise<{ revoked: number }> {
+    const items = await prisma.plaidItem.findMany({
+      where: { userId },
+      select: { id: true, accessToken: true, itemId: true, institutionName: true },
+    });
+
+    if (items.length === 0) {
+      return { revoked: 0 };
+    }
+
+    for (const item of items) {
+      await this.revokePlaidItem(userId, item);
+    }
+
+    return { revoked: items.length };
+  }
+
+  /** 先查本地快取（accountId → plaidItemId），失敗再 fallback 至 Plaid API。 */
+  private static async resolvePlaidItemByAccountId(
+    userId: string,
+    accountId: string,
+  ): Promise<PlaidItemRef | null> {
+    const [bankingRow, investmentRow] = await Promise.all([
+      prisma.plaidAccountCache.findFirst({
+        where: { userId, accountId },
+        select: { plaidItemId: true },
+      }),
+      prisma.plaidInvestmentAccountCache.findFirst({
+        where: { userId, accountId },
+        select: { plaidItemId: true },
+      }),
+    ]);
+
+    const cachedPlaidItemId = bankingRow?.plaidItemId ?? investmentRow?.plaidItemId;
+    if (cachedPlaidItemId) {
+      const item = await prisma.plaidItem.findFirst({
+        where: { id: cachedPlaidItemId, userId },
+        select: { id: true, itemId: true, accessToken: true, institutionName: true },
+      });
+      if (item) {
+        return item;
+      }
+    }
+
+    const userPlaidClient = createPlaidClientForUser(userId);
+    const plaidItems = await prisma.plaidItem.findMany({
+      where: { userId },
+      select: { id: true, itemId: true, accessToken: true, institutionName: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    for (const item of plaidItems) {
+      try {
+        const { decryptedAccessToken } = PlaidAuthService.decryptPlaidItem({
+          accessToken: item.accessToken,
+          itemId: item.itemId,
+        });
+        const accountsResponse = await userPlaidClient.accountsGet({
+          access_token: decryptedAccessToken,
+        });
+
+        const hasAccount = accountsResponse.data.accounts.some(
+          (account) => account.account_id === accountId,
+        );
+        if (hasAccount) {
+          return item;
+        }
+      } catch (error: any) {
+        appLogger.warn('Failed to inspect Plaid item during disconnect', {
+          error: error.response?.data || error.message || error,
+          userId,
+          plaidItemId: item.id,
+        });
+      }
+    }
+
+    return null;
+  }
+
+  /** 呼叫 itemRemove（best-effort）並刪除本地 PlaidItem（快取 cascade）。 */
+  private static async revokePlaidItem(
+    userId: string,
+    item: PlaidItemRef,
+    context?: { accountId?: string },
+  ): Promise<{ plaidRequestId?: string }> {
+    const userPlaidClient = createPlaidClientForUser(userId);
+    let plaidRequestId: string | undefined;
+
+    try {
+      const { decryptedAccessToken } = PlaidAuthService.decryptPlaidItem({
+        accessToken: item.accessToken,
+        itemId: item.itemId,
+      });
+      const removeResponse = await userPlaidClient.itemRemove({
+        access_token: decryptedAccessToken,
+      });
+      plaidRequestId = removeResponse.data.request_id;
+      logDebug('Plaid itemRemove called successfully', {
+        userId,
+        plaidItemId: item.id,
+        accountId: context?.accountId,
+        requestId: plaidRequestId,
+      });
+    } catch (error: any) {
+      appLogger.warn('Failed to call itemRemove on Plaid API', {
+        error: error.response?.data || error.message || error,
+        userId,
+        plaidItemId: item.id,
+        accountId: context?.accountId,
+      });
+      logError('Plaid itemRemove failed during disconnect', error, {
+        userId,
+        plaidItemId: item.id,
+        accountId: context?.accountId,
+      });
+    }
+
+    const deleteStartTime = Date.now();
+    await prisma.plaidItem.delete({ where: { id: item.id } });
+    logDatabaseOperation('DELETE', 'plaid_items', Date.now() - deleteStartTime, true);
+
+    try {
+      await PayloadKeyService.deleteOrphanedKeys(userId, 0);
+    } catch (error) {
+      appLogger.warn('Failed to GC orphaned payload keys after Plaid disconnect', {
+        userId,
+        plaidItemId: item.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    return plaidRequestId ? { plaidRequestId } : {};
   }
 
   /**
