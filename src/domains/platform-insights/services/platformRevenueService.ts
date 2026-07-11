@@ -119,50 +119,60 @@ export class PlatformRecordService {
       : null;
     const metadata = buildRecordMetadata(input, referrable, inviterUserId);
 
-    try {
-      await prisma.platformRecord.create({
-        data: {
-          category: input.category ?? 'revenue',
-          userId: input.userId ?? null,
-          source: input.source,
-          eventType: input.eventType,
-          idempotencyKey: input.idempotencyKey,
-          email: input.email ?? null,
-          product: input.product ?? null,
-          grossAmount: input.grossAmount ?? null,
-          platformFee: input.platformFee ?? null,
-          netAmount: input.netAmount ?? null,
-          currency: (input.currency ?? 'usd').toLowerCase(),
-          externalId: input.externalId ?? null,
-          depositId: input.depositId ?? null,
-          scaAddress: input.scaAddress?.toLowerCase() ?? null,
-          occurredAt: input.occurredAt,
-          ...(metadata ? { metadata: metadata as Prisma.InputJsonValue } : {}),
-        },
-      });
+    const data = {
+      category: input.category ?? 'revenue',
+      userId: input.userId ?? null,
+      source: input.source,
+      eventType: input.eventType,
+      idempotencyKey: input.idempotencyKey,
+      email: input.email ?? null,
+      product: input.product ?? null,
+      grossAmount: input.grossAmount ?? null,
+      platformFee: input.platformFee ?? null,
+      netAmount: input.netAmount ?? null,
+      currency: (input.currency ?? 'usd').toLowerCase(),
+      externalId: input.externalId ?? null,
+      depositId: input.depositId ?? null,
+      scaAddress: input.scaAddress?.toLowerCase() ?? null,
+      occurredAt: input.occurredAt,
+      ...(metadata ? { metadata: metadata as Prisma.InputJsonValue } : {}),
+    };
 
-      if (referrable && inviterUserId && input.userId) {
-        await ReferralCashbackService.awardFromPlatformRecord({
-          userId: input.userId,
-          inviterUserId,
-          source: input.source,
-          eventType: input.eventType,
-          idempotencyKey: input.idempotencyKey,
-          grossAmount: input.grossAmount ?? null,
-          platformFee: input.platformFee ?? null,
-          currency: input.currency ?? 'usd',
-          externalId: input.externalId ?? null,
-          referrable: true,
-          stripeInvoiceId: input.referralContext?.stripeInvoiceId ?? null,
-          stripeChargeId: input.referralContext?.stripeChargeId ?? null,
-          stripeSubscriptionId: input.referralContext?.stripeSubscriptionId ?? null,
-        });
-      }
+    try {
+      await prisma.platformRecord.create({ data });
     } catch (error) {
       if (error instanceof PrismaClientKnownRequestError && error.code === 'P2002') {
+        // 冪等重試 / backfill：更新金額欄位，不重發 Refer 分潤
+        await prisma.platformRecord.update({
+          where: { idempotencyKey: input.idempotencyKey },
+          data: {
+            grossAmount: data.grossAmount,
+            platformFee: data.platformFee,
+            netAmount: data.netAmount,
+            ...(metadata ? { metadata: metadata as Prisma.InputJsonValue } : {}),
+          },
+        });
         return;
       }
       throw error;
+    }
+
+    if (referrable && inviterUserId && input.userId) {
+      await ReferralCashbackService.awardFromPlatformRecord({
+        userId: input.userId,
+        inviterUserId,
+        source: input.source,
+        eventType: input.eventType,
+        idempotencyKey: input.idempotencyKey,
+        grossAmount: input.grossAmount ?? null,
+        platformFee: input.platformFee ?? null,
+        currency: input.currency ?? 'usd',
+        externalId: input.externalId ?? null,
+        referrable: true,
+        stripeInvoiceId: input.referralContext?.stripeInvoiceId ?? null,
+        stripeChargeId: input.referralContext?.stripeChargeId ?? null,
+        stripeSubscriptionId: input.referralContext?.stripeSubscriptionId ?? null,
+      });
     }
   }
 
@@ -222,7 +232,8 @@ export class PlatformRecordService {
 
     const gross = parseDecimal(params.amount);
     const platformFee = parseDecimal(params.developerFeeAmount);
-    const net = parseDecimal(params.subtotalAmount) ?? gross;
+    // Gross = Kura 處理量（法幣入金）；Net = Kura 營收（developer fee）
+    const net = platformFee;
 
     const user = await prisma.user.findUnique({
       where: { id: params.userId },
@@ -243,7 +254,10 @@ export class PlatformRecordService {
       depositId: params.depositId ?? null,
       scaAddress: user?.scaAddress ?? null,
       occurredAt: params.occurredAt ?? new Date(),
-      metadata: { bridgeVirtualAccountId: params.bridgeVirtualAccountId },
+      metadata: {
+        bridgeVirtualAccountId: params.bridgeVirtualAccountId,
+        ...(params.subtotalAmount ? { subtotalAmount: params.subtotalAmount } : {}),
+      },
     });
   }
 
@@ -295,7 +309,7 @@ export class PlatformRecordService {
       idempotencyKey: `bridge:liquidation:${drain.id}:payment_processed`,
       grossAmount: gross,
       platformFee,
-      netAmount: platformFee != null && gross != null ? roundUsd(gross - platformFee) : gross,
+      netAmount: platformFee,
       currency: drain.currency ?? cryptoLa?.sourceCurrency ?? payoutLa?.destinationCurrency ?? 'usd',
       externalId: drain.id,
       scaAddress: user?.scaAddress ?? null,
@@ -343,7 +357,7 @@ export class PlatformRecordService {
       idempotencyKey: `bridge:transfer:${bridgeTransferId}:payment_processed`,
       grossAmount: gross,
       platformFee,
-      netAmount: gross,
+      netAmount: platformFee,
       currency: transfer.sourceCurrency ?? transfer.destinationCurrency ?? 'usd',
       externalId: bridgeTransferId,
       scaAddress: user?.scaAddress ?? null,
@@ -759,7 +773,7 @@ export class PlatformRecordService {
     for (const event of revenueEvents) {
       const gross = event.grossAmount ?? 0;
       const fee = event.platformFee ?? 0;
-      const net = event.netAmount ?? gross;
+      const net = event.netAmount ?? event.platformFee ?? 0;
       totalGrossUsd += gross;
       totalPlatformFeeUsd += fee;
       totalNetUsd += net;
