@@ -3,12 +3,18 @@
  *
  * 取代 SRP：前端用 Privy SDK 完成登入後，把 Privy 簽發的 token 交給後端驗證。
  *   - accessToken（必填）：驗證後取得使用者 DID，是登入的權威證明
- *   - identityToken（選填）：含 linked accounts，可離線解析出 email 與 embedded wallet
+ *   - identityToken（選填）：含 linked accounts，可解析 email 與 embedded wallet
+ *   - 若 identity token 缺 email，後端會用 Privy Server API 依 DID 補拉完整 user
  *
  * 後端僅驗證 Privy token、解析身分，再由 AuthService 對應到內部 user 並核發自有 JWT。
  */
 
-import { PrivyClient, verifyAccessToken as privyVerifyAccessToken, isEmbeddedWalletLinkedAccount } from '@privy-io/node';
+import {
+  PrivyClient,
+  verifyAccessToken as privyVerifyAccessToken,
+  isEmbeddedWalletLinkedAccount,
+  type User,
+} from '@privy-io/node';
 import { createRemoteJWKSet } from 'jose';
 import { appLogger } from '../../logger';
 
@@ -16,6 +22,13 @@ export interface PrivyIdentity {
   privyUserId: string; // Privy DID (did:privy:...)
   email?: string;
   walletAddress?: string;
+}
+
+export class PrivyTokenMismatchError extends Error {
+  constructor(message = 'Identity token does not match access token') {
+    super(message);
+    this.name = 'PrivyTokenMismatchError';
+  }
 }
 
 let _client: PrivyClient | null = null;
@@ -55,11 +68,82 @@ function getVerificationKey(): string | ReturnType<typeof createRemoteJWKSet> {
   return _jwks;
 }
 
+function normalizeEmail(raw: string): string {
+  return raw.trim().toLowerCase();
+}
+
+function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+/**
+ * Extract the primary email from Privy linked accounts.
+ * Supports direct email login and OAuth providers that expose an email field.
+ */
+export function extractEmailFromLinkedAccounts(
+  accounts: ReadonlyArray<Record<string, unknown>>,
+): string | undefined {
+  for (const account of accounts) {
+    if (account.type === 'email' && typeof account.address === 'string' && account.address) {
+      const normalized = normalizeEmail(account.address);
+      if (isValidEmail(normalized)) {
+        return normalized;
+      }
+    }
+  }
+
+  for (const account of accounts) {
+    if (typeof account.email !== 'string' || !account.email) {
+      continue;
+    }
+    const normalized = normalizeEmail(account.email);
+    if (isValidEmail(normalized)) {
+      return normalized;
+    }
+  }
+
+  return undefined;
+}
+
+function extractWalletFromLinkedAccounts(
+  accounts: ReadonlyArray<Record<string, unknown>>,
+): string | undefined {
+  const walletIndexOf = (a: Record<string, unknown>): number =>
+    typeof a.wallet_index === 'number' ? a.wallet_index : Number.MAX_SAFE_INTEGER;
+
+  const primaryEmbedded = accounts
+    .filter((a) => isEmbeddedWalletLinkedAccount(a as never))
+    .filter((a) => (typeof a.chain_type === 'string' ? a.chain_type : 'ethereum') === 'ethereum')
+    .sort((a, b) => walletIndexOf(a) - walletIndexOf(b))[0];
+
+  const anyWallet = accounts.find((a) => a.type === 'wallet');
+  const wallet = primaryEmbedded ?? anyWallet;
+
+  return typeof wallet?.address === 'string' ? wallet.address : undefined;
+}
+
+function identityFromPrivyUser(user: Pick<User, 'id' | 'linked_accounts'>): PrivyIdentity {
+  const accounts = (user.linked_accounts ?? []) as unknown as Array<Record<string, unknown>>;
+  const email = extractEmailFromLinkedAccounts(accounts);
+  const walletAddress = extractWalletFromLinkedAccounts(accounts);
+
+  appLogger.info('[Privy] Resolved identity from linked accounts', {
+    privyUserId: user.id,
+    hasEmail: !!email,
+    embeddedWalletCount: accounts.filter((a) => isEmbeddedWalletLinkedAccount(a as never)).length,
+    chosenAddressPrefix: walletAddress?.slice(0, 10),
+  });
+
+  return {
+    privyUserId: user.id,
+    ...(email ? { email } : {}),
+    ...(walletAddress ? { walletAddress } : {}),
+  };
+}
+
 /**
  * Verify a Privy access token and return the user's DID.
  * Throws if the token is invalid, expired, or for a different app.
- * Uses local key verification if PRIVY_VERIFICATION_KEY is set,
- * otherwise falls back to Privy's JWKS endpoint (one cached network call).
  */
 export async function verifyAccessToken(accessToken: string): Promise<string> {
   const appId = getAppId();
@@ -90,55 +174,80 @@ export async function verifyAccessToken(accessToken: string): Promise<string> {
   }
 }
 
+/** Fetch full Privy user by DID via server API (includes OAuth emails omitted from identity token). */
+export async function resolveIdentityFromPrivyUserId(privyUserId: string): Promise<PrivyIdentity> {
+  const user = await getClient().users()._get(privyUserId);
+  return identityFromPrivyUser(user);
+}
+
 /**
- * Resolve email + embedded wallet from a Privy identity token.
- * The SDK's users().get verifies the identity token signature (via the app's
- * JWKS) and returns the full user object. Returns the DID plus any linked
- * email / embedded wallet address.
- *
- * Returns null if no identity token is supplied (caller falls back to DID only).
+ * Resolve email + embedded wallet for login.
+ * Tries identity token first, then Privy server API if email is still missing.
  */
+export async function resolvePrivyIdentity(
+  privyUserId: string,
+  identityToken?: string,
+): Promise<PrivyIdentity> {
+  let identity: PrivyIdentity = { privyUserId };
+
+  if (identityToken) {
+    try {
+      const user = await getClient().users().get({ id_token: identityToken });
+      if (user.id !== privyUserId) {
+        throw new PrivyTokenMismatchError();
+      }
+      identity = identityFromPrivyUser(user);
+    } catch (err) {
+      if (err instanceof PrivyTokenMismatchError) {
+        throw err;
+      }
+      appLogger.warn('Failed to parse Privy identity token, falling back to server API', {
+        privyUserId,
+        err: err instanceof Error ? err.message : err,
+      });
+    }
+  }
+
+  if (!identity.email) {
+    const fromApi = await resolveIdentityFromPrivyUserId(privyUserId);
+    identity = {
+      privyUserId,
+      ...(fromApi.email ? { email: fromApi.email } : {}),
+      ...(fromApi.walletAddress
+        ? { walletAddress: fromApi.walletAddress }
+        : identity.walletAddress
+          ? { walletAddress: identity.walletAddress }
+          : {}),
+    };
+  }
+
+  return identity;
+}
+
+/** Delete Privy user by DID (best-effort; used during account deletion). */
+export async function deletePrivyUser(privyUserId: string | null | undefined): Promise<void> {
+  if (!privyUserId) {
+    return;
+  }
+
+  try {
+    await getClient().users().delete(privyUserId);
+    appLogger.info('[Privy] Deleted user during account deletion', { privyUserId });
+  } catch (err) {
+    appLogger.warn('Failed to delete Privy user during account deletion', {
+      privyUserId,
+      err: err instanceof Error ? err.message : err,
+    });
+  }
+}
+
+/** @deprecated Use resolvePrivyIdentity — kept for callers that only parse identity token. */
 export async function resolveIdentityFromToken(
   identityToken: string,
 ): Promise<PrivyIdentity | null> {
   try {
     const user = await getClient().users().get({ id_token: identityToken });
-    const accounts = (user.linked_accounts ?? []) as unknown as Array<Record<string, unknown>>;
-
-    const emailAccount = accounts.find((a) => a.type === 'email');
-
-    // 鎖定「主 EOA」：一個 Privy 用戶可能有多個 embedded wallet（HD index 遞增）。
-    // 為了讓每次登入都綁定同一個地址，固定挑：
-    //   1. embedded wallet（wallet_client = privy）
-    //   2. EVM 鏈（chain_type = ethereum）
-    //   3. wallet_index 最小者（index 0 = Privy 配給的主錢包）
-    // 沒有 embedded wallet 時才退回任意 linked wallet（external）。
-    const walletIndexOf = (a: Record<string, unknown>): number =>
-      typeof a.wallet_index === 'number' ? a.wallet_index : Number.MAX_SAFE_INTEGER;
-
-    const primaryEmbedded = accounts
-      .filter((a) => isEmbeddedWalletLinkedAccount(a as never))
-      .filter((a) => (typeof a.chain_type === 'string' ? a.chain_type : 'ethereum') === 'ethereum')
-      .sort((a, b) => walletIndexOf(a) - walletIndexOf(b))[0];
-
-    const anyWallet = accounts.find((a) => a.type === 'wallet');
-    const wallet = primaryEmbedded ?? anyWallet;
-
-    const email = typeof emailAccount?.address === 'string' ? emailAccount.address : undefined;
-    const walletAddress = typeof wallet?.address === 'string' ? wallet.address : undefined;
-
-    appLogger.info('[Privy] Resolved primary EOA from identity token', {
-      privyUserId: user.id,
-      embeddedWalletCount: accounts.filter((a) => isEmbeddedWalletLinkedAccount(a as never)).length,
-      chosenWalletIndex: primaryEmbedded ? walletIndexOf(primaryEmbedded) : null,
-      chosenAddressPrefix: walletAddress?.slice(0, 10),
-    });
-
-    return {
-      privyUserId: user.id,
-      ...(email ? { email } : {}),
-      ...(walletAddress ? { walletAddress } : {}),
-    };
+    return identityFromPrivyUser(user);
   } catch (err) {
     appLogger.warn('Failed to parse Privy identity token', {
       err: err instanceof Error ? err.message : err,

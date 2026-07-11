@@ -23,7 +23,7 @@ export interface CacheResponseFields {
 export function buildCacheResponseFields(options: {
   forceRefresh: boolean;
   limitReached?: boolean;
-  message?: string;
+  message?: string | undefined;
   provider: string;
 }): CacheResponseFields {
   if (options.limitReached) {

@@ -13,7 +13,7 @@ const router = (0, express_1.Router)();
  * `/history` 保留作為 `/history/encrypted` 的相容性別名，避免前端 404。
  */
 // 取得「加密形式」資產歷史（canonical path + legacy alias）
-// 查詢參數：?days=30（預設 30 天，最多 365 天）
+// 查詢參數：?days=30（預設 30 天；Basic 最多 30 天，付費方案最多 365 天）
 router.get(['/history/encrypted', '/history'], auth_1.requireAuth, (0, validateRequest_1.validateRequest)({ query: assetSchemas_1.getAssetHistoryQuerySchema }), assetController_1.getEncryptedAssetHistory);
 // 取得所有記錄日期（metadata only）
 router.get('/dates', auth_1.requireAuth, assetController_1.getRecordDates);

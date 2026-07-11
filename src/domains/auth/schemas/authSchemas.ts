@@ -13,7 +13,7 @@ const hexString = z
 
 // ── Privy 登入 ───────────────────────────────────────────────────────
 // accessToken：Privy access token（必填，登入權威證明）
-// identityToken：Privy identity token（選填，解析 email + embedded wallet）
+// identityToken：Privy identity token（選填；缺 email 時後端會用 Privy Server API 補拉）
 // referralCode：首次登入即註冊時可帶邀請碼
 export const privyLoginBodySchema = z.object({
   accessToken: z.string().trim().min(1, 'accessToken is required'),

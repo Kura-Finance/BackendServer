@@ -8,6 +8,7 @@ const webhookVerification_1 = require("../lib/webhookVerification");
 const prisma_1 = require("../../shared/lib/prisma");
 const apiResponse_1 = require("../../shared/lib/apiResponse");
 const payloadKeyService_1 = require("../../shared/services/payloadKeyService");
+const cacheResponseUtil_1 = require("../../shared/lib/cacheResponseUtil");
 function resolvePlaidLastSyncedAt(cacheStats) {
     const timestamps = [
         cacheStats.lastSynced,
@@ -64,19 +65,49 @@ const exchangePublicToken = async (req, res) => {
         }
         const { public_token, institution_name } = req.body;
         await plaidService_1.PlaidService.exchangePublicToken(req.userId, public_token, institution_name);
+        const itemCount = await prisma_1.prisma.plaidItem.count({ where: { userId: req.userId } });
+        (0, logger_1.logBusinessEvent)('plaid_exchange_token_done', req.userId, {
+            institution: institution_name || 'Unknown',
+            plaidItemCount: itemCount,
+        });
         // Phase 3：第一次連接時觸發加密快照同步（前端會用 /encrypted endpoint 取資料）
         try {
             const snapshot = await plaidService_1.PlaidService.getFinanceSnapshotOptimized(req.userId, false);
+            (0, logger_1.logBusinessEvent)('plaid_initial_snapshot_after_connect', req.userId, {
+                accounts: snapshot.accounts.length,
+                transactions: snapshot.transactions.length,
+                investmentAccounts: snapshot.investmentAccounts.length,
+                investments: snapshot.investments.length,
+                payloadKeys: snapshot.payloadKeys.length,
+                partial: snapshot.partial,
+                failedItemIds: snapshot.failedItemIds,
+            });
+            if (snapshot.payloadKeys.length === 0 && snapshot.accounts.length === 0) {
+                (0, logger_1.logDebug)('Initial snapshot is empty after connect — check keypair / Plaid item fetch', {
+                    userId: req.userId,
+                    plaidItemCount: itemCount,
+                });
+            }
             (0, apiResponse_1.sendSuccess)(res, {
                 message: 'Bank account linked successfully',
                 snapshot,
             });
         }
         catch (snapshotError) {
-            // 即使快照失敗，也不影響連結成功狀態
-            (0, logger_1.logDebug)('Failed to fetch initial snapshot after successful connection', snapshotError?.message || snapshotError);
+            // 連結本身已成功；snapshot 失敗不影響連結狀態，但必須 loud log 出真正原因。
+            const isKeyPairMissing = snapshotError instanceof payloadKeyService_1.KeyPairNotConfiguredError;
+            (0, logger_1.logError)('Initial Plaid snapshot after connect failed', snapshotError, {
+                userId: req.userId,
+                plaidItemCount: itemCount,
+                reason: isKeyPairMissing ? 'KEY_PAIR_NOT_CONFIGURED' : snapshotError?.name || 'UNKNOWN',
+                hint: isKeyPairMissing
+                    ? 'User must POST /api/auth/keys/setup before encrypted Plaid sync can persist data.'
+                    : undefined,
+            });
             (0, apiResponse_1.sendSuccess)(res, {
                 message: 'Bank account linked successfully',
+                // 讓前端知道為何沒有 snapshot：需先設定 E2EE keypair 才能加密寫入並顯示資料。
+                keyPairRequired: isKeyPairMissing,
             });
         }
     }
@@ -141,7 +172,10 @@ const getFinanceSnapshotOptimized = async (req, res) => {
             const status = snapshot.partial ? 207 : 200;
             (0, apiResponse_1.sendSuccess)(res, {
                 ...snapshot,
-                _cacheSource: isManualRefresh ? 'Forced refresh from Plaid API' : 'From cache',
+                ...(0, cacheResponseUtil_1.buildCacheResponseFields)({
+                    forceRefresh: isManualRefresh,
+                    provider: cacheResponseUtil_1.CACHE_PROVIDER.PLAID,
+                }),
                 lastSyncedAt,
             }, status);
         }
@@ -154,10 +188,13 @@ const getFinanceSnapshotOptimized = async (req, res) => {
                     const cacheStats = await (0, plaidCacheUtil_1.getCacheStats)(req.userId);
                     (0, apiResponse_1.sendSuccess)(res, {
                         ...cachedSnapshot,
-                        _cacheSource: 'Daily refresh limit reached, showing last synced data',
+                        ...(0, cacheResponseUtil_1.buildCacheResponseFields)({
+                            forceRefresh: true,
+                            limitReached: true,
+                            message: error.message,
+                            provider: cacheResponseUtil_1.CACHE_PROVIDER.PLAID,
+                        }),
                         lastSyncedAt: resolvePlaidLastSyncedAt(cacheStats),
-                        _limitReached: true,
-                        _message: error.message,
                     });
                     return;
                 }
@@ -245,6 +282,24 @@ const getEncryptedFinanceSnapshot = async (req, res) => {
         const snapshot = await plaidService_1.PlaidService.getEncryptedFinanceSnapshot(req.userId);
         const cacheStats = await (0, plaidCacheUtil_1.getCacheStats)(req.userId);
         const lastSyncedAt = resolvePlaidLastSyncedAt(cacheStats);
+        (0, logger_1.logBusinessEvent)('plaid_encrypted_snapshot_served', req.userId, {
+            accounts: snapshot.accounts.length,
+            transactions: snapshot.transactions.length,
+            investmentAccounts: snapshot.investmentAccounts.length,
+            investments: snapshot.investments.length,
+            payloadKeys: snapshot.payloadKeys.length,
+            lastSyncedAt,
+        });
+        if (snapshot.payloadKeys.length === 0) {
+            // 沒有 payloadKeys = 前端無法解密任何 row（通常代表：尚未設定 keypair，
+            // 或設定 keypair 前寫入的舊明文 row 已被過濾）。loud 一點方便排查。
+            (0, logger_1.logDebug)('Encrypted snapshot has no payloadKeys — frontend will show no data', {
+                userId: req.userId,
+                cachedAccounts: cacheStats.accounts,
+                cachedTransactions: cacheStats.transactions,
+                hint: 'Confirm POST /api/auth/keys/setup was called, then re-sync (refresh=true).',
+            });
+        }
         (0, apiResponse_1.sendSuccess)(res, {
             ...snapshot,
             lastSyncedAt,

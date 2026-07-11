@@ -57,7 +57,7 @@ export declare function updateSyncTimestamp(userId: string, type: 'accounts' | '
  * Plaid accounts API 永遠回完整列表，本函式保持「整體替換」語意。
  */
 export declare function upsertAccountsCache(userId: string, accounts: Array<{
-    plaidItemId: string;
+    plaidItemId: string | null;
     accountId: string;
     type: string;
     bucket: string;
@@ -88,6 +88,7 @@ export declare function upsertTransactionsCache(userId: string, transactions: Ar
  * 批量同步 Plaid 投資帳戶快取（snapshot 模式：先 delete 後 insert）。
  */
 export declare function upsertInvestmentAccountsCache(userId: string, investmentAccounts: Array<{
+    plaidItemId: string | null;
     accountId: string;
     payloadCiphertext: string;
     payloadKeyId: string;
@@ -96,6 +97,7 @@ export declare function upsertInvestmentAccountsCache(userId: string, investment
  * 批量同步 Plaid 投資持倉快取（snapshot 模式：先 delete 後 insert）。
  */
 export declare function upsertInvestmentsCache(userId: string, investments: Array<{
+    plaidItemId: string | null;
     accountId: string;
     investmentId: string;
     type: string;

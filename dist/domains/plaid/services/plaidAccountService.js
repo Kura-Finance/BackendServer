@@ -82,6 +82,9 @@ class PlaidAccountService {
                 (0, logger_1.logError)('Plaid itemRemove failed during disconnect', error, { userId, accountId });
             }
             const deleteStartTime = Date.now();
+            // 刪除 Plaid Item 即可：四張快取表（account / transaction / investmentAccount /
+            // investment）皆以 plaidItemId relation 對 PlaidItem 設定 onDelete: Cascade，
+            // 因此底下所有帳戶、交易、投資快取會由資料庫連帶刪除，不會殘留舊資料。
             await prisma_1.prisma.plaidItem.delete({
                 where: { id: matchedPlaidItemId },
             });

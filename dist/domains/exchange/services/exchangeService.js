@@ -13,6 +13,7 @@ const encryption_1 = require("../../shared/lib/encryption");
 const assetService_1 = require("../../asset/services/assetService");
 const crypto_1 = require("../../shared/crypto");
 const payloadKeyService_1 = require("../../shared/services/payloadKeyService");
+const demoService_1 = require("../../demo/demoService");
 class ExchangeService {
     /**
      * 驗證交易所連接
@@ -201,6 +202,9 @@ class ExchangeService {
      * PR 5 後 positions 不再寫入持久層；若需 zero-access 期貨歷史，需另闢儲存表。
      */
     static async getBalancesAndAssets(userId, exchangeAccountId) {
+        if (await demoService_1.DemoService.isDemoUser(userId)) {
+            return demoService_1.DemoService.exchangeSnapshot(userId);
+        }
         const startTime = Date.now();
         try {
             (0, logger_1.logDebug)('Fetching exchange balances and assets', {
@@ -523,6 +527,9 @@ class ExchangeService {
      * - 沒有 payloadCiphertext 的 legacy row 會被跳過
      */
     static async getEncryptedBalancesAndAssets(userId, exchangeAccountId) {
+        if (await demoService_1.DemoService.isDemoUser(userId)) {
+            return demoService_1.DemoService.exchangeSnapshot(userId);
+        }
         if (!exchangeAccountId || exchangeAccountId === 'undefined') {
             throw new Error('Invalid account ID');
         }
@@ -666,6 +673,9 @@ class ExchangeService {
      * 獲取用戶連接的所有交易所帳戶
      */
     static async getUserExchangeAccounts(userId) {
+        if (await demoService_1.DemoService.isDemoUser(userId)) {
+            return demoService_1.DemoService.exchangeAccounts();
+        }
         const accounts = await prisma_1.prisma.exchangeAccount.findMany({
             where: { userId },
             select: {

@@ -15,13 +15,18 @@ export interface PlaidCacheInfo {
 
 export interface UserProfile {
   id: string;
-  email: string | null;
+  email: string;
+  /** true when email is `{userId}@placeholder.kura-finance.internal` — frontend should call Privy useLinkEmail, not useUpdateEmail */
+  emailIsPlaceholder: boolean;
   walletAddress?: string | null;
   displayName: string;
   /** true 當 displayName 來自用戶主動設定的 name 欄位（非 fallback） */
   hasName: boolean;
   avatarUrl: string;
   membershipLabel: string;
+  tier: string;
+  /** Pro / Ultimate / VIP 為 true；Web Basic 用戶登入後應導向付費頁 */
+  webAccessAllowed: boolean;
   referCode?: string;
   referredByCode?: string | null;
   referralCount?: number;

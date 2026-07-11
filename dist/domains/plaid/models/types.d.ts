@@ -15,6 +15,7 @@ export interface PlaidAccountPayload {
     plaidLogo?: string;
     apy?: number;
     mask?: string;
+    plaidItemId?: string;
 }
 export interface PlaidTransactionPayload {
     id: string;
@@ -35,6 +36,7 @@ export interface PlaidTransactionPayload {
     plaidMerchantLogo?: string;
     merchantCategory?: string;
     isPending?: boolean;
+    plaidItemId?: string;
 }
 export interface PlaidInvestmentAccountPayload {
     id: string;
@@ -42,6 +44,7 @@ export interface PlaidInvestmentAccountPayload {
     type: InvestmentAccountType;
     logo: string;
     plaidLogo?: string;
+    plaidItemId?: string;
 }
 export interface PlaidInvestmentPayload {
     id: string;
@@ -53,6 +56,7 @@ export interface PlaidInvestmentPayload {
     change24h: number;
     type: InvestmentType;
     logo: string;
+    plaidItemId?: string;
 }
 export interface FinanceSnapshot {
     accounts: PlaidAccountPayload[];

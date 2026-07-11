@@ -40,7 +40,7 @@ const assetHistoryMetricWhere = {
     { metric: 'cryptoSpot' },
     { metric: { startsWith: 'cryptoSpot:' } },
   ],
-} as const;
+};
 
 /**
  * `Record<metric, value>` — metric 字串可為 base 或 sub-scoped 形式。

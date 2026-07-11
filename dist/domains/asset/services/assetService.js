@@ -1,18 +1,45 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AssetService = void 0;
+exports.isAssetHistoryMetric = isAssetHistoryMetric;
 const prisma_1 = require("../../shared/lib/prisma");
 const crypto_1 = require("../../shared/crypto");
 const payloadKeyService_1 = require("../../shared/services/payloadKeyService");
 const logger_1 = require("../../logger");
+const demoService_1 = require("../../demo/demoService");
+const apiRateLimitUtil_1 = require("../../shared/lib/apiRateLimitUtil");
+/** Metrics included in GET /api/assets/history — net-worth curve only. */
+function isAssetHistoryMetric(metric) {
+    return metric === 'plaidInvestment' || metric === 'cryptoSpot' || metric.startsWith('cryptoSpot:');
+}
+const assetHistoryMetricWhere = {
+    OR: [
+        { metric: 'plaidInvestment' },
+        { metric: 'cryptoSpot' },
+        { metric: { startsWith: 'cryptoSpot:' } },
+    ],
+};
 class AssetService {
     /**
      * 取得用戶所有 snapshot 的 recordedAt（去重排序，metadata only）。
      * 不解密 payload，純粹給前端做日期選擇器。
      */
     static async getRecordDates(userId) {
+        if (await demoService_1.DemoService.isDemoUser(userId)) {
+            const history = await demoService_1.DemoService.assetHistory(userId, 30);
+            const seen = new Set();
+            const dates = [];
+            for (const s of history.snapshots) {
+                const t = s.recordedAt.getTime();
+                if (!seen.has(t)) {
+                    seen.add(t);
+                    dates.push(s.recordedAt);
+                }
+            }
+            return dates.sort((a, b) => b.getTime() - a.getTime());
+        }
         const snapshots = await prisma_1.prisma.assetSnapshot.findMany({
-            where: { userId },
+            where: { userId, ...assetHistoryMetricWhere },
             distinct: ['recordedAt'],
             select: { recordedAt: true },
             orderBy: { recordedAt: 'desc' },
@@ -108,21 +135,29 @@ class AssetService {
     /**
      * 取得某段時間內的加密 AssetSnapshot rows + 對應的 wrappedSek。
      *
-     * 後端不解密，前端用 privateKey unwrap 後在客戶端組成 4-metric 時間序列。
+     * 後端不解密，前端用 privateKey unwrap 後在客戶端組成 2-metric 時間序列。
+     *
+     * 僅回傳 plaidInvestment + cryptoSpot（含 sub-scoped cryptoSpot:*）；不含 cashFlow / defiProtocol。
      *
      * 前端聚合規則：
-     *   - metric 字串：可能是 base("cashFlow") 或 sub-scoped("cryptoSpot:exchange:acct-123")
+     *   - metric 字串：可能是 base("plaidInvestment") 或 sub-scoped("cryptoSpot:exchange:acct-123")
      *   - 同 sub-scoped key 在同一天若有多筆 row，取 recordedAt 最大者（去掉重複 sync）
-     *   - 同 base、不同 sub-scope 的值要加總（cryptoSpot 跨 exchange + debank、defiProtocol 跨地址）
+     *   - 同 base、不同 sub-scope 的值要加總（cryptoSpot 跨 exchange + debank）
      */
     static async getEncryptedAssetHistory(userId, days = 30) {
+        const tier = await (0, apiRateLimitUtil_1.getUserTier)(userId);
+        const effectiveDays = (0, apiRateLimitUtil_1.clampAssetHistoryDays)(days, tier);
+        if (await demoService_1.DemoService.isDemoUser(userId)) {
+            return demoService_1.DemoService.assetHistory(userId, effectiveDays);
+        }
         const startDate = new Date();
-        startDate.setUTCDate(startDate.getUTCDate() - days + 1);
+        startDate.setUTCDate(startDate.getUTCDate() - effectiveDays + 1);
         startDate.setUTCHours(0, 0, 0, 0);
         const rows = await prisma_1.prisma.assetSnapshot.findMany({
             where: {
                 userId,
                 recordedAt: { gte: startDate },
+                ...assetHistoryMetricWhere,
             },
             select: {
                 id: true,

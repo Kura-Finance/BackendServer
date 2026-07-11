@@ -6,6 +6,7 @@ const logger_1 = require("../../logger");
 const symbolsAndExchangesUtil_1 = require("../../shared/lib/symbolsAndExchangesUtil");
 const apiRateLimitUtil_1 = require("../../shared/lib/apiRateLimitUtil");
 const apiResponse_1 = require("../../shared/lib/apiResponse");
+const cacheResponseUtil_1 = require("../../shared/lib/cacheResponseUtil");
 /**
  * 連結交易所帳戶
  * 受用戶等級限制：每天最多連接次數
@@ -83,6 +84,12 @@ const getExchangeBalances = async (req, res) => {
                         ...cachedResult.account,
                         icon: (0, symbolsAndExchangesUtil_1.getExchangeIcon)(cachedResult.account.exchange),
                     },
+                    ...(0, cacheResponseUtil_1.buildCacheResponseFields)({
+                        forceRefresh: true,
+                        limitReached: true,
+                        message: limitCheck.message,
+                        provider: cacheResponseUtil_1.CACHE_PROVIDER.EXCHANGE,
+                    }),
                     rateLimitInfo: {
                         remaining: 0,
                         limit: limitCheck.operationLimit,
@@ -112,6 +119,10 @@ const getExchangeBalances = async (req, res) => {
                 ...result.account,
                 icon: (0, symbolsAndExchangesUtil_1.getExchangeIcon)(result.account.exchange),
             },
+            ...(0, cacheResponseUtil_1.buildCacheResponseFields)({
+                forceRefresh: true,
+                provider: cacheResponseUtil_1.CACHE_PROVIDER.EXCHANGE,
+            }),
             rateLimitInfo: {
                 remaining: limitCheck.operationCountRemaining - 1,
                 limit: limitCheck.operationLimit,

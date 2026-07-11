@@ -10,6 +10,8 @@
  */
 export type AssetMetricBase = 'cashFlow' | 'plaidInvestment' | 'cryptoSpot' | 'defiProtocol';
 export type AssetMetricKey = string;
+/** Metrics included in GET /api/assets/history — net-worth curve only. */
+export declare function isAssetHistoryMetric(metric: string): boolean;
 /**
  * `Record<metric, value>` — metric 字串可為 base 或 sub-scoped 形式。
  * 為了向後相容仍允許 4 個 base metric 為 optional 欄位。
@@ -84,12 +86,14 @@ export declare class AssetService {
     /**
      * 取得某段時間內的加密 AssetSnapshot rows + 對應的 wrappedSek。
      *
-     * 後端不解密，前端用 privateKey unwrap 後在客戶端組成 4-metric 時間序列。
+     * 後端不解密，前端用 privateKey unwrap 後在客戶端組成 2-metric 時間序列。
+     *
+     * 僅回傳 plaidInvestment + cryptoSpot（含 sub-scoped cryptoSpot:*）；不含 cashFlow / defiProtocol。
      *
      * 前端聚合規則：
-     *   - metric 字串：可能是 base("cashFlow") 或 sub-scoped("cryptoSpot:exchange:acct-123")
+     *   - metric 字串：可能是 base("plaidInvestment") 或 sub-scoped("cryptoSpot:exchange:acct-123")
      *   - 同 sub-scoped key 在同一天若有多筆 row，取 recordedAt 最大者（去掉重複 sync）
-     *   - 同 base、不同 sub-scope 的值要加總（cryptoSpot 跨 exchange + debank、defiProtocol 跨地址）
+     *   - 同 base、不同 sub-scope 的值要加總（cryptoSpot 跨 exchange + debank）
      */
     static getEncryptedAssetHistory(userId: string, days?: number): Promise<EncryptedAssetHistoryResponse>;
 }

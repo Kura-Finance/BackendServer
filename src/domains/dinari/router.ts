@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { requireAuth } from '../auth/middleware/auth';
+import { requireDinariWhitelist } from './middleware/requireDinariWhitelist';
 import { appLogger } from '../logger';
 import { validateRequest } from '../shared/middleware/validateRequest';
 import {
@@ -42,11 +43,12 @@ const wrapAsync = (fn: (req: any, res: Response, next?: NextFunction) => Promise
   };
 };
 
-// ── KYC / Entity ────────────────────────────────────────────────────
-router.get('/entity', requireAuth, wrapAsync(getEntityStatus));
+// ── KYC / Entity（僅白名單測試帳可註冊 / 走 KYC）────────────────────────
+router.get('/entity', requireAuth, requireDinariWhitelist, wrapAsync(getEntityStatus));
 router.post(
   '/kyc-link',
   requireAuth,
+  requireDinariWhitelist,
   validateRequest({ body: ensureEntityBodySchema }),
   wrapAsync(createKycEmbed),
 );

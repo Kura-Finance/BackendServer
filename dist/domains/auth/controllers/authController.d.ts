@@ -2,9 +2,6 @@ import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 export declare const me: (req: AuthRequest, res: Response) => Promise<void>;
 export declare const updateProfile: (req: AuthRequest, res: Response) => Promise<void>;
-/**
- * 登出 - 清除 Cookie（網頁客戶端）
- */
 export declare const logout: (req: AuthRequest, res: Response) => Promise<void>;
 export declare const deleteAccount: (req: AuthRequest, res: Response) => Promise<void>;
 /**

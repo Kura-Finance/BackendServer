@@ -22,7 +22,10 @@ export declare class AuthService {
         token: string;
         user: UserProfile;
         needsKeyPairSetup: boolean;
+        needsProfileSetup: boolean;
+        emailConflict: boolean;
     }>;
+    private static ensureStoredEmail;
     /**
      * 取得使用者資料
      */

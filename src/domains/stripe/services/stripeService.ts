@@ -199,6 +199,39 @@ export class StripeService {
     };
   }
 
+  /** Cancel active Stripe subscriptions before account deletion (best-effort). */
+  static async cancelActiveSubscriptionsForUser(userId: string): Promise<void> {
+    const subscriptions = await prisma.stripeSubscription.findMany({
+      where: { userId },
+      select: { stripeSubscriptionId: true, status: true },
+    });
+
+    if (subscriptions.length === 0) {
+      return;
+    }
+
+    const stripe = this.getStripeClient();
+
+    for (const subscription of subscriptions) {
+      if (!ACTIVE_SUBSCRIPTION_STATUSES.has(subscription.status as Stripe.Subscription.Status)) {
+        continue;
+      }
+
+      try {
+        await stripe.subscriptions.cancel(subscription.stripeSubscriptionId);
+        logDebug('Cancelled Stripe subscription during account deletion', {
+          userId,
+          stripeSubscriptionId: subscription.stripeSubscriptionId,
+        });
+      } catch (error) {
+        logError('Failed to cancel Stripe subscription during account deletion', error, {
+          userId,
+          stripeSubscriptionId: subscription.stripeSubscriptionId,
+        });
+      }
+    }
+  }
+
   static async handleWebhookEvent(event: Stripe.Event): Promise<void> {
     const existing = await prisma.stripeWebhookEvent.findUnique({
       where: { stripeEventId: event.id },

@@ -193,6 +193,98 @@ export interface BridgeVirtualAccountEventResponse {
   created_at?: string;
 }
 
+export interface BridgeLiquidationAddressResponse {
+  id: string;
+  customer_id?: string;
+  chain: string;
+  currency: string;
+  address?: string;
+  blockchain_memo?: string;
+  destination_payment_rail?: string;
+  destination_currency?: string;
+  destination_address?: string;
+  external_account_id?: string;
+  state?: string;
+  custom_developer_fee_percent?: string | null;
+  return_instructions?: {
+    address?: string;
+    memo?: string;
+  };
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface BridgeLiquidationAddressListResponse {
+  count?: number;
+  data?: BridgeLiquidationAddressResponse[];
+}
+
+export interface BridgeDrainResponse {
+  id: string;
+  amount?: string;
+  currency?: string;
+  state?: string;
+  liquidation_address_id?: string;
+  deposit_tx_hash?: string;
+  destination_tx_hash?: string;
+  destination?: Record<string, unknown>;
+  receipt?: Record<string, unknown>;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface BridgeDrainListResponse {
+  count?: number;
+  data?: BridgeDrainResponse[];
+}
+
+/** Base USDC → 法幣銀行（off-ramp LA）固定 source。 */
+export const PAYOUT_LIQUIDATION_SOURCE = {
+  sourceChain: 'base',
+  sourceCurrency: 'usdc',
+} as const;
+
+export interface CreatePayoutAddressParams {
+  destinationRail: string;
+  destinationCurrency: string;
+  externalAccountId: string;
+  returnAddress?: string;
+  destinationReference?: string;
+}
+
+export interface PayoutDeveloperFee {
+  developerFeePercent: string;
+  feeCurrency: string;
+}
+
+export interface PayoutLiquidationAddressResult {
+  bridgeLiquidationAddressId: string;
+  state: string;
+  sourceChain: string;
+  sourceCurrency: string;
+  destinationRail: string;
+  destinationCurrency: string;
+  bridgeExternalAccountId: string;
+  depositAddress: string;
+  blockchainMemo: string | null;
+  /** @deprecated 請改用 payoutFee.developerFeePercent */
+  developerFeePercent: string;
+  payoutFee: PayoutDeveloperFee;
+  minDeposit: MinDeposit;
+  createdAt: string;
+}
+
+export interface PayoutDrainResult {
+  bridgeDrainId: string;
+  bridgeLiquidationAddressId: string;
+  state: string;
+  amount: string | null;
+  currency: string | null;
+  depositTxHash: string | null;
+  destination: Record<string, unknown> | null;
+  createdAt: string | null;
+}
+
 // ── 對外（controller → client）回傳型別 ───────────────────────────────
 
 export interface KycLinkResult {
@@ -203,6 +295,16 @@ export interface KycLinkResult {
   tosLink: string | null;
   kycStatus: string;
   tosStatus: string;
+  /** 既有 customer 申請額外 rail endorsement 時回傳（例如 brl→pix、cop→cop）。 */
+  requestedEndorsement?: BridgeEndorsementType;
+}
+
+export interface EndorsementLinkResult {
+  bridgeCustomerId: string;
+  endorsement: BridgeEndorsementType;
+  kycLink: string;
+  /** 由 currency 參數解析時回傳（例如 brl、cop）。 */
+  currency?: string;
 }
 
 export interface CustomerStatusResult {
@@ -238,6 +340,56 @@ export interface ExternalAccountResult {
   active: boolean;
 }
 
+/** Pay Out（off-ramp）支援的 payment rail 與對應法幣 / 銀行帳戶類型。 */
+export interface PayoutOption {
+  rail: string;
+  currency: string;
+  label: string;
+  endorsement: BridgeEndorsementType | 'base';
+  accountTypes: Array<'us' | 'iban' | 'clabe' | 'pix' | 'gb'>;
+  minDeposit: MinDeposit;
+}
+
+export type PayoutOptionBase = Omit<PayoutOption, 'minDeposit'>;
+
+export const PAYOUT_OPTION_BASES: PayoutOptionBase[] = [
+  {
+    rail: 'ach_same_day',
+    currency: 'usd',
+    label: 'ACH same day',
+    endorsement: 'base',
+    accountTypes: ['us'],
+  },
+  {
+    rail: 'wire',
+    currency: 'usd',
+    label: 'Wire',
+    endorsement: 'base',
+    accountTypes: ['us'],
+  },
+  {
+    rail: 'faster_payments',
+    currency: 'gbp',
+    label: 'Faster Payments',
+    endorsement: 'faster_payments',
+    accountTypes: ['gb'],
+  },
+  {
+    rail: 'pix',
+    currency: 'brl',
+    label: 'Pix',
+    endorsement: 'pix',
+    accountTypes: ['pix'],
+  },
+  {
+    rail: 'spei',
+    currency: 'mxn',
+    label: 'SPEI',
+    endorsement: 'spei',
+    accountTypes: ['clabe'],
+  },
+];
+
 // 建立 / 取得入金 Virtual Account 的參數
 // 注意：費率（developer fee）不由 client 提供，一律由後端依入金幣別查表套用。
 export interface CreateVirtualAccountParams {
@@ -247,6 +399,140 @@ export interface CreateVirtualAccountParams {
   toAddress?: string; // 未提供時回退到使用者錢包（scaAddress / walletAddress）
 }
 
+/** Tron USDT → Base USDC Liquidation Address（收款 SCA 預設為使用者 scaAddress）。 */
+export interface CreateLiquidationAddressParams {
+  toAddress?: string; // Base USDC 收款地址；省略時使用 scaAddress
+  returnAddress?: string; // Tron 退款地址（建議提供，用於失敗退回）
+}
+
+export const LIQUIDATION_ADDRESS_TRON_USDT_TO_BASE_USDC = {
+  sourceChain: 'tron',
+  sourceCurrency: 'usdt',
+  destinationRail: 'base',
+  destinationCurrency: 'usdc',
+} as const;
+
+/** @deprecated Use LIQUIDATION_ADDRESS_TRON_USDT_TO_BASE_USDC */
+export const CRYPTO_TRANSFER_TRON_USDT_TO_BASE_USDC = {
+  sourceRail: LIQUIDATION_ADDRESS_TRON_USDT_TO_BASE_USDC.sourceChain,
+  sourceCurrency: LIQUIDATION_ADDRESS_TRON_USDT_TO_BASE_USDC.sourceCurrency,
+  destinationRail: LIQUIDATION_ADDRESS_TRON_USDT_TO_BASE_USDC.destinationRail,
+  destinationCurrency: LIQUIDATION_ADDRESS_TRON_USDT_TO_BASE_USDC.destinationCurrency,
+} as const;
+
+export interface DepositDeveloperFee {
+  /** 平台 developer fee（base 100："0.85" = 入金金額的 0.85%），一律由後端計算。 */
+  developerFeePercent: string;
+  /** 費率適用的入金幣別（顯示用，例如 usdt / usd）。 */
+  feeCurrency: string;
+}
+
+/** Bridge 最低入金額（已含 developer fee；使用者須打入此毛額，扣費後淨額仍達 Bridge 門檻）。 */
+export interface MinDeposit {
+  amount: string;
+  currency: string;
+}
+
+function ceilMinDepositAmount(n: number): number {
+  return Math.ceil(n * 100) / 100;
+}
+
+function trimMinDepositDecimal(s: string): string {
+  return s.includes('.') ? s.replace(/0+$/, '').replace(/\.$/, '') : s;
+}
+
+/** 將 Bridge 淨額門檻換算為含手續費的毛額（向上取兩位小數）。 */
+export function grossMinDeposit(
+  netAmount: string,
+  currency: string,
+  developerFeePercent: string,
+): MinDeposit {
+  const net = Number(netAmount);
+  const pct = Number(developerFeePercent);
+  const cur = currency.toLowerCase();
+  if (!Number.isFinite(net) || net <= 0) {
+    return { amount: netAmount, currency: cur };
+  }
+  if (!Number.isFinite(pct) || pct <= 0) {
+    return { amount: trimMinDepositDecimal(net.toFixed(2)), currency: cur };
+  }
+  const rate = pct / 100;
+  if (rate >= 1) {
+    return { amount: trimMinDepositDecimal(net.toFixed(2)), currency: cur };
+  }
+  const gross = ceilMinDepositAmount(net / (1 - rate));
+  return { amount: trimMinDepositDecimal(gross.toFixed(2)), currency: cur };
+}
+
+// Bridge 法幣 VA on-ramp 淨額門檻（扣 developer fee 後須達標；來源法幣計）。
+export const ONRAMP_MIN_DEPOSIT_NET: Record<string, string> = {
+  usd: '1',
+  gbp: '2',
+  eur: '1',
+  brl: '10',
+  mxn: '50',
+};
+
+// Bridge USDC@Base → 法幣 off-ramp 淨額門檻（使用者打入 USDC，扣費後須達標）。
+export const PAYOUT_MIN_DEPOSIT_NET_BY_RAIL: Record<string, string> = {
+  ach: '1',
+  ach_push: '1',
+  ach_same_day: '1',
+  wire: '1',
+  faster_payments: '3',
+  pix: '2',
+  spei: '2',
+  sepa: '1',
+};
+
+export const TRON_USDT_MIN_DEPOSIT_NET = '5';
+
+export function resolveOnRampMinDeposit(
+  sourceCurrency: string,
+  developerFeePercent: string,
+): MinDeposit {
+  const currency = sourceCurrency.toLowerCase();
+  return grossMinDeposit(
+    ONRAMP_MIN_DEPOSIT_NET[currency] ?? '1',
+    currency,
+    developerFeePercent,
+  );
+}
+
+export function resolvePayoutMinDeposit(
+  destinationRail: string,
+  developerFeePercent: string,
+  sourceCurrency = 'usdc',
+): MinDeposit {
+  const rail = destinationRail.toLowerCase();
+  return grossMinDeposit(
+    PAYOUT_MIN_DEPOSIT_NET_BY_RAIL[rail] ?? '1',
+    sourceCurrency,
+    developerFeePercent,
+  );
+}
+
+export function resolveTronUsdtMinDeposit(developerFeePercent: string): MinDeposit {
+  return grossMinDeposit(TRON_USDT_MIN_DEPOSIT_NET, 'usdt', developerFeePercent);
+}
+
+export interface LiquidationAddressResult {
+  bridgeLiquidationAddressId: string;
+  state: string;
+  sourceChain: string;
+  sourceCurrency: string;
+  destinationRail: string;
+  destinationCurrency: string;
+  destinationAddress: string;
+  depositAddress: string;
+  blockchainMemo: string | null;
+  /** @deprecated 請改用 depositFee.developerFeePercent */
+  developerFeePercent: string;
+  depositFee: DepositDeveloperFee;
+  minDeposit: MinDeposit;
+  createdAt: string;
+}
+
 export interface VirtualAccountResult {
   bridgeVirtualAccountId: string;
   status: string; // activated | deactivated
@@ -254,7 +540,10 @@ export interface VirtualAccountResult {
   destinationRail: string;
   destinationCurrency: string;
   destinationAddress: string;
-  developerFeePercent: string | null;
+  /** @deprecated 請改用 depositFee.developerFeePercent */
+  developerFeePercent: string;
+  depositFee: DepositDeveloperFee;
+  minDeposit: MinDeposit;
   // 給用戶的法幣入金銀行資訊（持久、免 memo）
   depositInstructions: BridgeDepositInstructions | null;
   createdAt: string;

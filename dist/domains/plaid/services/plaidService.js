@@ -9,6 +9,7 @@ const plaidAuthService_1 = require("./plaidAuthService");
 const plaidAccountService_1 = require("./plaidAccountService");
 const plaidCacheService_1 = require("./plaidCacheService");
 const plaidWebhookSyncService_1 = require("./plaidWebhookSyncService");
+const demoService_1 = require("../../demo/demoService");
 /**
  * 統一的 Plaid 服務門面（Phase 3 Zero-Access E2EE only）。
  *
@@ -32,12 +33,18 @@ class PlaidService {
      * 優化版：快取未過期 → 直接讀加密 row；過期或手動刷新 → 從 Plaid API 抓 → 加密寫入 → 回讀加密 row。
      */
     static async getFinanceSnapshotOptimized(userId, isManualRefresh = false) {
+        if (await demoService_1.DemoService.isDemoUser(userId)) {
+            return demoService_1.DemoService.plaidSnapshot(userId);
+        }
         return plaidCacheService_1.PlaidCacheService.getFinanceSnapshotOptimized(userId, isManualRefresh);
     }
     /**
      * 僅讀快取（不觸發 Plaid API）：回傳目前 cache 中的加密形式 snapshot。
      */
     static async getEncryptedFinanceSnapshot(userId) {
+        if (await demoService_1.DemoService.isDemoUser(userId)) {
+            return demoService_1.DemoService.plaidSnapshot(userId);
+        }
         return plaidCacheService_1.PlaidCacheService.getEncryptedSnapshotFromCache(userId);
     }
     // ===== Webhook 同步 =====

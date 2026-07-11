@@ -27,6 +27,7 @@ router.post('/logout', auth_1.requireAuth, authController_1.logout);
 router.post('/keys/setup', auth_1.requireAuth, (0, validateRequest_1.validateRequest)({ body: authSchemas_1.keyPairBodySchema }), keyPairController_1.setupKeyPair); // { publicKey, encryptedPrivateKey, kekSalt? }
 router.get('/keys/me', auth_1.requireAuth, keyPairController_1.getMyKeyPair); // → { publicKey, encryptedPrivateKey, kekSalt, algorithm, createdAt }
 router.post('/keys/rotate', auth_1.requireAuth, (0, validateRequest_1.validateRequest)({ body: authSchemas_1.keyPairBodySchema }), keyPairController_1.rotateKeyPair); // ⚠️ 會讓既有 wrappedSek 失效
+router.post('/keys/reset', auth_1.requireAuth, keyPairController_1.resetE2EE); // 換裝置/換 passkey：清掉 passkey + keypair + 加密快取，回到未設定狀態
 // ── Passkey / WebAuthn（登入後解鎖 E2EE 資料層）───────────────────────
 router.get('/passkey/status', auth_1.requireAuth, passkeyController_1.status); // → { registered }
 router.get('/passkey/register-challenge', auth_1.requireAuth, passkeyController_1.registerChallenge); // → WebAuthn registration options

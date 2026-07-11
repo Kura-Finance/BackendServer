@@ -17,7 +17,7 @@ const { combine, errors, json, printf, splat, timestamp, colorize } = winston_1.
  * troubleshooting locally; in production it stays at `warn` regardless.
  */
 const isProduction = process.env.NODE_ENV === 'production';
-const logLevel = process.env.LOG_LEVEL || 'warn';
+const logLevel = process.env.LOG_LEVEL || 'info';
 const developmentFormat = printf(({ level, message, timestamp, stack, ...meta }) => {
     const metaText = Object.keys(meta).length > 0 ? ` ${JSON.stringify(meta)}` : '';
     return `${timestamp} [${level}]: ${stack || message}${metaText}`;

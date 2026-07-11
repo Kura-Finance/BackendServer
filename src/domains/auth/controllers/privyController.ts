@@ -4,7 +4,8 @@
  * POST /api/auth/login
  *   Body: { accessToken, identityToken?, referralCode? }
  *   - 驗證 Privy access token → DID（登入權威證明）
- *   - 若帶 identityToken，解析 email + embedded wallet（綁定錢包）
+ *   - 解析 email + embedded wallet（identity token 或 Privy Server API fallback）
+ *   - 無 Privy email 時以內部 UUID placeholder 寫入 DB
  *   - upsert 內部 user，核發自有 JWT（web 用 cookie，mobile 用 Bearer）
  */
 
@@ -12,8 +13,8 @@ import { Request, Response } from 'express';
 import { AuthService } from '../services/authService';
 import {
   verifyAccessToken,
-  resolveIdentityFromToken,
-  PrivyIdentity,
+  resolvePrivyIdentity,
+  PrivyTokenMismatchError,
 } from '../services/privyService';
 import { logError, logDebug, appLogger } from '../../logger';
 import { sendError, sendSuccess } from '../../shared/lib/apiResponse';
@@ -81,20 +82,19 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // 2. 若帶 identity token，解析 email + wallet（並確認 DID 一致）
-    let identity: PrivyIdentity = { privyUserId: did };
-    if (identityToken) {
-      const parsed = await resolveIdentityFromToken(identityToken);
-      if (parsed) {
-        if (parsed.privyUserId !== did) {
-          sendError(res, 401, {
-            code: 'PRIVY_TOKEN_MISMATCH',
-            message: 'Identity token does not match access token',
-          });
-          return;
-        }
-        identity = parsed;
+    // 2. 解析 email + wallet（identity token → Privy API fallback）
+    let identity;
+    try {
+      identity = await resolvePrivyIdentity(did, identityToken);
+    } catch (error) {
+      if (error instanceof PrivyTokenMismatchError) {
+        sendError(res, 401, {
+          code: 'PRIVY_TOKEN_MISMATCH',
+          message: error.message,
+        });
+        return;
       }
+      throw error;
     }
 
     // 3. upsert 內部 user + 核發自有 JWT
@@ -102,7 +102,6 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
     if (clientType === 'web') {
       setAuthCookie(res, result.token);
-      // 網頁端不在 body 回傳 token（改用 HttpOnly cookie）
       sendSuccess(res, {
         user: result.user,
         needsKeyPairSetup: result.needsKeyPairSetup,

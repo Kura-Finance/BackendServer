@@ -16,8 +16,14 @@ const notification_1 = require("./domains/notification");
 const debank_1 = require("./domains/debank");
 const stripe_1 = require("./domains/stripe");
 const card_1 = require("./domains/card");
+const wallet_1 = require("./domains/wallet");
+const bridge_1 = require("./domains/bridge");
+const codego_1 = require("./domains/codego");
+const dinari_1 = require("./domains/dinari");
+const waitlist_1 = require("./domains/waitlist");
 const logger_1 = require("./domains/logger");
 const rateLimiter_1 = require("./domains/shared/middleware/rateLimiter");
+const requireWebTier_1 = require("./domains/auth/middleware/requireWebTier");
 // ========================================
 // 1. 初始化環境變數和數據庫 URL
 // ========================================
@@ -30,10 +36,9 @@ const PORT = Number(process.env.PORT || 8080);
 app.set('trust proxy', 1); // 信任第一層代理 (適用於 Cloud Run、Nginx 等)
 // Stripe webhook 必須使用原始請求內容做簽章驗證
 app.use('/api/stripe/webhook', express_1.default.raw({ type: 'application/json' }));
-// Lithic webhook signature is computed over the raw body bytes:
-//   signedContent = "{webhook-id}.{webhook-timestamp}.{rawBody}"
-// Capture it before Express parses JSON, attach as req.rawBody.
-app.use('/api/card/webhooks/authorization', (req, _res, next) => {
+// Gnosis Pay webhook: Ed25519 signature over "{timestamp}.{rawBody}"
+// Capture raw body before JSON parsing.
+app.use('/api/card/webhooks/gp', (req, _res, next) => {
     let raw = '';
     req.on('data', (chunk) => { raw += chunk.toString('utf8'); });
     req.on('end', () => {
@@ -47,8 +52,37 @@ app.use('/api/card/webhooks/authorization', (req, _res, next) => {
         next();
     });
 });
-// Didit X-Signature-V2 signs a canonical re-serialised JSON — works with
-// standard Express JSON parsing, no raw body needed for /webhooks/kyc.
+// Codego webhook: HMAC-SHA256 over raw body (Signature: sha256=...)
+app.use('/api/codego/webhook', (req, _res, next) => {
+    let raw = '';
+    req.on('data', (chunk) => { raw += chunk.toString('utf8'); });
+    req.on('end', () => {
+        req.rawBody = raw;
+        try {
+            req.body = raw ? JSON.parse(raw) : {};
+        }
+        catch {
+            req.body = {};
+        }
+        next();
+    });
+});
+// Bridge webhook: RSA signature over "{timestamp}.{rawBody}".
+// Capture raw body (string) before JSON parsing for signature verification.
+app.use('/api/bridge/webhook', (req, _res, next) => {
+    let raw = '';
+    req.on('data', (chunk) => { raw += chunk.toString('utf8'); });
+    req.on('end', () => {
+        req.rawBody = raw;
+        try {
+            req.body = raw ? JSON.parse(raw) : {};
+        }
+        catch {
+            req.body = {};
+        }
+        next();
+    });
+});
 // ========================================
 // 2. 設置 CORS
 // ========================================
@@ -100,6 +134,53 @@ if (process.env.DEBUG_COOKIES === 'true') {
 app.use('/api/auth', rateLimiter_1.authRateLimiter);
 // 為其他 API 應用一般的速率限制
 app.use('/api/', rateLimiter_1.rateLimiter); // 速率限制中間件 - 防止 API 被攻擊
+// Web soft gate：Basic 用戶可登入／付費，其餘 Web API 需 Pro / Ultimate
+app.use('/api', requireWebTier_1.webTierGate);
+// ========================================
+// 4. Well-known endpoints (Universal Links / Passkey / Associated Domains)
+// ========================================
+// iOS: Apple App Site Association
+// Served at https://api.kura-finance.com/.well-known/apple-app-site-association
+// Required for Universal Links AND Passkeys (WebAuthn) on iOS.
+// Team ID: K7FVP5GGP9  |  Bundle ID: com.kurafinance.app
+app.get('/.well-known/apple-app-site-association', (_req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.json({
+        applinks: {
+            apps: [],
+            details: [
+                {
+                    appID: 'K7FVP5GGP9.com.kurafinance.app',
+                    paths: ['*'],
+                },
+            ],
+        },
+        webcredentials: {
+            apps: ['K7FVP5GGP9.com.kurafinance.app'],
+        },
+    });
+});
+// Android: Digital Asset Links
+// Served at https://api.kura-finance.com/.well-known/assetlinks.json
+// Required for Android Passkeys (WebAuthn).
+app.get('/.well-known/assetlinks.json', (_req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.json([
+        {
+            relation: ['delegate_permission/common.handle_all_urls', 'delegate_permission/common.get_login_creds'],
+            target: {
+                namespace: 'android_app',
+                package_name: 'com.kurafinance.app',
+                sha256_cert_fingerprints: [
+                    '3E:2E:17:95:8B:7C:6C:88:D6:6F:0F:A4:30:48:F1:7B:3C:E0:4F:A0:C5:D7:9D:32:06:80:77:FE:49:78:66:33',
+                    '31:E3:CE:78:ED:6F:55:A6:2C:40:34:F2:61:F2:91:43:2D:BE:44:74:A0:67:17:02:0B:88:9F:72:19:AE:BB:A0',
+                    '2B:AE:23:03:BE:ED:C6:A2:87:18:B5:89:7A:59:C9:43:A7:BB:56:8F:B2:50:CB:9F:FF:81:12:36:CA:EB:8B:F3',
+                    'FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C',
+                ],
+            },
+        },
+    ]);
+});
 // ========================================
 // 4. Health Check 端點
 // ========================================
@@ -122,6 +203,11 @@ app.use('/api/notifications', notification_1.notificationRouter);
 app.use('/api/debank', debank_1.debankRouter);
 app.use('/api/stripe', stripe_1.stripeRouter);
 app.use('/api/card', card_1.cardRouter);
+app.use('/api/wallet', wallet_1.walletRouter);
+app.use('/api/bridge', bridge_1.bridgeRouter);
+app.use('/api/codego', codego_1.codegoRouter);
+app.use('/api/dinari', dinari_1.dinariRouter);
+app.use('/api/waitlist', waitlist_1.waitlistRouter);
 // ========================================
 // 6. 錯誤處理中間件
 // ========================================

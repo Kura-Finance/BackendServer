@@ -10,6 +10,10 @@ export declare function getUserTier(userId: string): Promise<string>;
  * 獲取特定操作的每日限制
  */
 export declare function getApiLimitForTier(operationType: ApiOperationType, tier: string): number;
+/** TrackFi 歷史查詢天數上限（依訂閱等級；未知 tier 視同 Basic） */
+export declare function getAssetHistoryDaysLimitForTier(tier: string): number;
+/** 將請求的 days 限制在 tier 上限與全域 365 天內 */
+export declare function clampAssetHistoryDays(requestedDays: number, tier: string): number;
 /**
  * 取得今天的日期字串（YYYY-MM-DD）
  */

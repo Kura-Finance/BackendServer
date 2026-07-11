@@ -4,22 +4,33 @@ import { appLogger } from '../logger';
 import { validateRequest } from '../shared/middleware/validateRequest';
 import {
   createExternalAccount,
+  deleteExternalAccount,
+  createEndorsementLink,
+  getOrCreateCryptoDepositAddress,
+  listCryptoDepositAddresses,
   createKycLink,
-  createOffRamp,
+  getOrCreatePayoutAddress,
+  listPayoutAddresses,
+  listPayoutDrains,
   createOnRamp,
   getCustomerStatus,
   getTransfer,
   handleBridgeWebhook,
   listDeposits,
   listExternalAccounts,
+  listPayoutOptions,
   listTransfers,
   listVirtualAccounts,
 } from './controllers/bridgeController';
 import {
   createExternalAccountBodySchema,
+  externalAccountIdParamSchema,
+  createEndorsementLinkBodySchema,
+  createCryptoDepositAddressBodySchema,
   createKycLinkBodySchema,
-  createOffRampBodySchema,
+  createPayoutAddressBodySchema,
   createOnRampBodySchema,
+  liquidationAddressIdParamSchema,
   transferIdParamSchema,
   virtualAccountIdParamSchema,
 } from './schemas/bridgeSchemas';
@@ -42,6 +53,12 @@ router.post(
   validateRequest({ body: createKycLinkBodySchema }),
   wrapAsync(createKycLink),
 );
+router.post(
+  '/endorsement-link',
+  requireAuth,
+  validateRequest({ body: createEndorsementLinkBodySchema }),
+  wrapAsync(createEndorsementLink),
+);
 router.get('/customer', requireAuth, wrapAsync(getCustomerStatus));
 
 // ── On-ramp（入金）：Virtual Accounts ────────────────────────────────
@@ -63,12 +80,20 @@ router.get(
 // 使用者所有入金紀錄（跨 VA）
 router.get('/deposits', requireAuth, wrapAsync(listDeposits));
 
-// ── Off-ramp（出金）───────────────────────────────────────────────────
+// ── Off-ramp（出金）：Payout Liquidation Address（Base USDC → 法幣）────
+router.get('/payout-options', requireAuth, wrapAsync(listPayoutOptions));
 router.post(
-  '/offramp',
+  '/payout-address',
   requireAuth,
-  validateRequest({ body: createOffRampBodySchema }),
-  wrapAsync(createOffRamp),
+  validateRequest({ body: createPayoutAddressBodySchema }),
+  wrapAsync(getOrCreatePayoutAddress),
+);
+router.get('/payout-address', requireAuth, wrapAsync(listPayoutAddresses));
+router.get(
+  '/payout-address/:liquidationAddressId/drains',
+  requireAuth,
+  validateRequest({ params: liquidationAddressIdParamSchema }),
+  wrapAsync(listPayoutDrains),
 );
 router.get('/transfers', requireAuth, wrapAsync(listTransfers));
 router.get(
@@ -78,6 +103,15 @@ router.get(
   wrapAsync(getTransfer),
 );
 
+// ── Crypto 入金：Liquidation Address（Tron USDT → Base USDC，永久地址）────
+router.post(
+  '/crypto-deposit-address',
+  requireAuth,
+  validateRequest({ body: createCryptoDepositAddressBodySchema }),
+  wrapAsync(getOrCreateCryptoDepositAddress),
+);
+router.get('/crypto-deposit-address', requireAuth, wrapAsync(listCryptoDepositAddresses));
+
 // ── External Accounts（off-ramp 出金銀行）──────────────────────────
 router.post(
   '/external-accounts',
@@ -86,6 +120,12 @@ router.post(
   wrapAsync(createExternalAccount),
 );
 router.get('/external-accounts', requireAuth, wrapAsync(listExternalAccounts));
+router.delete(
+  '/external-accounts/:externalAccountId',
+  requireAuth,
+  validateRequest({ params: externalAccountIdParamSchema }),
+  wrapAsync(deleteExternalAccount),
+);
 
 // ── Webhook（無需 auth，靠簽章驗證）─────────────────────────────────
 router.post('/webhook', wrapAsync(handleBridgeWebhook));

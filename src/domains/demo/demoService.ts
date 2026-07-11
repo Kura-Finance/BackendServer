@@ -4,14 +4,36 @@ import { generateSEK, sealForPublicKey, encryptPayload, zeroize } from '../share
 import type { EncryptedFinanceSnapshot } from '../plaid/services/plaidCacheService';
 import type { EncryptedExchangeSnapshot } from '../exchange/services/exchangeService';
 import type { EncryptedAssetHistoryResponse } from '../asset/services/assetService';
+import type {
+  BridgeCustomerType,
+  BridgeDepositInstructions,
+  BridgeEndorsementType,
+  CreatePayoutAddressParams,
+  CustomerStatusResult,
+  DepositResult,
+  EndorsementLinkResult,
+  ExternalAccountResult,
+  KycLinkResult,
+  LiquidationAddressResult,
+  PayoutDrainResult,
+  PayoutLiquidationAddressResult,
+  TransferResult,
+  VirtualAccountResult,
+} from '../bridge/models/types';
+import {
+  LIQUIDATION_ADDRESS_TRON_USDT_TO_BASE_USDC,
+  resolveOnRampMinDeposit,
+  resolvePayoutMinDeposit,
+  resolveTronUsdtMinDeposit,
+} from '../bridge/models/types';
 import { getExchangeIcon } from '../shared/lib/symbolsAndExchangesUtil';
 
 /**
  * Demo Mode（App Store 審核專用）
  *
- * 背景：本 App 的儀表板資料走 zero-access E2EE，且 Plaid / 交易所 / DeBank 都需要
+ * 背景：本 App 的儀表板資料走 zero-access E2EE，且 Plaid / 交易所 / DeBank / Bridge 都需要
  * 真實帳戶才有資料。Apple 審核員在全新裝置上登入 demo 帳號後，無法連真實銀行 /
- * 交易所，dashboard 會是空的 → 觸發 Guideline 2.1(a) 駁回。
+ * 交易所或 Bridge，dashboard 會是空的 → 觸發 Guideline 2.1(a) 駁回。
  *
  * 解法：對 demo 帳號回傳「樣本資料」，但仍用該帳號**真實的 publicKey** 把資料 seal +
  * 加密成與正式端點完全相同的結構。前端照常用 privateKey 解密渲染，**完全不需改前端**。
@@ -23,6 +45,191 @@ import { getExchangeIcon } from '../shared/lib/symbolsAndExchangesUtil';
 const ALGORITHM = 'x25519-sealedbox+aes-256-gcm';
 const DEMO_EXCHANGE_ACCOUNT_ID = 'demo-binance';
 const DEMO_EXCHANGE = 'binance';
+
+const DEMO_BRIDGE_CUSTOMER_ID = 'demo-bridge-customer';
+const DEMO_KYC_LINK_ID = 'demo-kyc-link';
+const DEMO_LIQUIDATION_ADDRESS_ID = 'demo-la-tron-usdt';
+const DEMO_TRANSFER_ONRAMP_ID = 'demo-transfer-onramp-usd';
+const DEMO_ONRAMP_FEE_PERCENT = '0.85';
+const DEMO_CRYPTO_FEE_PERCENT = '0.85';
+const DEMO_PAYOUT_FEE_PERCENT = '0.85';
+const DEMO_TRON_DEPOSIT_ADDRESS = 'TDemoBridgeTronUsdtDepositAddress000001';
+
+/** Cash Deposit 支援的全部法幣入金（對應 Bridge VA on-ramp UI） */
+const DEMO_ONRAMP_CURRENCIES = ['usd', 'eur', 'gbp', 'mxn', 'brl', 'cop'] as const;
+type DemoOnrampCurrency = (typeof DEMO_ONRAMP_CURRENCIES)[number];
+
+interface DemoOnrampConfig {
+  currency: DemoOnrampCurrency;
+  beneficiaryLabel: string;
+  bankName: string;
+  paymentRails: string[];
+  primaryRail: string;
+  depositInstructions: Omit<BridgeDepositInstructions, 'currency' | 'payment_rail' | 'payment_rails'>;
+}
+
+const DEMO_ONRAMP_CONFIGS: DemoOnrampConfig[] = [
+  {
+    currency: 'usd',
+    beneficiaryLabel: 'Bridge Demo · USD',
+    bankName: 'Lead Bank',
+    paymentRails: ['ach_push', 'wire'],
+    primaryRail: 'ach_push',
+    depositInstructions: {
+      bank_beneficiary_name: 'Bridge Demo · USD On-ramp',
+      bank_account_number: '9876543210',
+      bank_routing_number: '101019644',
+    },
+  },
+  {
+    currency: 'eur',
+    beneficiaryLabel: 'Bridge Demo · EUR',
+    bankName: 'Demo Bank EU',
+    paymentRails: ['sepa'],
+    primaryRail: 'sepa',
+    depositInstructions: {
+      bank_beneficiary_name: 'Bridge Demo · EUR On-ramp',
+      iban: 'DE89370400440532013000',
+      bic: 'COBADEFFXXX',
+    },
+  },
+  {
+    currency: 'gbp',
+    beneficiaryLabel: 'Bridge Demo · GBP',
+    bankName: 'Demo Bank UK',
+    paymentRails: ['faster_payments'],
+    primaryRail: 'faster_payments',
+    depositInstructions: {
+      bank_beneficiary_name: 'Bridge Demo · GBP On-ramp',
+      bank_account_number: '12345678',
+      bank_routing_number: '040004',
+    },
+  },
+  {
+    currency: 'mxn',
+    beneficiaryLabel: 'Bridge Demo · MXN',
+    bankName: 'Demo Bank MX',
+    paymentRails: ['spei'],
+    primaryRail: 'spei',
+    depositInstructions: {
+      bank_beneficiary_name: 'Bridge Demo · MXN On-ramp',
+      bank_account_number: '012345678901234567',
+    },
+  },
+  {
+    currency: 'brl',
+    beneficiaryLabel: 'Bridge Demo · BRL',
+    bankName: 'Demo Bank BR',
+    paymentRails: ['pix'],
+    primaryRail: 'pix',
+    depositInstructions: {
+      bank_beneficiary_name: 'Bridge Demo · BRL On-ramp',
+      bank_account_number: '000201265800014530001234567890',
+    },
+  },
+  {
+    currency: 'cop',
+    beneficiaryLabel: 'Bridge Demo · COP',
+    bankName: 'Demo Bank CO',
+    paymentRails: ['pse', 'bre-b'],
+    primaryRail: 'pse',
+    depositInstructions: {
+      bank_beneficiary_name: 'Bridge Demo · COP On-ramp',
+      bank_account_number: '1234567890',
+    },
+  },
+];
+
+interface DemoExternalAccountConfig {
+  currency: DemoOnrampCurrency;
+  bridgeExternalAccountId: string;
+  bankName: string;
+  accountOwnerName: string;
+  last4: string;
+}
+
+const DEMO_EXTERNAL_ACCOUNT_CONFIGS: DemoExternalAccountConfig[] = [
+  {
+    currency: 'usd',
+    bridgeExternalAccountId: 'demo-ext-acct-usd',
+    bankName: 'Chase',
+    accountOwnerName: 'Demo User',
+    last4: '4821',
+  },
+  {
+    currency: 'eur',
+    bridgeExternalAccountId: 'demo-ext-acct-eur',
+    bankName: 'Deutsche Bank',
+    accountOwnerName: 'Demo User',
+    last4: '3000',
+  },
+  {
+    currency: 'gbp',
+    bridgeExternalAccountId: 'demo-ext-acct-gbp',
+    bankName: 'Barclays',
+    accountOwnerName: 'Demo User',
+    last4: '5678',
+  },
+  {
+    currency: 'mxn',
+    bridgeExternalAccountId: 'demo-ext-acct-mxn',
+    bankName: 'BBVA Mexico',
+    accountOwnerName: 'Demo User',
+    last4: '4567',
+  },
+  {
+    currency: 'brl',
+    bridgeExternalAccountId: 'demo-ext-acct-brl',
+    bankName: 'Itaú',
+    accountOwnerName: 'Demo User',
+    last4: '8901',
+  },
+  {
+    currency: 'cop',
+    bridgeExternalAccountId: 'demo-ext-acct-cop',
+    bankName: 'Bancolombia',
+    accountOwnerName: 'Demo User',
+    last4: '2345',
+  },
+];
+
+const DEMO_PAYOUT_RAILS: Array<{
+  destinationRail: string;
+  destinationCurrency: DemoOnrampCurrency;
+  externalAccountId: string;
+}> = [
+  { destinationRail: 'ach_same_day', destinationCurrency: 'usd', externalAccountId: 'demo-ext-acct-usd' },
+  { destinationRail: 'wire', destinationCurrency: 'usd', externalAccountId: 'demo-ext-acct-usd' },
+  { destinationRail: 'faster_payments', destinationCurrency: 'gbp', externalAccountId: 'demo-ext-acct-gbp' },
+  { destinationRail: 'pix', destinationCurrency: 'brl', externalAccountId: 'demo-ext-acct-brl' },
+  { destinationRail: 'spei', destinationCurrency: 'mxn', externalAccountId: 'demo-ext-acct-mxn' },
+];
+
+function demoVaId(currency: string): string {
+  return `demo-va-${currency.toLowerCase()}-base-usdc`;
+}
+
+function normalizeOnrampCurrency(currency: string): DemoOnrampCurrency {
+  const normalized = currency.toLowerCase() as DemoOnrampCurrency;
+  return DEMO_ONRAMP_CURRENCIES.includes(normalized) ? normalized : 'usd';
+}
+
+function demoOnrampConfig(currency: string): DemoOnrampConfig {
+  const normalized = normalizeOnrampCurrency(currency);
+  return DEMO_ONRAMP_CONFIGS.find((c) => c.currency === normalized) ?? DEMO_ONRAMP_CONFIGS[0]!;
+}
+
+function demoExternalConfig(currency: string): DemoExternalAccountConfig {
+  const normalized = normalizeOnrampCurrency(currency);
+  return (
+    DEMO_EXTERNAL_ACCOUNT_CONFIGS.find((c) => c.currency === normalized)
+    ?? DEMO_EXTERNAL_ACCOUNT_CONFIGS[0]!
+  );
+}
+
+function demoPayoutLaId(destinationRail: string, destinationCurrency: string): string {
+  return `demo-payout-la-${destinationCurrency}-${destinationRail.replace(/[^a-z0-9]+/gi, '-')}`;
+}
 
 interface SealedScope {
   sek: Uint8Array;
@@ -72,6 +279,27 @@ export class DemoService {
     return DEMO_EXCHANGE_ACCOUNT_ID;
   }
 
+  static get bridgeTransferId(): string {
+    return DEMO_TRANSFER_ONRAMP_ID;
+  }
+
+  /** @deprecated 使用 bridgeExternalAccountId('usd') */
+  static get bridgeExternalAccountId(): string {
+    return demoExternalConfig('usd').bridgeExternalAccountId;
+  }
+
+  static bridgeExternalAccountIdFor(currency = 'usd'): string {
+    return demoExternalConfig(currency).bridgeExternalAccountId;
+  }
+
+  static bridgeExternalAccountIds(): string[] {
+    return DEMO_EXTERNAL_ACCOUNT_CONFIGS.map((c) => c.bridgeExternalAccountId);
+  }
+
+  static isBridgeExternalAccountId(externalAccountId: string): boolean {
+    return DemoService.bridgeExternalAccountIds().includes(externalAccountId);
+  }
+
   /** 取得 demo 用戶 publicKey；未 setup keypair 回 null（caller 回空資料）。 */
   private static async getPublicKey(userId: string): Promise<string | null> {
     const user = await prisma.user.findUnique({
@@ -79,6 +307,24 @@ export class DemoService {
       select: { publicKey: true },
     });
     return user?.publicKey ?? null;
+  }
+
+  private static async getWalletAddress(userId: string): Promise<string> {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { scaAddress: true, walletAddress: true },
+    });
+    return (
+      user?.scaAddress
+      ?? user?.walletAddress
+      ?? '0xDemo0000000000000000000000000000000001'
+    );
+  }
+
+  private static demoDaysAgoIso(days: number): string {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - days);
+    return d.toISOString();
   }
 
   private static async sealScope(publicKey: string, scope: string): Promise<SealedScope> {
@@ -374,5 +620,369 @@ export class DemoService {
     } finally {
       zeroize(key.sek);
     }
+  }
+
+  // ── Bridge On/Off Ramp（App Store 審核：無真實 Bridge 帳戶時仍顯示完整 UI）────
+
+  static bridgeKycLink(customerType: BridgeCustomerType = 'individual'): KycLinkResult {
+    return {
+      bridgeCustomerId: DEMO_BRIDGE_CUSTOMER_ID,
+      kycLinkId: DEMO_KYC_LINK_ID,
+      customerType,
+      kycLink: 'https://demo.kura-finance.com/bridge/kyc',
+      tosLink: 'https://demo.kura-finance.com/bridge/tos',
+      kycStatus: 'approved',
+      tosStatus: 'approved',
+    };
+  }
+
+  static bridgeEndorsementLink(
+    endorsement: BridgeEndorsementType,
+    currency?: string,
+  ): EndorsementLinkResult {
+    return {
+      bridgeCustomerId: DEMO_BRIDGE_CUSTOMER_ID,
+      endorsement,
+      kycLink: `https://demo.kura-finance.com/bridge/endorsement/${endorsement}`,
+      ...(currency ? { currency } : {}),
+    };
+  }
+
+  static bridgeCustomerStatus(): CustomerStatusResult {
+    const endorsements: Array<{ name: BridgeEndorsementType; status: string }> = [
+      'base',
+      'sepa',
+      'faster_payments',
+      'spei',
+      'pix',
+      'cop',
+    ].map((name) => ({ name: name as BridgeEndorsementType, status: 'approved' }));
+
+    return {
+      bridgeCustomerId: DEMO_BRIDGE_CUSTOMER_ID,
+      customerType: 'individual',
+      kycStatus: 'approved',
+      tosStatus: 'approved',
+      endorsements,
+      canTransact: true,
+    };
+  }
+
+  static async bridgeVirtualAccount(
+    userId: string,
+    sourceCurrency = 'usd',
+  ): Promise<VirtualAccountResult> {
+    const config = demoOnrampConfig(sourceCurrency);
+    const destinationAddress = await DemoService.getWalletAddress(userId);
+    const vaId = demoVaId(config.currency);
+    const depositFee = {
+      developerFeePercent: DEMO_ONRAMP_FEE_PERCENT,
+      feeCurrency: config.currency,
+    };
+
+    return {
+      bridgeVirtualAccountId: vaId,
+      status: 'activated',
+      sourceCurrency: config.currency,
+      destinationRail: 'base',
+      destinationCurrency: 'usdc',
+      destinationAddress,
+      developerFeePercent: DEMO_ONRAMP_FEE_PERCENT,
+      depositFee,
+      minDeposit: resolveOnRampMinDeposit(config.currency, DEMO_ONRAMP_FEE_PERCENT),
+      depositInstructions: {
+        payment_rail: config.primaryRail,
+        payment_rails: config.paymentRails,
+        currency: config.currency,
+        deposit_message: `KURA-DEMO-${vaId}`,
+        ...config.depositInstructions,
+      },
+      createdAt: DemoService.demoDaysAgoIso(14),
+    };
+  }
+
+  static async bridgeVirtualAccounts(userId: string): Promise<VirtualAccountResult[]> {
+    return Promise.all(
+      DEMO_ONRAMP_CURRENCIES.map((currency) => DemoService.bridgeVirtualAccount(userId, currency)),
+    );
+  }
+
+  static bridgeDeposits(): DepositResult[] {
+    const deposits: DepositResult[] = [];
+
+    for (const [index, currency] of DEMO_ONRAMP_CURRENCIES.entries()) {
+      const vaId = demoVaId(currency);
+      const completedAt = DemoService.demoDaysAgoIso(5 - index);
+      const sampleAmounts: Record<DemoOnrampCurrency, string> = {
+        usd: '500.00',
+        eur: '420.00',
+        gbp: '380.00',
+        mxn: '8500.00',
+        brl: '2500.00',
+        cop: '1800000.00',
+      };
+      const amount = sampleAmounts[currency];
+
+      deposits.push({
+        depositId: `demo-deposit-${currency}-completed`,
+        bridgeVirtualAccountId: vaId,
+        status: 'payment_processed',
+        completed: true,
+        amount,
+        currency,
+        netAmount: amount,
+        developerFeeAmount: '0.00',
+        exchangeFeeAmount: '0.00',
+        gasFee: '0.00',
+        destinationTxHash: `0xdemoBridgeDeposit${currency}TxHash000001`,
+        createdAt: completedAt,
+        updatedAt: completedAt,
+        events: [
+          {
+            type: 'funds_received',
+            amount,
+            currency,
+            subtotalAmount: null,
+            developerFeeAmount: null,
+            exchangeFeeAmount: null,
+            gasFee: null,
+            destinationTxHash: null,
+            occurredAt: completedAt,
+          },
+          {
+            type: 'payment_processed',
+            amount,
+            currency,
+            subtotalAmount: amount,
+            developerFeeAmount: '0.00',
+            exchangeFeeAmount: '0.00',
+            gasFee: '0.00',
+            destinationTxHash: `0xdemoBridgeDeposit${currency}TxHash000001`,
+            occurredAt: completedAt,
+          },
+        ],
+      });
+    }
+
+    // USD 額外一筆處理中入金
+    deposits.unshift({
+      depositId: 'demo-deposit-usd-pending',
+      bridgeVirtualAccountId: demoVaId('usd'),
+      status: 'funds_received',
+      completed: false,
+      amount: '200.00',
+      currency: 'usd',
+      netAmount: null,
+      developerFeeAmount: null,
+      exchangeFeeAmount: null,
+      gasFee: null,
+      destinationTxHash: null,
+      createdAt: DemoService.demoDaysAgoIso(1),
+      updatedAt: DemoService.demoDaysAgoIso(1),
+      events: [
+        {
+          type: 'funds_received',
+          amount: '200.00',
+          currency: 'usd',
+          subtotalAmount: null,
+          developerFeeAmount: null,
+          exchangeFeeAmount: null,
+          gasFee: null,
+          destinationTxHash: null,
+          occurredAt: DemoService.demoDaysAgoIso(1),
+        },
+      ],
+    });
+
+    return deposits;
+  }
+
+  static bridgeDemoTransferIds(): string[] {
+    return DEMO_ONRAMP_CURRENCIES.map((currency) => `demo-transfer-onramp-${currency}`);
+  }
+
+  static async bridgeTransfers(userId: string): Promise<TransferResult[]> {
+    const samples: Array<{ currency: DemoOnrampCurrency; amount: string; rail: string }> = [
+      { currency: 'usd', amount: '500.00', rail: 'ach_push' },
+      { currency: 'eur', amount: '420.00', rail: 'sepa' },
+      { currency: 'gbp', amount: '380.00', rail: 'faster_payments' },
+      { currency: 'mxn', amount: '8500.00', rail: 'spei' },
+      { currency: 'brl', amount: '2500.00', rail: 'pix' },
+      { currency: 'cop', amount: '1800000.00', rail: 'pse' },
+    ];
+    return Promise.all(
+      samples.map((s) =>
+        DemoService.bridgeTransfer(
+          userId,
+          `demo-transfer-onramp-${s.currency}`,
+          s.currency,
+          s.amount,
+          s.rail,
+        ),
+      ),
+    );
+  }
+
+  static async bridgeTransfer(
+    userId: string,
+    bridgeTransferId: string,
+    sourceCurrency = 'usd',
+    amount = '500.00',
+    sourceRail = 'ach_push',
+  ): Promise<TransferResult> {
+    const config = demoOnrampConfig(sourceCurrency);
+    const vaId = demoVaId(config.currency);
+    const destinationAddress = await DemoService.getWalletAddress(userId);
+
+    return {
+      bridgeTransferId,
+      direction: 'onramp',
+      state: 'payment_processed',
+      amount,
+      sourceRail,
+      sourceCurrency: config.currency,
+      destinationRail: 'base',
+      destinationCurrency: 'usdc',
+      destinationAddress,
+      destinationExternalId: null,
+      depositInstructions: {
+        payment_rail: config.primaryRail,
+        payment_rails: config.paymentRails,
+        currency: config.currency,
+        bank_name: config.bankName,
+        deposit_message: `KURA-DEMO-${vaId}`,
+        ...config.depositInstructions,
+      },
+      createdAt: DemoService.demoDaysAgoIso(3),
+    };
+  }
+
+  static bridgeExternalAccounts(): ExternalAccountResult[] {
+    return DEMO_EXTERNAL_ACCOUNT_CONFIGS.map((c) => DemoService.bridgeExternalAccount(c.currency));
+  }
+
+  static bridgeExternalAccount(currency = 'usd'): ExternalAccountResult {
+    const config = demoExternalConfig(currency);
+    return {
+      bridgeExternalAccountId: config.bridgeExternalAccountId,
+      bankName: config.bankName,
+      accountOwnerName: config.accountOwnerName,
+      last4: config.last4,
+      currency: config.currency,
+      active: true,
+    };
+  }
+
+  static bridgeExternalAccountFromBody(body: Record<string, unknown>): ExternalAccountResult {
+    const currency =
+      typeof body.currency === 'string' ? body.currency : 'usd';
+    return DemoService.bridgeExternalAccount(currency);
+  }
+
+  static bridgeDeletedExternalAccount(currency = 'usd'): ExternalAccountResult {
+    return {
+      ...DemoService.bridgeExternalAccount(currency),
+      active: false,
+    };
+  }
+
+  static async bridgeLiquidationAddress(userId: string): Promise<LiquidationAddressResult> {
+    const pair = LIQUIDATION_ADDRESS_TRON_USDT_TO_BASE_USDC;
+    const destinationAddress = await DemoService.getWalletAddress(userId);
+    const depositFee = {
+      developerFeePercent: DEMO_CRYPTO_FEE_PERCENT,
+      feeCurrency: 'usdt',
+    };
+
+    return {
+      bridgeLiquidationAddressId: DEMO_LIQUIDATION_ADDRESS_ID,
+      state: 'active',
+      sourceChain: pair.sourceChain,
+      sourceCurrency: pair.sourceCurrency,
+      destinationRail: pair.destinationRail,
+      destinationCurrency: pair.destinationCurrency,
+      destinationAddress,
+      depositAddress: DEMO_TRON_DEPOSIT_ADDRESS,
+      blockchainMemo: 'KURA-DEMO-TRON',
+      developerFeePercent: DEMO_CRYPTO_FEE_PERCENT,
+      depositFee,
+      minDeposit: resolveTronUsdtMinDeposit(DEMO_CRYPTO_FEE_PERCENT),
+      createdAt: DemoService.demoDaysAgoIso(10),
+    };
+  }
+
+  static async bridgeLiquidationAddresses(userId: string): Promise<LiquidationAddressResult[]> {
+    return [await DemoService.bridgeLiquidationAddress(userId)];
+  }
+
+  static async bridgePayoutAddress(
+    userId: string,
+    params: CreatePayoutAddressParams = {
+      destinationRail: 'ach_same_day',
+      destinationCurrency: 'usd',
+      externalAccountId: demoExternalConfig('usd').bridgeExternalAccountId,
+    },
+  ): Promise<PayoutLiquidationAddressResult> {
+    const payoutFee = {
+      developerFeePercent: DEMO_PAYOUT_FEE_PERCENT,
+      feeCurrency: 'usdc',
+    };
+    const laId = demoPayoutLaId(params.destinationRail, params.destinationCurrency);
+
+    return {
+      bridgeLiquidationAddressId: laId,
+      state: 'active',
+      sourceChain: 'base',
+      sourceCurrency: 'usdc',
+      destinationRail: params.destinationRail,
+      destinationCurrency: params.destinationCurrency,
+      bridgeExternalAccountId: params.externalAccountId,
+      depositAddress: `0xDemoBridgePayout${params.destinationCurrency}${params.destinationRail}001`,
+      blockchainMemo: null,
+      developerFeePercent: DEMO_PAYOUT_FEE_PERCENT,
+      payoutFee,
+      minDeposit: resolvePayoutMinDeposit(params.destinationRail, DEMO_PAYOUT_FEE_PERCENT),
+      createdAt: DemoService.demoDaysAgoIso(7),
+    };
+  }
+
+  static async bridgePayoutAddresses(userId: string): Promise<PayoutLiquidationAddressResult[]> {
+    return Promise.all(
+      DEMO_PAYOUT_RAILS.map((rail) =>
+        DemoService.bridgePayoutAddress(userId, {
+          destinationRail: rail.destinationRail,
+          destinationCurrency: rail.destinationCurrency,
+          externalAccountId: rail.externalAccountId,
+        }),
+      ),
+    );
+  }
+
+  static bridgePayoutDrains(liquidationAddressId: string): PayoutDrainResult[] {
+    if (!liquidationAddressId.startsWith('demo-payout-la-')) {
+      return [];
+    }
+
+    const parts = liquidationAddressId.replace('demo-payout-la-', '').split('-');
+    const destinationCurrency = parts[0] ?? 'usd';
+    const destinationRail = parts.slice(1).join('_') || 'ach_same_day';
+    const externalAccountId = demoExternalConfig(destinationCurrency).bridgeExternalAccountId;
+
+    return [
+      {
+        bridgeDrainId: `demo-payout-drain-${destinationCurrency}`,
+        bridgeLiquidationAddressId: liquidationAddressId,
+        state: 'payment_processed',
+        amount: '1200.00',
+        currency: 'usdc',
+        depositTxHash: `0xdemoBridgePayoutDrain${destinationCurrency}Tx001`,
+        destination: {
+          payment_rail: destinationRail,
+          currency: destinationCurrency,
+          external_account_id: externalAccountId,
+        },
+        createdAt: DemoService.demoDaysAgoIso(2),
+      },
+    ];
   }
 }

@@ -103,7 +103,6 @@ jobs:
             JWT_SECRET=${{ secrets.JWT_SECRET }}
             ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
             PLAID_CLIENT_ID=${{ secrets.PLAID_CLIENT_ID }}
-            PLAID_SANDBOX_SECRET=${{ secrets.PLAID_SANDBOX_SECRET }}
             PLAID_PRODUCTION_SECRET=${{ secrets.PLAID_PRODUCTION_SECRET }}
             PLAID_REDIRECT_URI=${{ secrets.PLAID_REDIRECT_URI }}
             PLAID_WEBHOOK_URL=${{ secrets.PLAID_WEBHOOK_URL }}
@@ -138,6 +137,18 @@ jobs:
             WEBAUTHN_RP_ID=api.kura-finance.com
             WEBAUTHN_RP_NAME=Kura
             WEBAUTHN_ORIGIN=https://api.kura-finance.com\,android:apk-key-hash:MePOeO1vVaYsQDTyYfKRQy2-RHSgZxcCC4ifchmuu6A
+
+            # Codego sandbox -- for demo card issuing
+            # Card issuing API（sandbox 預設）
+            CODEGO_API_KEY=vcck_sbx_515e7513a3223f0ebf1ae90c9e0ee7e8b08fc009593b5417
+            CODEGO_API_URL=https://vcc-sandbox.codegotech.com/api/v1   # 可選
+            # KYC iframe（預設 sandbox）
+            CODEGO_KYC_API_KEY=...          # 可選，預設同 CODEGO_API_KEY
+            CODEGO_KYC_API_URL=https://kyc-sandbox.codegotech.com/api  # 可選
+            CODEGO_KYC_ORIGIN=https://app.kura-finance.com
+            CODEGO_KYC_RETURN_URL=https://app.kura-finance.com/codego/kyc/done
+            # Webhook（whitelabel console → API & Webhooks）
+            CODEGO_WEBHOOK_SECRET=...
 
       
       # 🔔 GitHub Secrets 配置提示（首次部署時需設置）

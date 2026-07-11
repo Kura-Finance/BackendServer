@@ -64,15 +64,17 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
 /**
  * 登出 - 清除 Cookie（網頁客戶端）
  */
+function clearAuthCookie(res: Response): void {
+  res.clearCookie('authToken', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+  });
+}
+
 export const logout = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    // 清除登入 Cookie
-    res.clearCookie('authToken', {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-    });
-
+    clearAuthCookie(res);
     sendSuccess(res, { message: 'Logged out successfully' });
   } catch (error) {
     logError('Logout failed', error);
@@ -88,13 +90,18 @@ export const deleteAccount = async (req: AuthRequest, res: Response): Promise<vo
     }
 
     const result = await AuthService.deleteAccount(userId);
+    clearAuthCookie(res);
     sendSuccess(res, result);
   } catch (error) {
     logError('Delete account failed', error, { userId: req.userId });
-    const isDatabaseError = error instanceof PrismaClientKnownRequestError;
-    const statusCode = isDatabaseError ? 503 : 500;
-    const message = 'Internal server error';
-    sendError(res, statusCode, { code: isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR', message });
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    const statusCode = (error as { statusCode?: number }).statusCode
+      ?? (error instanceof PrismaClientKnownRequestError ? 503 : 500);
+    const isNotFound = statusCode === 404 || message.toLowerCase().includes('not found');
+    sendError(res, isNotFound ? 404 : statusCode, {
+      code: isNotFound ? 'NOT_FOUND' : statusCode === 503 ? 'DATABASE_ERROR' : 'INTERNAL_ERROR',
+      message: isNotFound ? message : 'Internal server error',
+    });
   }
 };
 

@@ -8,7 +8,8 @@
  *   1. 建立 KYC link  → POST /v0/kyc_links（hosted KYC + TOS）
  *   2. 用戶完成 KYC   → 由 webhook / 輪詢更新 kycStatus
  *   3. on-ramp        → POST /v0/transfers  (source=fiat, destination=crypto)
- *   4. off-ramp       → POST /v0/transfers  (source=crypto, destination=fiat/external_account)
+ *   4. off-ramp        → POST /v0/customers/{id}/liquidation_addresses (Base USDC → fiat)
+ *   5. crypto deposit    → POST /v0/customers/{id}/liquidation_addresses (Tron USDT → Base USDC)
  *
  * Base: https://api.bridge.xyz/v0
  */
@@ -18,6 +19,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { prisma } from '../../shared/lib/prisma';
 import { appLogger, logDebug } from '../../logger';
+import { DemoService } from '../../demo/demoService';
 import type {
   BridgeCustomerResponse,
   BridgeCustomerType,
@@ -31,12 +33,31 @@ import type {
   BridgeVirtualAccountResponse,
   CreateKycLinkParams,
   CreateVirtualAccountParams,
+  CreateLiquidationAddressParams,
+  CreatePayoutAddressParams,
   CustomerStatusResult,
+  EndorsementLinkResult,
   DepositResult,
   ExternalAccountResult,
   KycLinkResult,
+  LiquidationAddressResult,
   TransferResult,
   VirtualAccountResult,
+  BridgeLiquidationAddressResponse,
+  BridgeLiquidationAddressListResponse,
+  PayoutOption,
+  PayoutLiquidationAddressResult,
+  PayoutDrainResult,
+  BridgeDrainListResponse,
+  BridgeDrainResponse,
+} from '../models/types';
+import {
+  LIQUIDATION_ADDRESS_TRON_USDT_TO_BASE_USDC,
+  PAYOUT_OPTION_BASES,
+  PAYOUT_LIQUIDATION_SOURCE,
+  resolveOnRampMinDeposit,
+  resolvePayoutMinDeposit,
+  resolveTronUsdtMinDeposit,
 } from '../models/types';
 
 const DEFAULT_BRIDGE_API = 'https://api.bridge.xyz/v0';
@@ -53,6 +74,13 @@ function getApiKey(): string {
   return key;
 }
 
+export interface BridgeStructuredErrorBody {
+  code?: string;
+  endorsement?: string;
+  currency?: string;
+  message?: string;
+}
+
 export class BridgeError extends Error {
   constructor(
     public readonly statusCode: number,
@@ -65,6 +93,14 @@ export class BridgeError extends Error {
 
   get isUnauthorized(): boolean {
     return this.statusCode === 401;
+  }
+
+  get structuredBody(): BridgeStructuredErrorBody | null {
+    try {
+      return JSON.parse(this.bridgeBody) as BridgeStructuredErrorBody;
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -115,13 +151,12 @@ async function bridgeFetch<T>(path: string, options: BridgeFetchOptions = {}): P
 
 const APPROVED_KYC_STATUSES = new Set(['approved', 'active']);
 
-// 入金幣別 → 需要的 Bridge endorsement（rail 權限）。
-// 這些全是 API 驅動：用建立 KYC link 時帶 `endorsements` 申請即可，「不需」到 dashboard 開通。
-//   usd  → base（KYC 通過預設具備）
-//   gbp  → faster_payments（UK FPS）
-//   eur  → sepa
-//   mxn  → spei；brl → pix；cop → cop
-const CURRENCY_ENDORSEMENT: Record<string, BridgeEndorsementType> = {
+// 入金 / 出金法幣幣別 → 需要的 Bridge endorsement（rail 權限）。
+// 這些全是 API 驅動：用 POST /endorsement-link 或 GET /customers/{id}/kyc_link?endorsement=... 申請。
+//   usd  → base（KYC 通過預設具備，無需額外 hosted flow）
+//   gbp  → faster_payments；eur → sepa；mxn → spei
+//   brl  → pix；cop → cop
+export const CURRENCY_ENDORSEMENT: Record<string, BridgeEndorsementType> = {
   usd: 'base',
   gbp: 'faster_payments',
   eur: 'sepa',
@@ -129,6 +164,13 @@ const CURRENCY_ENDORSEMENT: Record<string, BridgeEndorsementType> = {
   brl: 'pix',
   cop: 'cop',
 };
+
+/** 依法幣幣別解析所需 endorsement；usd/base 回傳 null（不需額外申請）。 */
+export function resolveEndorsementForCurrency(currency: string): BridgeEndorsementType | null {
+  const endorsement = CURRENCY_ENDORSEMENT[currency.toLowerCase()];
+  if (!endorsement || endorsement === 'base') return null;
+  return endorsement;
+}
 
 // ── 費率設計：保證不虧本 ────────────────────────────────────────────────
 //
@@ -156,25 +198,49 @@ const USDT_SURCHARGE_PERCENT = 0.1;
 // 每筆 off-ramp 最低 fee（USD 計），避免極小額轉帳的 fee 被四捨五入吃掉。
 const OFFRAMP_MIN_FEE = 0.5;
 
+// Crypto liquidation address 批發成本（base 100，保守估計跨鏈 + 換匯）。
+const CRYPTO_LIQUIDATION_WHOLESALE_PERCENT = 0.25;
+
 // Bridge 向平台收的 on-ramp 批發成本（含 FX，base 100）。
 const ONRAMP_WHOLESALE_PERCENT: Record<string, number> = {
   usd: 0.5, // onramp 0.50%
-  gbp: 0.6, // onramp 0.50% +（GBP<>USD FX 未報價，保守 +0.10% buffer）
+  gbp: 0.5, // onramp 0.50%
   eur: 0.5, // USD<>EUR FX all-in
   mxn: 0.5, // USD<>MXN FX all-in
   brl: 0.55, // USD<>BRL FX all-in
-  cop: 0.6, // 未報價，保守 buffer
+  cop: 0.5, // USD<>COP FX all-in
 };
 
 // Bridge 向平台收的 off-ramp 批發成本（依目的法幣，含 FX，base 100）。
 const OFFRAMP_WHOLESALE_PERCENT: Record<string, number> = {
   usd: 0.25, // offramp 0.25%
-  gbp: 0.35, // offramp 0.25% + buffer
+  gbp: 0.25, // offramp 0.25%
   eur: 0.5, // USD<>EUR FX all-in
   mxn: 0.5, // USD<>MXN FX all-in
   brl: 0.55, // USD<>BRL FX all-in
   cop: 0.5, // 未報價，保守 buffer
 };
+
+const OFFRAMP_RAIL_CURRENCY: Record<string, string> = {
+  ach: 'usd',
+  ach_push: 'usd',
+  ach_same_day: 'usd',
+  wire: 'usd',
+  sepa: 'eur',
+  faster_payments: 'gbp',
+  pix: 'brl',
+  spei: 'mxn',
+};
+
+function assertOffRampRailCurrency(destinationRail: string, destinationCurrency: string): void {
+  const expected = OFFRAMP_RAIL_CURRENCY[destinationRail.toLowerCase()];
+  if (!expected || expected === destinationCurrency.toLowerCase()) return;
+  throw new BridgeError(
+    400,
+    `destinationRail "${destinationRail}" requires destinationCurrency "${expected}".`,
+    'assertOffRampRailCurrency',
+  );
+}
 
 /** 向上取兩位小數，確保收的 fee 不低於成本（不虧本）。 */
 function ceil2(n: number): number {
@@ -241,6 +307,41 @@ function computeOffRampDeveloperFee(amount: string, destinationCurrency: string)
   return trimDecimal(fee.toFixed(2));
 }
 
+/** Liquidation Address 的 custom_developer_fee_percent（base 100，含 USDT surcharge）。 */
+function cryptoLiquidationFeePercent(): string {
+  return ceil2(
+    CRYPTO_LIQUIDATION_WHOLESALE_PERCENT + PLATFORM_MARGIN_PERCENT,
+  ).toFixed(2);
+}
+
+/** Payout LA 的 custom_developer_fee_percent（base 100，依目的法幣批發 + margin）。 */
+function payoutLiquidationFeePercent(destinationCurrency: string): string {
+  const wholesale = OFFRAMP_WHOLESALE_PERCENT[destinationCurrency.toLowerCase()] ?? 0.25;
+  return ceil2(wholesale + PLATFORM_MARGIN_PERCENT).toFixed(2);
+}
+
+function buildPayoutDeveloperFee(
+  developerFeePercent: string | null,
+  destinationCurrency: string,
+): { developerFeePercent: string; feeCurrency: string } {
+  const fallback = payoutLiquidationFeePercent(destinationCurrency);
+  return {
+    developerFeePercent: developerFeePercent ?? fallback,
+    feeCurrency: PAYOUT_LIQUIDATION_SOURCE.sourceCurrency,
+  };
+}
+
+function buildDepositDeveloperFee(
+  feeCurrency: string,
+  developerFeePercent: string | null,
+  fallbackPercent: string,
+): { developerFeePercent: string; feeCurrency: string } {
+  return {
+    developerFeePercent: developerFeePercent ?? fallbackPercent,
+    feeCurrency: feeCurrency.toLowerCase(),
+  };
+}
+
 function asJson(value: unknown): Prisma.InputJsonValue {
   return value as unknown as Prisma.InputJsonValue;
 }
@@ -268,6 +369,65 @@ function isBridgeNotFound(error: unknown): boolean {
   return /not[_\s]?found|customer not found/i.test(error.bridgeBody);
 }
 
+function isDuplicateLiquidationAddress(error: unknown): boolean {
+  if (!(error instanceof BridgeError)) return false;
+  if (error.statusCode !== 400 && error.statusCode !== 409) return false;
+  try {
+    const parsed = JSON.parse(error.bridgeBody) as { code?: string; message?: string };
+    const haystack = `${parsed.code ?? ''} ${parsed.message ?? ''} ${error.bridgeBody}`.toLowerCase();
+    return haystack.includes('duplicate') || haystack.includes('already');
+  } catch {
+    return /duplicate|already/i.test(error.bridgeBody);
+  }
+}
+
+function matchesLiquidationRoute(
+  la: BridgeLiquidationAddressResponse,
+  pair: typeof LIQUIDATION_ADDRESS_TRON_USDT_TO_BASE_USDC,
+  destinationAddress: string,
+): boolean {
+  return (
+    la.chain === pair.sourceChain
+    && la.currency === pair.sourceCurrency
+    && la.destination_payment_rail === pair.destinationRail
+    && la.destination_currency === pair.destinationCurrency
+    && (la.destination_address?.toLowerCase() ?? '') === destinationAddress.toLowerCase()
+  );
+}
+
+function matchesPayoutLiquidationRoute(
+  la: BridgeLiquidationAddressResponse,
+  params: {
+    destinationRail: string;
+    destinationCurrency: string;
+    externalAccountId: string;
+  },
+): boolean {
+  const source = PAYOUT_LIQUIDATION_SOURCE;
+  return (
+    la.chain === source.sourceChain
+    && la.currency === source.sourceCurrency
+    && la.destination_payment_rail === params.destinationRail
+    && la.destination_currency === params.destinationCurrency
+    && (la.external_account_id ?? '') === params.externalAccountId
+  );
+}
+
+function buildPayoutDestinationReferenceFields(
+  destinationRail: string,
+  destinationReference?: string,
+): Record<string, string> {
+  if (!destinationReference) return {};
+  const rail = destinationRail.toLowerCase();
+  if (rail === 'wire') return { destination_wire_message: destinationReference };
+  if (rail === 'spei') return { destination_spei_reference: destinationReference };
+  if (rail === 'sepa') return { destination_sepa_reference: destinationReference };
+  if (rail === 'ach' || rail === 'ach_push' || rail === 'ach_same_day') {
+    return { destination_ach_reference: destinationReference };
+  }
+  return { destination_reference: destinationReference };
+}
+
 export class BridgeService {
   // ── Customer / KYC ──────────────────────────────────────────────────
 
@@ -281,7 +441,40 @@ export class BridgeService {
     userId: string,
     params: CreateKycLinkParams,
   ): Promise<KycLinkResult> {
+    if (await DemoService.isDemoUser(userId)) {
+      return DemoService.bridgeKycLink(params.type);
+    }
+
     const existing = await prisma.bridgeCustomer.findUnique({ where: { userId } });
+
+    // 既有 customer 申請額外 endorsement（例如 BRL→pix、COP→cop）：
+    // 走 Bridge GET /customers/{id}/kyc_link?endorsement=...，而非重建 kyc_link。
+    if (existing?.bridgeCustomerId && params.endorsements?.length) {
+      const status = await this.getCustomerStatus(userId);
+      const missing = params.endorsements.filter(
+        (endorsement) => !status.endorsements.some(
+          (e) => e.name === endorsement && e.status === 'approved',
+        ),
+      );
+      if (missing.length > 0) {
+        const endorsement = missing[0]!;
+        const link = await this.getEndorsementKycLink(
+          userId,
+          endorsement,
+          params.redirectUri,
+        );
+        return {
+          bridgeCustomerId: existing.bridgeCustomerId,
+          kycLinkId: existing.kycLinkId,
+          customerType: existing.customerType as BridgeCustomerType,
+          kycLink: link.kycLink,
+          tosLink: existing.tosLink,
+          kycStatus: existing.kycStatus,
+          tosStatus: existing.tosStatus,
+          requestedEndorsement: link.endorsement,
+        };
+      }
+    }
 
     if (existing?.kycLinkId) {
       try {
@@ -449,8 +642,91 @@ export class BridgeService {
     };
   }
 
+  /**
+   * 為「已完成 base KYC」的既有 customer 取得額外 endorsement 的 hosted flow URL。
+   * Bridge: GET /customers/{customerID}/kyc_link?endorsement=pix|cop|sepa|...
+   */
+  static async getEndorsementKycLink(
+    userId: string,
+    endorsement: BridgeEndorsementType,
+    redirectUri?: string,
+  ): Promise<EndorsementLinkResult> {
+    if (await DemoService.isDemoUser(userId)) {
+      return DemoService.bridgeEndorsementLink(endorsement);
+    }
+
+    const record = await prisma.bridgeCustomer.findUnique({ where: { userId } });
+    if (!record?.bridgeCustomerId) {
+      throw new BridgeError(
+        409,
+        'Bridge customer not onboarded. Complete base KYC before requesting endorsements.',
+        'getEndorsementKycLink',
+      );
+    }
+
+    const query = new URLSearchParams({ endorsement });
+    if (redirectUri) {
+      query.set('redirect_uri', redirectUri);
+    }
+
+    const response = await bridgeFetch<{ url: string }>(
+      `/customers/${record.bridgeCustomerId}/kyc_link?${query.toString()}`,
+    );
+
+    if (!response?.url) {
+      throw new BridgeError(
+        502,
+        `Bridge returned no endorsement KYC URL for "${endorsement}".`,
+        'getEndorsementKycLink',
+      );
+    }
+
+    appLogger.info('[BridgeService] Endorsement KYC link fetched', {
+      userId,
+      endorsement,
+      bridgeCustomerId: record.bridgeCustomerId,
+    });
+
+    return {
+      bridgeCustomerId: record.bridgeCustomerId,
+      endorsement,
+      kycLink: response.url,
+    };
+  }
+
+  /**
+   * 依法幣幣別申請額外 endorsement 的 hosted flow（BRL→pix、COP→cop 等）。
+   * 前端可傳 { currency: "brl" } 或 { currency: "cop" }，不必記 endorsement 名稱。
+   */
+  static async getEndorsementKycLinkForCurrency(
+    userId: string,
+    currency: string,
+    redirectUri?: string,
+  ): Promise<EndorsementLinkResult> {
+    const normalized = currency.toLowerCase();
+    const endorsement = resolveEndorsementForCurrency(normalized);
+    if (!endorsement) {
+      throw new BridgeError(
+        400,
+        `${normalized.toUpperCase()} does not require an additional Bridge endorsement.`,
+        'getEndorsementKycLinkForCurrency',
+      );
+    }
+
+    if (await DemoService.isDemoUser(userId)) {
+      return DemoService.bridgeEndorsementLink(endorsement, normalized);
+    }
+
+    const link = await this.getEndorsementKycLink(userId, endorsement, redirectUri);
+    return { ...link, currency: normalized };
+  }
+
   /** 取得用戶 Bridge customer 狀態（含 endorsements 與可否交易）。 */
   static async getCustomerStatus(userId: string): Promise<CustomerStatusResult> {
+    if (await DemoService.isDemoUser(userId)) {
+      return DemoService.bridgeCustomerStatus();
+    }
+
     const record = await prisma.bridgeCustomer.findUnique({ where: { userId } });
     if (!record) {
       throw new BridgeError(404, 'Bridge customer not found. Create a KYC link first.', 'getCustomerStatus');
@@ -544,15 +820,14 @@ export class BridgeService {
    *
    * 先向 Bridge 刷新最新狀態（避免本地 endorsements 過時），再判定。
    * 缺少時丟出結構化 409（code=endorsement_required），讓前端引導用戶
-   * 透過 POST /api/bridge/kyc-link 帶 endorsements 申請（純 API，免 dashboard）。
+   * 透過 POST /api/bridge/endorsement-link 取得 hosted flow URL。
    */
   private static async assertEndorsementForCurrency(
     userId: string,
     currency: string,
   ): Promise<void> {
-    const required = CURRENCY_ENDORSEMENT[currency.toLowerCase()];
-    // base（usd）KYC 通過即具備，無需額外 endorsement
-    if (!required || required === 'base') return;
+    const required = resolveEndorsementForCurrency(currency);
+    if (!required) return;
 
     // 向 Bridge 拉最新 customer 狀態（同時同步本地 endorsements）
     const status = await this.getCustomerStatus(userId);
@@ -568,9 +843,9 @@ export class BridgeService {
         endorsement: required,
         currency: currency.toLowerCase(),
         message:
-          `${currency.toUpperCase()} virtual accounts require the "${required}" endorsement. ` +
-          `Request it via POST /api/bridge/kyc-link with endorsements: ["${required}"] ` +
-          `and have the user complete the hosted flow (usually just a ToS step if KYC is already approved).`,
+          `${currency.toUpperCase()} deposits require the "${required}" endorsement. ` +
+          `Call POST /api/bridge/endorsement-link with { "endorsement": "${required}" } ` +
+          `and open the returned kycLink (usually just a ToS step if KYC is already approved).`,
       }),
       'assertEndorsementForCurrency',
     );
@@ -615,6 +890,10 @@ export class BridgeService {
     userId: string,
     params: CreateVirtualAccountParams,
   ): Promise<VirtualAccountResult> {
+    if (await DemoService.isDemoUser(userId)) {
+      return DemoService.bridgeVirtualAccount(userId, params.sourceCurrency);
+    }
+
     const bridgeCustomerId = await this.requireTransactableCustomer(userId);
 
     // 入金幣別需要對應的 rail endorsement（gbp→faster_payments 等）；
@@ -687,6 +966,10 @@ export class BridgeService {
 
   /** 列出使用者的入金 Virtual Accounts。 */
   static async listVirtualAccounts(userId: string): Promise<VirtualAccountResult[]> {
+    if (await DemoService.isDemoUser(userId)) {
+      return DemoService.bridgeVirtualAccounts(userId);
+    }
+
     const records = await prisma.bridgeVirtualAccount.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
@@ -700,6 +983,14 @@ export class BridgeService {
    * @param virtualAccountId 選填，只查特定 VA 的入金。
    */
   static async listDeposits(userId: string, virtualAccountId?: string): Promise<DepositResult[]> {
+    if (await DemoService.isDemoUser(userId)) {
+      const deposits = DemoService.bridgeDeposits();
+      if (virtualAccountId) {
+        return deposits.filter((d) => d.bridgeVirtualAccountId === virtualAccountId);
+      }
+      return deposits;
+    }
+
     const events = await prisma.bridgeVirtualAccountEvent.findMany({
       where: {
         userId,
@@ -813,6 +1104,14 @@ export class BridgeService {
   private static toVirtualAccountResult(
     record: Prisma.BridgeVirtualAccountGetPayload<Record<string, never>>,
   ): VirtualAccountResult {
+    const fallbackPercent = onRampFeePercent(record.sourceCurrency, record.destinationCurrency)
+      ?? '0.00';
+    const depositFee = buildDepositDeveloperFee(
+      record.sourceCurrency,
+      record.developerFeePercent,
+      fallbackPercent,
+    );
+
     return {
       bridgeVirtualAccountId: record.bridgeVirtualAccountId,
       status: record.status,
@@ -820,7 +1119,12 @@ export class BridgeService {
       destinationRail: record.destinationRail,
       destinationCurrency: record.destinationCurrency,
       destinationAddress: record.destinationAddress,
-      developerFeePercent: record.developerFeePercent,
+      developerFeePercent: depositFee.developerFeePercent,
+      depositFee,
+      minDeposit: resolveOnRampMinDeposit(
+        record.sourceCurrency,
+        depositFee.developerFeePercent,
+      ),
       depositInstructions:
         (record.depositInstructions as unknown as VirtualAccountResult['depositInstructions']) ??
         null,
@@ -875,62 +1179,498 @@ export class BridgeService {
     });
   }
 
-  // ── Off-ramp：Transfers（出金）──────────────────────────────────────
+  // ── Off-ramp：Payout Liquidation Address（Base USDC → 法幣）──────────
 
-  static async createOffRamp(
+  static listPayoutOptions(): PayoutOption[] {
+    return PAYOUT_OPTION_BASES.map((option) => ({
+      ...option,
+      minDeposit: resolvePayoutMinDeposit(
+        option.rail,
+        payoutLiquidationFeePercent(option.currency),
+      ),
+    }));
+  }
+
+  /**
+   * 取得或建立永久 Base USDC 出金地址，自動兌換成法幣送到 external account。
+   * 類似 crypto 入金 LA：建立一次，固定地址，可重複打 USDC。
+   */
+  static async getOrCreatePayoutAddress(
     userId: string,
-    params: {
-      amount: string;
-      sourceRail: string;
-      sourceCurrency: string;
-      destinationRail: string;
-      destinationCurrency: string;
-      externalAccountId: string;
-      clientReferenceId?: string;
-    },
-  ): Promise<TransferResult> {
-    const bridgeCustomerId = await this.requireTransactableCustomer(userId);
-
-    // 確認該 external account 屬於此用戶
-    const externalAccount = await prisma.bridgeExternalAccount.findFirst({
-      where: { userId, bridgeExternalAccountId: params.externalAccountId },
-      select: { id: true },
-    });
-    if (!externalAccount) {
-      throw new BridgeError(404, 'External account not found for this user.', 'createOffRamp');
+    params: CreatePayoutAddressParams,
+  ): Promise<PayoutLiquidationAddressResult> {
+    if (await DemoService.isDemoUser(userId)) {
+      return DemoService.bridgePayoutAddress(userId, params);
     }
 
-    // developer_fee 一律由後端計算（不接受 client 指定），保證 ≥ Bridge 批發成本。
-    const developerFee = computeOffRampDeveloperFee(params.amount, params.destinationCurrency);
+    const bridgeCustomerId = await this.requireTransactableCustomer(userId);
+    const source = PAYOUT_LIQUIDATION_SOURCE;
 
-    const transfer = await this.withStaleCustomerGuard(userId, 'createOffRamp', () =>
-      bridgeFetch<BridgeTransferResponse>('/transfers', {
-        method: 'POST',
-        body: {
-          amount: params.amount,
-          on_behalf_of: bridgeCustomerId,
-          developer_fee: developerFee,
-          ...(params.clientReferenceId ? { client_reference_id: params.clientReferenceId } : {}),
-          source: {
-            payment_rail: params.sourceRail,
-            currency: params.sourceCurrency,
-          },
-          destination: {
-            payment_rail: params.destinationRail,
-            currency: params.destinationCurrency,
-            external_account_id: params.externalAccountId,
-          },
+    assertOffRampRailCurrency(params.destinationRail, params.destinationCurrency);
+
+    const externalAccount = await prisma.bridgeExternalAccount.findFirst({
+      where: {
+        userId,
+        bridgeExternalAccountId: params.externalAccountId,
+        active: true,
+      },
+      select: { currency: true },
+    });
+    if (!externalAccount) {
+      throw new BridgeError(
+        404,
+        'External account not found for this user.',
+        'getOrCreatePayoutAddress',
+      );
+    }
+    if (externalAccount.currency.toLowerCase() !== params.destinationCurrency.toLowerCase()) {
+      throw new BridgeError(
+        400,
+        `External account currency (${externalAccount.currency}) does not match destinationCurrency (${params.destinationCurrency}).`,
+        'getOrCreatePayoutAddress',
+      );
+    }
+
+    await this.assertEndorsementForCurrency(userId, params.destinationCurrency);
+
+    const returnAddress = params.returnAddress ?? (await this.resolveUserScaAddress(userId));
+
+    const existing = await prisma.bridgePayoutLiquidationAddress.findUnique({
+      where: {
+        userId_sourceChain_sourceCurrency_destinationRail_destinationCurrency_bridgeExternalAccountId: {
+          userId,
+          sourceChain: source.sourceChain,
+          sourceCurrency: source.sourceCurrency,
+          destinationRail: params.destinationRail,
+          destinationCurrency: params.destinationCurrency,
+          bridgeExternalAccountId: params.externalAccountId,
         },
-      }),
+      },
+    });
+
+    if (existing) {
+      try {
+        const la = await bridgeFetch<BridgeLiquidationAddressResponse>(
+          `/customers/${bridgeCustomerId}/liquidation_addresses/${existing.bridgeLiquidationAddressId}`,
+        );
+        return this.persistPayoutLiquidationAddress(
+          userId,
+          bridgeCustomerId,
+          params,
+          returnAddress,
+          la,
+        );
+      } catch (error) {
+        if (!isBridgeNotFound(error)) throw error;
+        await prisma.bridgePayoutLiquidationAddress
+          .delete({ where: { id: existing.id } })
+          .catch(() => undefined);
+        appLogger.warn('[BridgeService] Stale payout liquidation address, recreating', {
+          userId,
+          staleId: existing.bridgeLiquidationAddressId,
+        });
+      }
+    }
+
+    const feePercent = payoutLiquidationFeePercent(params.destinationCurrency);
+    const idempotencyKey = [
+      'la-payout',
+      userId,
+      source.sourceChain,
+      source.sourceCurrency,
+      params.destinationRail,
+      params.destinationCurrency,
+      params.externalAccountId,
+    ].join(':');
+
+    let la: BridgeLiquidationAddressResponse;
+    try {
+      la = await this.withStaleCustomerGuard(userId, 'getOrCreatePayoutAddress', () =>
+        bridgeFetch<BridgeLiquidationAddressResponse>(
+          `/customers/${bridgeCustomerId}/liquidation_addresses`,
+          {
+            method: 'POST',
+            idempotencyKey,
+            body: {
+              chain: source.sourceChain,
+              currency: source.sourceCurrency,
+              external_account_id: params.externalAccountId,
+              destination_payment_rail: params.destinationRail,
+              destination_currency: params.destinationCurrency,
+              custom_developer_fee_percent: feePercent,
+              ...buildPayoutDestinationReferenceFields(
+                params.destinationRail,
+                params.destinationReference,
+              ),
+              ...(returnAddress
+                ? { return_instructions: { address: returnAddress } }
+                : {}),
+            },
+          },
+        ),
+      );
+    } catch (error) {
+      if (!isDuplicateLiquidationAddress(error)) throw error;
+
+      const remote = await this.findRemotePayoutLiquidationAddress(
+        bridgeCustomerId,
+        params,
+      );
+      if (!remote) throw error;
+      la = remote;
+    }
+
+    return this.persistPayoutLiquidationAddress(
+      userId,
+      bridgeCustomerId,
+      params,
+      returnAddress,
+      la,
+    );
+  }
+
+  static async listPayoutAddresses(userId: string): Promise<PayoutLiquidationAddressResult[]> {
+    if (await DemoService.isDemoUser(userId)) {
+      return DemoService.bridgePayoutAddresses(userId);
+    }
+
+    const records = await prisma.bridgePayoutLiquidationAddress.findMany({
+      where: { userId, state: 'active' },
+      orderBy: { createdAt: 'desc' },
+    });
+    return records.map((r) => this.toPayoutLiquidationAddressResult(r));
+  }
+
+  static async listPayoutDrains(
+    userId: string,
+    bridgeLiquidationAddressId: string,
+    limit = 50,
+  ): Promise<PayoutDrainResult[]> {
+    if (await DemoService.isDemoUser(userId)) {
+      return DemoService.bridgePayoutDrains(bridgeLiquidationAddressId);
+    }
+
+    const record = await prisma.bridgePayoutLiquidationAddress.findFirst({
+      where: { userId, bridgeLiquidationAddressId },
+    });
+    if (!record?.bridgeCustomerId) {
+      throw new BridgeError(
+        404,
+        'Payout liquidation address not found for this user.',
+        'listPayoutDrains',
+      );
+    }
+
+    const list = await bridgeFetch<BridgeDrainListResponse>(
+      `/customers/${record.bridgeCustomerId}/liquidation_addresses/${bridgeLiquidationAddressId}/drains?limit=${Math.min(Math.max(limit, 1), 200)}`,
     );
 
-    return this.persistTransfer(userId, bridgeCustomerId, 'offramp', transfer, {
-      destinationExternalId: params.externalAccountId,
+    return (list.data ?? []).map((drain) => this.toPayoutDrainResult(drain));
+  }
+
+  private static async findRemotePayoutLiquidationAddress(
+    bridgeCustomerId: string,
+    params: CreatePayoutAddressParams,
+  ): Promise<BridgeLiquidationAddressResponse | null> {
+    const list = await bridgeFetch<BridgeLiquidationAddressListResponse>(
+      `/customers/${bridgeCustomerId}/liquidation_addresses`,
+    );
+    const match = (list.data ?? []).find((la) => matchesPayoutLiquidationRoute(la, params));
+    return match ?? null;
+  }
+
+  private static async persistPayoutLiquidationAddress(
+    userId: string,
+    bridgeCustomerId: string,
+    params: CreatePayoutAddressParams,
+    returnAddress: string | null,
+    la: BridgeLiquidationAddressResponse,
+  ): Promise<PayoutLiquidationAddressResult> {
+    if (!la.id || !la.address) {
+      throw new BridgeError(
+        502,
+        'Bridge payout liquidation address response missing id or deposit address.',
+        'persistPayoutLiquidationAddress',
+      );
+    }
+
+    const source = PAYOUT_LIQUIDATION_SOURCE;
+    const data = {
+      userId,
+      bridgeCustomerId,
+      bridgeLiquidationAddressId: la.id,
+      state: la.state ?? 'active',
+      sourceChain: la.chain ?? source.sourceChain,
+      sourceCurrency: la.currency ?? source.sourceCurrency,
+      destinationRail: la.destination_payment_rail ?? params.destinationRail,
+      destinationCurrency: la.destination_currency ?? params.destinationCurrency,
+      bridgeExternalAccountId: la.external_account_id ?? params.externalAccountId,
+      depositAddress: la.address,
+      blockchainMemo: la.blockchain_memo ?? null,
+      returnAddress,
+      developerFeePercent:
+        la.custom_developer_fee_percent ?? payoutLiquidationFeePercent(params.destinationCurrency),
+    };
+
+    const record = await prisma.bridgePayoutLiquidationAddress.upsert({
+      where: { bridgeLiquidationAddressId: la.id },
+      create: data,
+      update: data,
     });
+
+    appLogger.info('[BridgeService] Payout liquidation address ready', {
+      userId,
+      bridgeLiquidationAddressId: la.id,
+      destinationRail: record.destinationRail,
+      destinationCurrency: record.destinationCurrency,
+    });
+
+    return this.toPayoutLiquidationAddressResult(record);
+  }
+
+  private static toPayoutLiquidationAddressResult(
+    record: Prisma.BridgePayoutLiquidationAddressGetPayload<Record<string, never>>,
+  ): PayoutLiquidationAddressResult {
+    const payoutFee = buildPayoutDeveloperFee(
+      record.developerFeePercent,
+      record.destinationCurrency,
+    );
+
+    return {
+      bridgeLiquidationAddressId: record.bridgeLiquidationAddressId,
+      state: record.state,
+      sourceChain: record.sourceChain,
+      sourceCurrency: record.sourceCurrency,
+      destinationRail: record.destinationRail,
+      destinationCurrency: record.destinationCurrency,
+      bridgeExternalAccountId: record.bridgeExternalAccountId,
+      depositAddress: record.depositAddress,
+      blockchainMemo: record.blockchainMemo,
+      developerFeePercent: payoutFee.developerFeePercent,
+      payoutFee,
+      minDeposit: resolvePayoutMinDeposit(
+        record.destinationRail,
+        payoutFee.developerFeePercent,
+        record.sourceCurrency,
+      ),
+      createdAt: record.createdAt.toISOString(),
+    };
+  }
+
+  private static toPayoutDrainResult(drain: BridgeDrainResponse): PayoutDrainResult {
+    return {
+      bridgeDrainId: drain.id,
+      bridgeLiquidationAddressId: drain.liquidation_address_id ?? '',
+      state: drain.state ?? 'unknown',
+      amount: drain.amount ?? null,
+      currency: drain.currency ?? null,
+      depositTxHash: drain.deposit_tx_hash ?? null,
+      destination: drain.destination ?? null,
+      createdAt: drain.created_at ?? null,
+    };
+  }
+
+  // ── Crypto 入金：Liquidation Address（Tron USDT → Base USDC）──────────
+
+  /**
+   * 取得或建立永久 Tron USDT 入金地址，自動兌換為 Base USDC 送到使用者 SCA。
+   * 類似 Virtual Account：建立一次，固定地址 + memo，可重複入金。
+   */
+  static async getOrCreateLiquidationAddress(
+    userId: string,
+    params: CreateLiquidationAddressParams = {},
+  ): Promise<LiquidationAddressResult> {
+    if (await DemoService.isDemoUser(userId)) {
+      return DemoService.bridgeLiquidationAddress(userId);
+    }
+
+    const bridgeCustomerId = await this.requireTransactableCustomer(userId);
+    const pair = LIQUIDATION_ADDRESS_TRON_USDT_TO_BASE_USDC;
+
+    const destinationAddress = params.toAddress ?? (await this.resolveUserScaAddress(userId));
+    if (!destinationAddress) {
+      throw new BridgeError(
+        400,
+        'No destination address: provide toAddress or register scaAddress via PATCH /api/wallet/sca.',
+        'getOrCreateLiquidationAddress',
+      );
+    }
+
+    const existing = await prisma.bridgeLiquidationAddress.findUnique({
+      where: {
+        userId_sourceChain_sourceCurrency_destinationRail_destinationCurrency: {
+          userId,
+          sourceChain: pair.sourceChain,
+          sourceCurrency: pair.sourceCurrency,
+          destinationRail: pair.destinationRail,
+          destinationCurrency: pair.destinationCurrency,
+        },
+      },
+    });
+
+    if (existing) {
+      try {
+        const la = await bridgeFetch<BridgeLiquidationAddressResponse>(
+          `/customers/${bridgeCustomerId}/liquidation_addresses/${existing.bridgeLiquidationAddressId}`,
+        );
+        return this.persistLiquidationAddress(userId, bridgeCustomerId, destinationAddress, la);
+      } catch (error) {
+        if (!isBridgeNotFound(error)) throw error;
+        await prisma.bridgeLiquidationAddress.delete({ where: { id: existing.id } }).catch(() => undefined);
+        appLogger.warn('[BridgeService] Stale liquidation address, recreating', {
+          userId,
+          staleId: existing.bridgeLiquidationAddressId,
+        });
+      }
+    }
+
+    const feePercent = cryptoLiquidationFeePercent();
+    const idempotencyKey = `la-tron-base:${userId}:${destinationAddress.toLowerCase()}`;
+
+    let la: BridgeLiquidationAddressResponse;
+    try {
+      la = await this.withStaleCustomerGuard(userId, 'getOrCreateLiquidationAddress', () =>
+        bridgeFetch<BridgeLiquidationAddressResponse>(
+          `/customers/${bridgeCustomerId}/liquidation_addresses`,
+          {
+            method: 'POST',
+            idempotencyKey,
+            body: {
+              chain: pair.sourceChain,
+              currency: pair.sourceCurrency,
+              destination_payment_rail: pair.destinationRail,
+              destination_currency: pair.destinationCurrency,
+              destination_address: destinationAddress,
+              custom_developer_fee_percent: feePercent,
+              ...(params.returnAddress
+                ? { return_instructions: { address: params.returnAddress } }
+                : {}),
+            },
+          },
+        ),
+      );
+    } catch (error) {
+      if (!isDuplicateLiquidationAddress(error)) throw error;
+
+      const remote = await this.findRemoteLiquidationAddress(
+        bridgeCustomerId,
+        pair,
+        destinationAddress,
+      );
+      if (!remote) throw error;
+      la = remote;
+    }
+
+    return this.persistLiquidationAddress(userId, bridgeCustomerId, destinationAddress, la);
+  }
+
+  static async listLiquidationAddresses(userId: string): Promise<LiquidationAddressResult[]> {
+    if (await DemoService.isDemoUser(userId)) {
+      return DemoService.bridgeLiquidationAddresses(userId);
+    }
+
+    const records = await prisma.bridgeLiquidationAddress.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    });
+    return records.map((r) => this.toLiquidationAddressResult(r));
+  }
+
+  private static async findRemoteLiquidationAddress(
+    bridgeCustomerId: string,
+    pair: typeof LIQUIDATION_ADDRESS_TRON_USDT_TO_BASE_USDC,
+    destinationAddress: string,
+  ): Promise<BridgeLiquidationAddressResponse | null> {
+    const list = await bridgeFetch<BridgeLiquidationAddressListResponse>(
+      `/customers/${bridgeCustomerId}/liquidation_addresses`,
+    );
+    const match = (list.data ?? []).find((la) =>
+      matchesLiquidationRoute(la, pair, destinationAddress),
+    );
+    return match ?? null;
+  }
+
+  private static async persistLiquidationAddress(
+    userId: string,
+    bridgeCustomerId: string,
+    destinationAddress: string,
+    la: BridgeLiquidationAddressResponse,
+  ): Promise<LiquidationAddressResult> {
+    if (!la.id || !la.address) {
+      throw new BridgeError(
+        502,
+        'Bridge liquidation address response missing id or deposit address.',
+        'persistLiquidationAddress',
+      );
+    }
+
+    const data = {
+      userId,
+      bridgeCustomerId,
+      bridgeLiquidationAddressId: la.id,
+      state: la.state ?? 'active',
+      sourceChain: la.chain,
+      sourceCurrency: la.currency,
+      destinationRail: la.destination_payment_rail ?? LIQUIDATION_ADDRESS_TRON_USDT_TO_BASE_USDC.destinationRail,
+      destinationCurrency: la.destination_currency ?? LIQUIDATION_ADDRESS_TRON_USDT_TO_BASE_USDC.destinationCurrency,
+      destinationAddress: la.destination_address ?? destinationAddress,
+      depositAddress: la.address,
+      blockchainMemo: la.blockchain_memo ?? null,
+      developerFeePercent: la.custom_developer_fee_percent ?? cryptoLiquidationFeePercent(),
+    };
+
+    const record = await prisma.bridgeLiquidationAddress.upsert({
+      where: { bridgeLiquidationAddressId: la.id },
+      create: data,
+      update: data,
+    });
+
+    appLogger.info('[BridgeService] Liquidation address ready', {
+      userId,
+      bridgeLiquidationAddressId: la.id,
+      sourceChain: la.chain,
+      sourceCurrency: la.currency,
+    });
+
+    return this.toLiquidationAddressResult(record);
+  }
+
+  private static toLiquidationAddressResult(
+    record: Prisma.BridgeLiquidationAddressGetPayload<Record<string, never>>,
+  ): LiquidationAddressResult {
+    const depositFee = buildDepositDeveloperFee(
+      record.sourceCurrency,
+      record.developerFeePercent,
+      cryptoLiquidationFeePercent(),
+    );
+
+    return {
+      bridgeLiquidationAddressId: record.bridgeLiquidationAddressId,
+      state: record.state,
+      sourceChain: record.sourceChain,
+      sourceCurrency: record.sourceCurrency,
+      destinationRail: record.destinationRail,
+      destinationCurrency: record.destinationCurrency,
+      destinationAddress: record.destinationAddress,
+      depositAddress: record.depositAddress,
+      blockchainMemo: record.blockchainMemo,
+      developerFeePercent: depositFee.developerFeePercent,
+      depositFee,
+      minDeposit: resolveTronUsdtMinDeposit(depositFee.developerFeePercent),
+      createdAt: record.createdAt.toISOString(),
+    };
   }
 
   /** 拉取單筆 transfer 最新狀態並同步 DB。 */
   static async getTransfer(userId: string, bridgeTransferId: string): Promise<TransferResult> {
+    if (await DemoService.isDemoUser(userId)) {
+      if (!DemoService.bridgeDemoTransferIds().includes(bridgeTransferId)) {
+        throw new BridgeError(404, 'Transfer not found for this user.', 'getTransfer');
+      }
+      const currency = bridgeTransferId.replace('demo-transfer-onramp-', '') || 'usd';
+      return DemoService.bridgeTransfer(userId, bridgeTransferId, currency);
+    }
+
     const record = await prisma.bridgeTransfer.findFirst({
       where: { userId, bridgeTransferId },
     });
@@ -955,6 +1695,10 @@ export class BridgeService {
   }
 
   static async listTransfers(userId: string, limit = 50): Promise<TransferResult[]> {
+    if (await DemoService.isDemoUser(userId)) {
+      return DemoService.bridgeTransfers(userId);
+    }
+
     const records = await prisma.bridgeTransfer.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
@@ -969,6 +1713,10 @@ export class BridgeService {
     userId: string,
     body: Record<string, unknown>,
   ): Promise<ExternalAccountResult> {
+    if (await DemoService.isDemoUser(userId)) {
+      return DemoService.bridgeExternalAccountFromBody(body);
+    }
+
     const bridgeCustomerId = await this.requireTransactableCustomer(userId);
 
     const payload = this.buildExternalAccountPayload(body);
@@ -1016,6 +1764,10 @@ export class BridgeService {
   }
 
   static async listExternalAccounts(userId: string): Promise<ExternalAccountResult[]> {
+    if (await DemoService.isDemoUser(userId)) {
+      return DemoService.bridgeExternalAccounts();
+    }
+
     const records = await prisma.bridgeExternalAccount.findMany({
       where: { userId, active: true },
       orderBy: { createdAt: 'desc' },
@@ -1030,19 +1782,102 @@ export class BridgeService {
     }));
   }
 
+  static async deleteExternalAccount(
+    userId: string,
+    externalAccountId: string,
+  ): Promise<ExternalAccountResult> {
+    if (await DemoService.isDemoUser(userId)) {
+      if (!DemoService.isBridgeExternalAccountId(externalAccountId)) {
+        throw new BridgeError(
+          404,
+          'External account not found for this user.',
+          'deleteExternalAccount',
+        );
+      }
+      const config = DemoService.bridgeExternalAccounts().find(
+        (a) => a.bridgeExternalAccountId === externalAccountId,
+      );
+      return DemoService.bridgeDeletedExternalAccount(config?.currency ?? 'usd');
+    }
+
+    const record = await prisma.bridgeExternalAccount.findFirst({
+      where: { userId, bridgeExternalAccountId: externalAccountId },
+    });
+    if (!record) {
+      throw new BridgeError(
+        404,
+        'External account not found for this user.',
+        'deleteExternalAccount',
+      );
+    }
+
+    const bridgeCustomerId = record.bridgeCustomerId ?? (await this.requireTransactableCustomer(userId));
+
+    const account = await this.withStaleCustomerGuard(userId, 'deleteExternalAccount', () =>
+      bridgeFetch<BridgeExternalAccountResponse>(
+        `/customers/${bridgeCustomerId}/external_accounts/${externalAccountId}`,
+        { method: 'DELETE' },
+      ),
+    );
+
+    const updated = await prisma.bridgeExternalAccount.update({
+      where: { id: record.id },
+      data: { active: account.active ?? false },
+    });
+
+    appLogger.info('[BridgeService] External account deleted', {
+      userId,
+      externalAccountId,
+    });
+
+    return {
+      bridgeExternalAccountId: updated.bridgeExternalAccountId,
+      bankName: updated.bankName,
+      accountOwnerName: updated.accountOwnerName,
+      last4: updated.last4,
+      currency: updated.currency,
+      active: updated.active,
+    };
+  }
+
   // ── 私有 helpers ────────────────────────────────────────────────────
 
   /** 將我們的 external account schema 轉成 Bridge 期望的 payload。 */
   private static buildExternalAccountPayload(body: Record<string, unknown>): Record<string, unknown> {
-    const accountType = (body.accountType as string) ?? (body.iban ? 'iban' : 'us');
+    const pick = (...keys: string[]) => {
+      for (const key of keys) {
+        const value = body[key];
+        if (typeof value === 'string' && value.trim()) return value.trim();
+      }
+      const nested = body.account as Record<string, unknown> | undefined;
+      if (nested) {
+        for (const key of keys) {
+          const value = nested[key];
+          if (typeof value === 'string' && value.trim()) return value.trim();
+        }
+      }
+      return undefined;
+    };
+
+    const accountType =
+      pick('accountType', 'account_type')
+      ?? (pick('brCode', 'br_code') ? 'pix' : undefined)
+      ?? (pick('pixKey', 'pix_key') ? 'pix' : undefined)
+      ?? (pick('clabe') ? 'clabe' : undefined)
+      ?? (pick('sortCode', 'sort_code') ? 'gb' : undefined)
+      ?? (pick('iban') ? 'iban' : undefined)
+      ?? 'us';
+
     const payload: Record<string, unknown> = {
-      currency: (body.currency as string) ?? 'usd',
-      ...(body.bankName ? { bank_name: body.bankName } : {}),
-      ...(body.accountOwnerName ? { account_owner_name: body.accountOwnerName } : {}),
-      ...(body.firstName ? { first_name: body.firstName } : {}),
-      ...(body.lastName ? { last_name: body.lastName } : {}),
-      ...(body.businessName
-        ? { account_owner_type: 'business', business_name: body.businessName }
+      currency: pick('currency') ?? 'usd',
+      ...(pick('bankName', 'bank_name') ? { bank_name: pick('bankName', 'bank_name') } : {}),
+      ...(pick('accountOwnerName', 'account_owner_name')
+        ? { account_owner_name: pick('accountOwnerName', 'account_owner_name') }
+        : {}),
+      ...(pick('firstName', 'first_name') ? { first_name: pick('firstName', 'first_name') } : {}),
+      ...(pick('lastName', 'last_name') ? { last_name: pick('lastName', 'last_name') } : {}),
+      ...(pick('businessName', 'business_name')
+        ? { account_owner_type: 'business', business_name: pick('businessName', 'business_name') }
         : { account_owner_type: 'individual' }),
       ...(body.address ? { address: body.address } : {}),
     };
@@ -1050,20 +1885,55 @@ export class BridgeService {
     if (accountType === 'iban') {
       payload.account_type = 'iban';
       payload.iban = {
-        account_number: body.iban,
-        ...(body.bic ? { bic: body.bic } : {}),
+        account_number: pick('iban'),
+        ...(pick('bic') ? { bic: pick('bic') } : {}),
         ...(body.address && (body.address as Record<string, unknown>).country
           ? { country: (body.address as Record<string, unknown>).country }
           : {}),
       };
-    } else {
-      payload.account_type = 'us';
-      payload.account = {
-        account_number: body.accountNumber,
-        routing_number: body.routingNumber,
-      };
+      return payload;
     }
 
+    if (accountType === 'clabe') {
+      payload.account_type = 'clabe';
+      payload.clabe = { account_number: pick('clabe') };
+      return payload;
+    }
+
+    if (accountType === 'pix') {
+      payload.account_type = 'pix';
+      const brCode = pick('brCode', 'br_code');
+      const documentNumber = pick('documentNumber', 'document_number');
+      if (brCode) {
+        payload.br_code = {
+          br_code: brCode,
+          ...(documentNumber ? { document_number: documentNumber } : {}),
+        };
+      } else {
+        payload.pix_key = {
+          pix_key: pick('pixKey', 'pix_key'),
+          ...(documentNumber ? { document_number: documentNumber } : {}),
+        };
+      }
+      return payload;
+    }
+
+    if (accountType === 'gb') {
+      payload.account_type = 'gb';
+      payload.account = {
+        account_number: pick('accountNumber', 'account_number'),
+        sort_code: pick('sortCode', 'sort_code'),
+      };
+      return payload;
+    }
+
+    const checkingOrSavings = pick('checkingOrSavings', 'checking_or_savings') ?? 'checking';
+    payload.account_type = 'us';
+    payload.account = {
+      account_number: pick('accountNumber', 'account_number'),
+      routing_number: pick('routingNumber', 'routing_number'),
+      checking_or_savings: checkingOrSavings,
+    };
     return payload;
   }
 
@@ -1143,6 +2013,15 @@ export class BridgeService {
       select: { scaAddress: true, walletAddress: true },
     });
     return user?.scaAddress ?? user?.walletAddress ?? null;
+  }
+
+  /** 僅回傳 ERC-4337 SCA（crypto-to-crypto 出金到 Base 用）。 */
+  private static async resolveUserScaAddress(userId: string): Promise<string | null> {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { scaAddress: true },
+    });
+    return user?.scaAddress ?? null;
   }
 
   // ── Webhook 持久化（供 webhook service 呼叫）────────────────────────

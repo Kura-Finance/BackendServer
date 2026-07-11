@@ -39,14 +39,16 @@ const ExchangeController = __importStar(require("./controllers/exchangeControlle
 const validateRequest_1 = require("../shared/middleware/validateRequest");
 const exchangeSchemas_1 = require("./schemas/exchangeSchemas");
 const router = (0, express_1.Router)();
-// 所有交易所路由都需要驗證（包含 /supported；若未來需要公開，把這條路由
-// 註冊在 router.use(requireAuth) 之前即可）
-router.use(auth_1.requireAuth);
 /**
  * GET /api/exchange/supported
- * 獲取支持的交易所列表（目前需要登入）
+ * 獲取支持的交易所列表（公開：純靜態清單，不含任何使用者資料）。
+ *
+ * 刻意註冊在 router.use(requireAuth) 之前 → 前端在登入流程未完成 / token 尚未
+ * 附上時也能載入「支援交易所」清單（例如 ExchangeLinkModal 開啟當下）。
  */
 router.get('/supported', ExchangeController.getSupportedExchanges);
+// 以下所有交易所路由都需要驗證
+router.use(auth_1.requireAuth);
 /**
  * POST /api/exchange/connect
  * 連結新的交易所帳戶

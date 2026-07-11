@@ -13,7 +13,9 @@ import { stripeRouter } from './domains/stripe';
 import { cardRouter } from './domains/card';
 import { walletRouter } from './domains/wallet';
 import { bridgeRouter } from './domains/bridge';
+import { codegoRouter } from './domains/codego';
 import { dinariRouter } from './domains/dinari';
+import { waitlistRouter } from './domains/waitlist';
 import {
   appLogger,
   httpLogger,
@@ -23,6 +25,7 @@ import {
   logDebug,
 } from './domains/logger';
 import { rateLimiter, authRateLimiter } from './domains/shared/middleware/rateLimiter';
+import { webTierGate } from './domains/auth/middleware/requireWebTier';
 
 // ========================================
 // 1. 初始化環境變數和數據庫 URL
@@ -43,6 +46,17 @@ app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
 // Gnosis Pay webhook: Ed25519 signature over "{timestamp}.{rawBody}"
 // Capture raw body before JSON parsing.
 app.use('/api/card/webhooks/gp', (req: Request, _res: Response, next: NextFunction) => {
+  let raw = '';
+  req.on('data', (chunk: Buffer) => { raw += chunk.toString('utf8'); });
+  req.on('end', () => {
+    (req as Request & { rawBody?: string }).rawBody = raw;
+    try { req.body = raw ? JSON.parse(raw) : {}; } catch { req.body = {}; }
+    next();
+  });
+});
+
+// Codego webhook: HMAC-SHA256 over raw body (Signature: sha256=...)
+app.use('/api/codego/webhook', (req: Request, _res: Response, next: NextFunction) => {
   let raw = '';
   req.on('data', (chunk: Buffer) => { raw += chunk.toString('utf8'); });
   req.on('end', () => {
@@ -121,6 +135,9 @@ app.use('/api/auth', authRateLimiter);
 // 為其他 API 應用一般的速率限制
 app.use('/api/', rateLimiter); // 速率限制中間件 - 防止 API 被攻擊
 
+// Web soft gate：Basic 用戶可登入／付費，其餘 Web API 需 Pro / Ultimate
+app.use('/api', webTierGate);
+
 // ========================================
 // 4. Well-known endpoints (Universal Links / Passkey / Associated Domains)
 // ========================================
@@ -194,7 +211,9 @@ app.use('/api/stripe', stripeRouter);
 app.use('/api/card', cardRouter);
 app.use('/api/wallet', walletRouter);
 app.use('/api/bridge', bridgeRouter);
+app.use('/api/codego', codegoRouter);
 app.use('/api/dinari', dinariRouter);
+app.use('/api/waitlist', waitlistRouter);
 
 // ========================================
 // 6. 錯誤處理中間件

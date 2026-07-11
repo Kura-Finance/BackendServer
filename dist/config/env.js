@@ -55,10 +55,17 @@ function buildDatabaseUrl() {
  * 驗證必填環境變數
  */
 function validateEnvironment() {
-    const required = ['JWT_SECRET'];
+    const required = ['JWT_SECRET', 'ENCRYPTION_KEY'];
     const missing = required.filter((key) => !process.env[key]);
     if (missing.length > 0) {
         console.error(`❌ Missing required environment variables: ${missing.join(', ')}`);
+        process.exit(1);
+    }
+    // 驗證 ENCRYPTION_KEY 格式：必須是 64 hex 字元（32 bytes，用於 AES-256）
+    const encKey = process.env.ENCRYPTION_KEY ?? '';
+    if (!/^[0-9a-f]{64}$/.test(encKey)) {
+        console.error('❌ ENCRYPTION_KEY must be exactly 64 lowercase hex characters (32 bytes)');
+        console.error('💡 Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
         process.exit(1);
     }
     // 驗證 Resend API 配置（後端驗證郵件，需要完整配置）
@@ -113,21 +120,48 @@ function validateEnvironment() {
         console.warn('💡 Set WEBAUTHN_RP_ID (domain), WEBAUTHN_RP_NAME, WEBAUTHN_ORIGIN (comma-separated allowed origins)');
         // Passkey endpoints will fail until configured, but the server should still boot.
     }
-    // 驗證 Didit KYC 配置（Card 功能，尚未全面上線前只 warn）
-    const diditVars = ['DIDIT_API_KEY', 'DIDIT_WEBHOOK_SECRET', 'DIDIT_WORKFLOW_ID'];
-    const missingDiditVars = diditVars.filter((key) => !process.env[key]);
-    if (missingDiditVars.length > 0) {
-        console.warn(`⚠️ Didit KYC not fully configured: ${missingDiditVars.join(', ')}`);
-        console.warn('💡 Set DIDIT_API_KEY, DIDIT_WEBHOOK_SECRET, DIDIT_WORKFLOW_ID');
-        // Card feature: warn only — do not block server startup until feature is live
+    // Gnosis Pay 為 permissionless（無 API key），PARTNER_ID 僅用於 webhook 訂閱，可選
+    if (!process.env.GNOSIS_PAY_PARTNER_ID) {
+        console.warn('⚠️ GNOSIS_PAY_PARTNER_ID not set — running in permissionless mode (webhooks unavailable)');
     }
-    // 驗證 Lithic 卡片發卡配置（Card 功能，尚未全面上線前只 warn）
-    const lithicVars = ['LITHIC_API_KEY', 'LITHIC_WEBHOOK_SECRET'];
-    const missingLithicVars = lithicVars.filter((key) => !process.env[key]);
-    if (missingLithicVars.length > 0) {
-        console.warn(`⚠️ Lithic card issuer not fully configured: ${missingLithicVars.join(', ')}`);
-        console.warn('💡 Set LITHIC_API_KEY, LITHIC_WEBHOOK_SECRET (LITHIC_ENV defaults to sandbox)');
-        // Card feature: warn only — do not block server startup until feature is live
+    // 驗證 Bridge API 配置（on/off ramp）
+    const bridgeVars = ['BRIDGE_API_KEY'];
+    const missingBridgeVars = bridgeVars.filter((key) => !process.env[key]);
+    if (missingBridgeVars.length > 0) {
+        console.error(`❌ Bridge API not fully configured: ${missingBridgeVars.join(', ')}`);
+        console.error('💡 Set BRIDGE_API_KEY (from the Bridge Dashboard) to enable on/off ramp');
+        if (isProduction)
+            process.exit(1);
+    }
+    // Webhook 簽章公鑰為可選：未設定時 webhook 端點會拒絕所有事件（fail-closed）
+    if (!process.env.BRIDGE_WEBHOOK_PUBLIC_KEY) {
+        console.warn('⚠️ BRIDGE_WEBHOOK_PUBLIC_KEY not set — Bridge webhooks will be rejected until configured');
+    }
+    // 驗證 Dinari API 配置（tokenized stocks / dShares）
+    const dinariVars = ['DINARI_API_KEY_ID', 'DINARI_API_SECRET_KEY'];
+    const missingDinariVars = dinariVars.filter((key) => !process.env[key]);
+    if (missingDinariVars.length > 0) {
+        console.error(`❌ Dinari API not fully configured: ${missingDinariVars.join(', ')}`);
+        console.error('💡 Set DINARI_API_KEY_ID / DINARI_API_SECRET_KEY (from partners.dinari.com) to enable tokenized stocks');
+        if (isProduction)
+            process.exit(1);
+    }
+    // 下單需要支付代幣地址（USDC）；未設定時下單會被拒
+    if (!process.env.DINARI_PAYMENT_TOKEN_ADDRESS) {
+        console.warn('⚠️ DINARI_PAYMENT_TOKEN_ADDRESS not set — Dinari order placement will be rejected until configured');
+    }
+    if (!process.env.DINARI_WHITELIST_EMAILS) {
+        console.warn('⚠️ DINARI_WHITELIST_EMAILS not set — only @privy.io / DEMO_USER_EMAILS can access Dinari Entity/KYC');
+    }
+    // Codego Visa/Mastercard Card Issuing（可選；未設定時 card 端點會在 runtime 報錯）
+    if (!process.env.CODEGO_API_KEY) {
+        console.warn('⚠️ CODEGO_API_KEY not set — Codego card issuing endpoints will fail until configured');
+    }
+    if (!process.env.CODEGO_WEBHOOK_SECRET) {
+        console.warn('⚠️ CODEGO_WEBHOOK_SECRET not set — Codego webhooks will be rejected until configured');
+    }
+    if (!process.env.CODEGO_KYC_ORIGIN || !process.env.CODEGO_KYC_RETURN_URL) {
+        console.warn('⚠️ CODEGO_KYC_ORIGIN / CODEGO_KYC_RETURN_URL not set — KYC session create requires origin + returnUrl in request body');
     }
     // 在生產環境檢查數據庫配置
     if (isProduction) {

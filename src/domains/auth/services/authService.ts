@@ -5,8 +5,15 @@ import { prisma } from '../../shared/lib/prisma';
 import { getJwtSecret } from '../../../config/env';
 import { logAuthEvent, logError, logDatabaseOperation, logBusinessEvent, logDebug } from '../../logger';
 import { UserProfile, UpdateProfilePayload, PlaidCacheInfo } from '../models/types';
+import { tierHasWebAccess } from '../../shared/lib/webTierAccess';
 import { getCacheStats } from '../../plaid/lib/plaidCacheUtil';
 import type { PrivyIdentity } from './privyService';
+import {
+  buildPlaceholderEmail,
+  isPlaceholderEmail,
+  resolveUserEmail,
+} from '../lib/userEmailUtil';
+import { AccountDeletionService } from './accountDeletionService';
 
 /**
  * 認證服務 - 業務邏輯層
@@ -65,13 +72,16 @@ export class AuthService {
     needsProfileSetup: boolean;
     emailConflict: boolean;
   }> {
-    const { privyUserId, email, walletAddress } = identity;
+    const { privyUserId, walletAddress } = identity;
+    const identityEmail =
+      identity.email && !isPlaceholderEmail(identity.email) ? identity.email : undefined;
 
     if (!privyUserId) {
       throw new Error('Missing Privy user id');
     }
 
     let resolved: { id: string; publicKey: string | null } | null = null;
+    let email: string | undefined = identityEmail;
     // Privy 回報的 email 已被「另一個 Kura 帳號」使用時為 true：
     // 不阻擋登入、也不覆蓋 email，僅回報讓前端提示使用者去處理。
     let emailConflict = false;
@@ -79,14 +89,23 @@ export class AuthService {
     // 1. 以 privyUserId 查找既有帳號
     const byPrivy = await prisma.user.findUnique({
       where: { privyUserId },
-      select: { id: true, publicKey: true },
+      select: { id: true, publicKey: true, email: true },
     });
     if (byPrivy) {
       resolved = byPrivy;
+      if (!email) {
+        email = resolveUserEmail(byPrivy.id, byPrivy.email);
+        if (!byPrivy.email) {
+          await prisma.user.update({
+            where: { id: byPrivy.id },
+            data: { email },
+          });
+        }
+      }
     }
 
-    // 2. 尚未綁定 Privy 的同 email 帳號 → 連結到此 Privy 身分
-    if (!resolved && email) {
+    // 2. 尚未綁定 Privy 的同 email 帳號 → 連結到此 Privy 身分（略過 UUID placeholder）
+    if (!resolved && email && !isPlaceholderEmail(email)) {
       const byEmail = await prisma.user.findUnique({
         where: { email },
         select: { id: true, publicKey: true, privyUserId: true },
@@ -121,33 +140,51 @@ export class AuthService {
       }
 
       const createStartTime = Date.now();
+      const newUserId = crypto.randomUUID();
+      const storedEmail = email ?? buildPlaceholderEmail(newUserId);
       const created = await prisma.user.create({
         data: {
+          id: newUserId,
           privyUserId,
-          ...(email ? { email } : {}),
+          email: storedEmail,
           ...(walletAddress ? { walletAddress } : {}),
           referCode: await this.generateUniqueReferCode(),
-          emailVerified: !!email,
+          emailVerified: !!identityEmail,
           ...(inviter ? { referredByUserId: inviter.id, referredAt: new Date() } : {}),
         },
         select: { id: true, publicKey: true },
       });
       logDatabaseOperation('CREATE', 'users', Date.now() - createStartTime, true);
       logAuthEvent('register', created.id, { method: 'privy' });
-      logBusinessEvent('user_registered_privy', created.id, { hasEmail: !!email, hasWallet: !!walletAddress });
+      logBusinessEvent('user_registered_privy', created.id, {
+        hasRealEmail: !!identityEmail,
+        hasWallet: !!walletAddress,
+      });
       resolved = created;
     } else {
       // 既有帳號（以 privyUserId 命中）：補寫 / 更新 wallet。
-      // email 僅在「有值且未被其他帳號佔用」時才更新，否則會撞 email unique 約束
-      // （例如同一人有另一個 Kura 帳號已使用該 email）。登入不應因此失敗。
+      // email 僅在「有值且未被其他帳號佔用」時才更新，否則會撞 email unique 約束。
+      // placeholder email 可在 Privy 提供真實 email 時覆寫。
       let emailToUpdate: string | undefined;
-      if (email) {
+      const currentUser = await prisma.user.findUnique({
+        where: { id: resolved.id },
+        select: { email: true },
+      });
+      const shouldRefreshEmail =
+        !!identityEmail
+        && (
+          !currentUser?.email
+          || isPlaceholderEmail(currentUser.email)
+          || currentUser.email !== identityEmail
+        );
+
+      if (shouldRefreshEmail && identityEmail) {
         const emailOwner = await prisma.user.findUnique({
-          where: { email },
+          where: { email: identityEmail },
           select: { id: true },
         });
         if (!emailOwner || emailOwner.id === resolved.id) {
-          emailToUpdate = email;
+          emailToUpdate = identityEmail;
         } else {
           emailConflict = true;
           logDebug('Skipping Privy email update: email already used by another account', {
@@ -204,6 +241,35 @@ export class AuthService {
     };
   }
 
+  private static async ensureStoredEmail(userId: string, storedEmail: string | null): Promise<string> {
+    const uuidPlaceholder = buildPlaceholderEmail(userId);
+
+    if (!storedEmail) {
+      await prisma.user.update({
+        where: { id: userId },
+        data: { email: uuidPlaceholder },
+      });
+      return uuidPlaceholder;
+    }
+
+    if (isPlaceholderEmail(storedEmail) && storedEmail !== uuidPlaceholder) {
+      try {
+        await prisma.user.update({
+          where: { id: userId },
+          data: { email: uuidPlaceholder },
+        });
+        return uuidPlaceholder;
+      } catch (error) {
+        if (error instanceof PrismaClientKnownRequestError && error.code === 'P2002') {
+          return storedEmail;
+        }
+        throw error;
+      }
+    }
+
+    return storedEmail;
+  }
+
   /**
    * 取得使用者資料
    */
@@ -236,24 +302,27 @@ export class AuthService {
       return null;
     }
 
-    // email 可能為 null（wallet / social 登入）；用 email → wallet → id 當顯示種子
-    const seed = user.email || user.walletAddress || user.id;
-    const fallbackName = user.email
-      ? user.email.split('@')[0]
-      : user.walletAddress
-        ? `${user.walletAddress.slice(0, 6)}…${user.walletAddress.slice(-4)}`
-        : 'User';
+    const effectiveEmail = await AuthService.ensureStoredEmail(user.id, user.email);
+    const seed = effectiveEmail || user.walletAddress || user.id;
+    const fallbackName = isPlaceholderEmail(effectiveEmail)
+      ? (user.name || 'User')
+      : (effectiveEmail.split('@')[0] || 'User');
+
+    const tier = user.tier || 'Basic';
 
     return {
       id: user.id,
-      email: user.email,
+      email: effectiveEmail,
+      emailIsPlaceholder: isPlaceholderEmail(effectiveEmail),
       walletAddress: user.walletAddress,
       displayName: (user.name || fallbackName) as string,
       hasName: !!user.name,
       avatarUrl:
         user.avatarUrl ||
         `https://api.dicebear.com/7.x/notionists/svg?seed=${encodeURIComponent(seed)}&backgroundColor=e2e8f0`,
-      membershipLabel: `${user.tier || 'Basic'} Member`,
+      membershipLabel: `${tier} Member`,
+      tier,
+      webAccessAllowed: tierHasWebAccess(tier),
       cashbackBalance: user.cashbackBalance || 0,
       referCode: user.referCode,
       referredByCode: user.referredBy?.referCode ?? null,
@@ -365,16 +434,20 @@ export class AuthService {
     const startTime = Date.now();
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { email: true },
+      select: { email: true, privyUserId: true },
     });
     logDatabaseOperation('SELECT', 'users', Date.now() - startTime, true);
 
     if (!user) {
       logAuthEvent('failed_register', undefined, { userId, reason: 'user_not_found' });
-      throw new Error('User not found');
+      const error = new Error('User not found');
+      (error as Error & { statusCode?: number }).statusCode = 404;
+      throw error;
     }
 
-    // 刪除使用者及其相關資料
+    await AccountDeletionService.purgeExternalIntegrations(userId, user.privyUserId);
+
+    // 刪除使用者及其相關資料（DB cascade）
     const deleteStartTime = Date.now();
     await prisma.user.delete({
       where: { id: userId },

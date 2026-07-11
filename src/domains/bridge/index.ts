@@ -2,19 +2,26 @@
 export { default as bridgeRouter } from './router';
 
 // 服務
-export { BridgeService, BridgeError } from './services/bridgeService';
+export { BridgeService, BridgeError, CURRENCY_ENDORSEMENT, resolveEndorsementForCurrency } from './services/bridgeService';
 
 // 控制器
 export {
   createKycLink,
+  createEndorsementLink,
+  getOrCreateCryptoDepositAddress,
+  listCryptoDepositAddresses,
   getCustomerStatus,
   createOnRamp,
   listVirtualAccounts,
   listDeposits,
-  createOffRamp,
+  getOrCreatePayoutAddress,
+  listPayoutAddresses,
+  listPayoutDrains,
+  listPayoutOptions,
   getTransfer,
   listTransfers,
   createExternalAccount,
+  deleteExternalAccount,
   listExternalAccounts,
   handleBridgeWebhook,
 } from './controllers/bridgeController';
@@ -26,11 +33,30 @@ export type {
   BridgeTransferDirection,
   CreateKycLinkParams,
   CreateVirtualAccountParams,
+  CreateLiquidationAddressParams,
+  LIQUIDATION_ADDRESS_TRON_USDT_TO_BASE_USDC,
+  CRYPTO_TRANSFER_TRON_USDT_TO_BASE_USDC,
+  CreatePayoutAddressParams,
+  PAYOUT_LIQUIDATION_SOURCE,
+  PayoutLiquidationAddressResult,
+  PayoutDrainResult,
+  PayoutDeveloperFee,
+  MinDeposit,
+  grossMinDeposit,
+  TRON_USDT_MIN_DEPOSIT_NET,
+  resolveOnRampMinDeposit,
+  resolvePayoutMinDeposit,
+  resolveTronUsdtMinDeposit,
+  EndorsementLinkResult,
   KycLinkResult,
+  LiquidationAddressResult,
+  DepositDeveloperFee,
   CustomerStatusResult,
   TransferResult,
   VirtualAccountResult,
   DepositResult,
   DepositEvent,
   ExternalAccountResult,
+  PayoutOption,
 } from './models/types';
+export { PAYOUT_OPTION_BASES } from './models/types';

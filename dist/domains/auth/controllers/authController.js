@@ -59,14 +59,16 @@ exports.updateProfile = updateProfile;
 /**
  * 登出 - 清除 Cookie（網頁客戶端）
  */
+function clearAuthCookie(res) {
+    res.clearCookie('authToken', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+    });
+}
 const logout = async (req, res) => {
     try {
-        // 清除登入 Cookie
-        res.clearCookie('authToken', {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
-        });
+        clearAuthCookie(res);
         (0, apiResponse_1.sendSuccess)(res, { message: 'Logged out successfully' });
     }
     catch (error) {
@@ -82,14 +84,19 @@ const deleteAccount = async (req, res) => {
             return;
         }
         const result = await authService_1.AuthService.deleteAccount(userId);
+        clearAuthCookie(res);
         (0, apiResponse_1.sendSuccess)(res, result);
     }
     catch (error) {
         (0, logger_1.logError)('Delete account failed', error, { userId: req.userId });
-        const isDatabaseError = error instanceof library_1.PrismaClientKnownRequestError;
-        const statusCode = isDatabaseError ? 503 : 500;
-        const message = 'Internal server error';
-        (0, apiResponse_1.sendError)(res, statusCode, { code: isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR', message });
+        const message = error instanceof Error ? error.message : 'Internal server error';
+        const statusCode = error.statusCode
+            ?? (error instanceof library_1.PrismaClientKnownRequestError ? 503 : 500);
+        const isNotFound = statusCode === 404 || message.toLowerCase().includes('not found');
+        (0, apiResponse_1.sendError)(res, isNotFound ? 404 : statusCode, {
+            code: isNotFound ? 'NOT_FOUND' : statusCode === 503 ? 'DATABASE_ERROR' : 'INTERNAL_ERROR',
+            message: isNotFound ? message : 'Internal server error',
+        });
     }
 };
 exports.deleteAccount = deleteAccount;
