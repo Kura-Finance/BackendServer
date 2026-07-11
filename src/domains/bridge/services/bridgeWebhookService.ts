@@ -19,6 +19,7 @@ import type {
   BridgeCustomerResponse,
   BridgeKycLinkResponse,
   BridgeTransferResponse,
+  BridgeVirtualAccountEventResponse,
 } from '../models/types';
 
 const REPLAY_TOLERANCE_MS = 10 * 60 * 1000; // 10 分鐘
@@ -143,6 +144,11 @@ export async function handleWebhookEvent(event: BridgeWebhookEvent): Promise<voi
       break;
     case 'kyc_link':
       await BridgeService.syncKycLinkFromWebhook(obj as unknown as BridgeKycLinkResponse);
+      break;
+    case 'virtual_account.activity':
+      await BridgeService.syncVirtualAccountActivity(
+        obj as unknown as BridgeVirtualAccountEventResponse,
+      );
       break;
     default:
       appLogger.info('[BridgeWebhook] Unhandled event category', {

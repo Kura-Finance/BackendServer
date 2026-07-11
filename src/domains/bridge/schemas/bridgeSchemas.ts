@@ -29,31 +29,48 @@ const cryptoRail = z.enum([
   'tron',
 ]);
 
-const fiatCurrency = z.enum(['usd', 'eur', 'mxn']);
+const fiatCurrency = z.enum(['usd', 'eur', 'mxn', 'gbp', 'brl', 'cop']);
 const stablecoin = z.enum(['usdc', 'usdb', 'eurc', 'usdt', 'dai', 'pyusd']);
 
 // ── KYC / Customer ────────────────────────────────────────────────────
 
+// 可申請的 endorsement（rail）類型
+const endorsementType = z.enum([
+  'base',
+  'cards',
+  'cop',
+  'faster_payments',
+  'pix',
+  'sepa',
+  'spei',
+]);
+
+// individual = KYC，business = KYB。
+// fullName 對 business 而言是「公司法定名稱」（Bridge 允許至 1024 字）。
 export const createKycLinkBodySchema = z.object({
-  fullName: z.string().trim().min(1, 'fullName is required').max(200),
-  email: z.string().trim().email('email must be valid').optional(),
   type: z.enum(['individual', 'business']).default('individual'),
+  fullName: z.string().trim().min(1, 'fullName is required').max(1024),
+  email: z.string().trim().email('email must be valid').optional(),
+  endorsements: z.array(endorsementType).min(1).optional(),
+  redirectUri: z.string().trim().url('redirectUri must be a valid URL').optional(),
+  // 含非 Latin-1 字元時 Bridge 要求提供羅馬化名稱
+  transliteratedFirstName: z.string().trim().min(1).max(256).optional(),
+  transliteratedMiddleName: z.string().trim().min(1).max(256).optional(),
+  transliteratedLastName: z.string().trim().min(1).max(256).optional(),
+  transliteratedBusinessLegalName: z.string().trim().min(1).max(1024).optional(),
 });
 
-// ── On-ramp（fiat → crypto）──────────────────────────────────────────
+// ── On-ramp（fiat → crypto）：改用 Virtual Account ────────────────────
+// 入金一律走 VA：建立 / 取得使用者專屬的法幣入金帳戶（持久、免 memo），
+// 入金後 Bridge 自動轉成穩定幣送往 destination。
 
 export const createOnRampBodySchema = z.object({
-  amount: decimalAmount,
-  sourceRail: fiatRail,
   sourceCurrency: fiatCurrency,
   destinationRail: cryptoRail,
   destinationCurrency: stablecoin,
   // 未提供時後端會回退到使用者錢包地址（scaAddress / walletAddress）
   toAddress: cryptoAddress.optional(),
-  developerFee: optionalDecimalAmount,
-  clientReferenceId: z.string().trim().max(200).optional(),
-  // 允許用戶以任意金額入金（deposit 任意金額觸發轉換）
-  flexibleAmount: z.boolean().optional(),
+  // 費率（developer fee）由後端依入金幣別套用，不接受 client 指定。
 });
 
 // ── Off-ramp（crypto → fiat）──────────────────────────────────────────
@@ -105,4 +122,8 @@ export const createExternalAccountBodySchema = z
 
 export const transferIdParamSchema = z.object({
   transferId: z.string().trim().min(1, 'transferId is required'),
+});
+
+export const virtualAccountIdParamSchema = z.object({
+  virtualAccountId: z.string().trim().min(1, 'virtualAccountId is required'),
 });

@@ -40,13 +40,7 @@ export const createKycLink = async (req: AuthRequest, res: Response): Promise<vo
     const userId = getAuthenticatedUserId(req, res);
     if (!userId) return;
 
-    const { fullName, email, type } = req.body as {
-      fullName: string;
-      email?: string;
-      type: 'individual' | 'business';
-    };
-
-    const result = await BridgeService.getOrCreateKycLink(userId, fullName, email, type);
+    const result = await BridgeService.getOrCreateKycLink(userId, req.body);
     sendSuccess(res, result, 201);
   } catch (error) {
     logError('Bridge create KYC link failed', error, { userId: req.userId });
@@ -67,20 +61,56 @@ export const getCustomerStatus = async (req: AuthRequest, res: Response): Promis
   }
 };
 
-// ── On / Off Ramp ───────────────────────────────────────────────────
+// ── On-ramp（入金）：Virtual Accounts ────────────────────────────────
 
+/** 取得或建立使用者的入金 Virtual Account，回傳專屬法幣入金銀行資訊。 */
 export const createOnRamp = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = getAuthenticatedUserId(req, res);
     if (!userId) return;
 
-    const result = await BridgeService.createOnRamp(userId, req.body);
+    const result = await BridgeService.getOrCreateVirtualAccount(userId, req.body);
     sendSuccess(res, result, 201);
   } catch (error) {
-    logError('Bridge create on-ramp failed', error, { userId: req.userId });
-    handleBridgeError(res, error, 'Failed to create on-ramp transfer');
+    logError('Bridge create on-ramp virtual account failed', error, { userId: req.userId });
+    handleBridgeError(res, error, 'Failed to create on-ramp virtual account');
   }
 };
+
+/** 列出使用者的入金 Virtual Accounts。 */
+export const listVirtualAccounts = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = getAuthenticatedUserId(req, res);
+    if (!userId) return;
+
+    const result = await BridgeService.listVirtualAccounts(userId);
+    sendSuccess(res, result);
+  } catch (error) {
+    logError('Bridge list virtual accounts failed', error, { userId: req.userId });
+    handleBridgeError(res, error, 'Failed to list virtual accounts');
+  }
+};
+
+/**
+ * 列出入金紀錄（供前端輪詢）。
+ * - GET /onramp/:virtualAccountId/deposits → 指定 VA 的入金
+ * - GET /deposits → 使用者所有入金
+ */
+export const listDeposits = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = getAuthenticatedUserId(req, res);
+    if (!userId) return;
+
+    const { virtualAccountId } = req.params as { virtualAccountId?: string };
+    const result = await BridgeService.listDeposits(userId, virtualAccountId);
+    sendSuccess(res, result);
+  } catch (error) {
+    logError('Bridge list deposits failed', error, { userId: req.userId });
+    handleBridgeError(res, error, 'Failed to list deposits');
+  }
+};
+
+// ── Off-ramp（出金）───────────────────────────────────────────────────
 
 export const createOffRamp = async (req: AuthRequest, res: Response): Promise<void> => {
   try {

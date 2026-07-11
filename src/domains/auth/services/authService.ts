@@ -1,5 +1,6 @@
 import * as jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { prisma } from '../../shared/lib/prisma';
 import { getJwtSecret } from '../../../config/env';
 import { logAuthEvent, logError, logDatabaseOperation, logBusinessEvent, logDebug } from '../../logger';
@@ -57,7 +58,13 @@ export class AuthService {
   static async loginWithPrivy(
     identity: PrivyIdentity,
     referralCode?: string,
-  ): Promise<{ token: string; user: UserProfile; needsKeyPairSetup: boolean; needsProfileSetup: boolean }> {
+  ): Promise<{
+    token: string;
+    user: UserProfile;
+    needsKeyPairSetup: boolean;
+    needsProfileSetup: boolean;
+    emailConflict: boolean;
+  }> {
     const { privyUserId, email, walletAddress } = identity;
 
     if (!privyUserId) {
@@ -65,6 +72,9 @@ export class AuthService {
     }
 
     let resolved: { id: string; publicKey: string | null } | null = null;
+    // Privy 回報的 email 已被「另一個 Kura 帳號」使用時為 true：
+    // 不阻擋登入、也不覆蓋 email，僅回報讓前端提示使用者去處理。
+    let emailConflict = false;
 
     // 1. 以 privyUserId 查找既有帳號
     const byPrivy = await prisma.user.findUnique({
@@ -127,14 +137,50 @@ export class AuthService {
       logBusinessEvent('user_registered_privy', created.id, { hasEmail: !!email, hasWallet: !!walletAddress });
       resolved = created;
     } else {
-      // 既有帳號：補寫 / 更新 email 與 wallet（Privy 為身分來源）
-      await prisma.user.update({
-        where: { id: resolved.id },
-        data: {
-          ...(email ? { email } : {}),
-          ...(walletAddress ? { walletAddress } : {}),
-        },
-      });
+      // 既有帳號（以 privyUserId 命中）：補寫 / 更新 wallet。
+      // email 僅在「有值且未被其他帳號佔用」時才更新，否則會撞 email unique 約束
+      // （例如同一人有另一個 Kura 帳號已使用該 email）。登入不應因此失敗。
+      let emailToUpdate: string | undefined;
+      if (email) {
+        const emailOwner = await prisma.user.findUnique({
+          where: { email },
+          select: { id: true },
+        });
+        if (!emailOwner || emailOwner.id === resolved.id) {
+          emailToUpdate = email;
+        } else {
+          emailConflict = true;
+          logDebug('Skipping Privy email update: email already used by another account', {
+            userId: resolved.id,
+          });
+        }
+      }
+
+      try {
+        await prisma.user.update({
+          where: { id: resolved.id },
+          data: {
+            ...(emailToUpdate ? { email: emailToUpdate } : {}),
+            ...(walletAddress ? { walletAddress } : {}),
+          },
+        });
+      } catch (error) {
+        // 防競態：check 與 update 之間若 email 被別的帳號搶走，退回只更新 wallet，不阻擋登入
+        if (error instanceof PrismaClientKnownRequestError && error.code === 'P2002') {
+          emailConflict = true;
+          logDebug('Privy email update hit unique conflict, updating wallet only', {
+            userId: resolved.id,
+          });
+          if (walletAddress) {
+            await prisma.user.update({
+              where: { id: resolved.id },
+              data: { walletAddress },
+            });
+          }
+        } else {
+          throw error;
+        }
+      }
     }
 
     const token = jwt.sign({ userId: resolved.id }, getJwtSecret(), { expiresIn: '7d' });
@@ -149,7 +195,13 @@ export class AuthService {
     // email 由 Privy 管理，後端不允許獨立修改，因此不納入判斷
     const needsProfileSetup = !profile.hasName;
 
-    return { token, user: profile, needsKeyPairSetup: !resolved.publicKey, needsProfileSetup };
+    return {
+      token,
+      user: profile,
+      needsKeyPairSetup: !resolved.publicKey,
+      needsProfileSetup,
+      emailConflict,
+    };
   }
 
   /**

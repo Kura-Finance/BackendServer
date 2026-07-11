@@ -143,6 +143,21 @@ export function validateEnvironment(): void {
     console.warn('⚠️ BRIDGE_WEBHOOK_PUBLIC_KEY not set — Bridge webhooks will be rejected until configured');
   }
 
+  // 驗證 Dinari API 配置（tokenized stocks / dShares）
+  const dinariVars = ['DINARI_API_KEY_ID', 'DINARI_API_SECRET_KEY'];
+  const missingDinariVars = dinariVars.filter((key) => !process.env[key]);
+
+  if (missingDinariVars.length > 0) {
+    console.error(`❌ Dinari API not fully configured: ${missingDinariVars.join(', ')}`);
+    console.error('💡 Set DINARI_API_KEY_ID / DINARI_API_SECRET_KEY (from partners.dinari.com) to enable tokenized stocks');
+    if (isProduction) process.exit(1);
+  }
+
+  // 下單需要支付代幣地址（USDC）；未設定時下單會被拒
+  if (!process.env.DINARI_PAYMENT_TOKEN_ADDRESS) {
+    console.warn('⚠️ DINARI_PAYMENT_TOKEN_ADDRESS not set — Dinari order placement will be rejected until configured');
+  }
+
 
   // 在生產環境檢查數據庫配置
   if (isProduction) {

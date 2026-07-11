@@ -10,8 +10,10 @@ import {
   getCustomerStatus,
   getTransfer,
   handleBridgeWebhook,
+  listDeposits,
   listExternalAccounts,
   listTransfers,
+  listVirtualAccounts,
 } from './controllers/bridgeController';
 import {
   createExternalAccountBodySchema,
@@ -19,6 +21,7 @@ import {
   createOffRampBodySchema,
   createOnRampBodySchema,
   transferIdParamSchema,
+  virtualAccountIdParamSchema,
 } from './schemas/bridgeSchemas';
 
 const router = Router();
@@ -41,13 +44,26 @@ router.post(
 );
 router.get('/customer', requireAuth, wrapAsync(getCustomerStatus));
 
-// ── On / Off Ramp ───────────────────────────────────────────────────
+// ── On-ramp（入金）：Virtual Accounts ────────────────────────────────
+// POST /onramp：取得 / 建立專屬法幣入金帳戶（持久、免 memo）
+// GET  /onramp：列出使用者的入金帳戶
 router.post(
   '/onramp',
   requireAuth,
   validateRequest({ body: createOnRampBodySchema }),
   wrapAsync(createOnRamp),
 );
+router.get('/onramp', requireAuth, wrapAsync(listVirtualAccounts));
+router.get(
+  '/onramp/:virtualAccountId/deposits',
+  requireAuth,
+  validateRequest({ params: virtualAccountIdParamSchema }),
+  wrapAsync(listDeposits),
+);
+// 使用者所有入金紀錄（跨 VA）
+router.get('/deposits', requireAuth, wrapAsync(listDeposits));
+
+// ── Off-ramp（出金）───────────────────────────────────────────────────
 router.post(
   '/offramp',
   requireAuth,

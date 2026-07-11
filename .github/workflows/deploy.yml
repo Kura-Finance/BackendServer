@@ -125,12 +125,13 @@ jobs:
             GNOSIS_PAY_PSE_KEY_B64=${{ secrets.GNOSIS_PAY_PSE_KEY_B64 }}
             BRIDGE_API_KEY=${{ secrets.BRIDGE_API_KEY }}
             BRIDGE_WEBHOOK_PUBLIC_KEY=${{ secrets.BRIDGE_WEBHOOK_PUBLIC_KEY }}
+            BRIDGE_FEE_CONFIG_ENABLED=${{ vars.BRIDGE_FEE_CONFIG_ENABLED }}
             PRIVY_APP_ID=${{ secrets.PRIVY_APP_ID }}
             PRIVY_APP_SECRET=${{ secrets.PRIVY_APP_SECRET }}
             PRIVY_VERIFICATION_KEY=${{ secrets.PRIVY_VERIFICATION_KEY }}
             WEBAUTHN_RP_ID=api.kura-finance.com
             WEBAUTHN_RP_NAME=Kura
-            WEBAUTHN_ORIGIN=https://api.kura-finance.com
+            WEBAUTHN_ORIGIN=https://api.kura-finance.com,android:apk-key-hash:MePOeO1vVaYsQDTyYfKRQy2-RHSgZxcCC4ifchmuu6A
 
       
       # 🔔 GitHub Secrets 配置提示（首次部署時需設置）

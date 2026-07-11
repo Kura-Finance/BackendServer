@@ -106,12 +106,14 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       sendSuccess(res, {
         user: result.user,
         needsKeyPairSetup: result.needsKeyPairSetup,
+        emailConflict: result.emailConflict,
       });
     } else {
       sendSuccess(res, {
         token: result.token,
         user: result.user,
         needsKeyPairSetup: result.needsKeyPairSetup,
+        emailConflict: result.emailConflict,
       });
     }
   } catch (error) {

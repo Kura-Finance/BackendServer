@@ -20,14 +20,22 @@ import { prisma } from '../../shared/lib/prisma';
 import { appLogger, logDebug } from '../../logger';
 import type {
   BridgeCustomerResponse,
+  BridgeCustomerType,
   BridgeEndorsement,
   BridgeExternalAccountResponse,
+  BridgeFeeConfig,
   BridgeKycLinkResponse,
   BridgeTransferResponse,
+  BridgeVirtualAccountEventResponse,
+  BridgeVirtualAccountResponse,
+  CreateKycLinkParams,
+  CreateVirtualAccountParams,
   CustomerStatusResult,
+  DepositResult,
   ExternalAccountResult,
   KycLinkResult,
   TransferResult,
+  VirtualAccountResult,
 } from '../models/types';
 
 const DEFAULT_BRIDGE_API = 'https://api.bridge.xyz/v0';
@@ -106,6 +114,64 @@ async function bridgeFetch<T>(path: string, options: BridgeFetchOptions = {}): P
 
 const APPROVED_KYC_STATUSES = new Set(['approved', 'active']);
 
+// ── 入金（VA）費率：平台向用戶收取的 developer fee，依入金幣別套用 ──────
+//
+// 設計：費率一律由後端決定（不接受 client 指定），避免用戶把 fee 改成 0。
+//
+// 現行：用 developer_fee_percent（單一百分比 / VA）。
+// 注意：Bridge VA 沒有獨立的「FX fee / spread」欄位，想對用戶收的 spread
+// 一律併進 fee_percent；Bridge 自身的匯率 spread 另從 exchange_fee 扣（吃 margin）。
+//
+// 百分比為 base 100：'0.1' = 0.1%。
+const VA_FEE_PERCENT: Record<string, string> = {
+  usd: '0.10', // ACH/Fedwire 0.10%（developer_fee_percent 無法區分 rail，也收不了 Fedwire 固定費）
+  gbp: '0.20', // FPS 0.10% + FX 0.10%
+  eur: '0.20', // SEPA 0.10% + FX 0.10%
+  mxn: '0.35', // SPEI 0.20% + FX 0.15%
+  brl: '0.35', // PIX 0.20% + FX 0.15%
+  cop: '0.50', // PSE 0.30% + FX 0.20%
+};
+
+// 之後若向 Bridge 申請開通 fee_config Beta，可改用 per-rail 的固定費 + 百分比
+// （例如 USD 的 Fedwire $8 + 0.10%）。設 BRIDGE_FEE_CONFIG_ENABLED=true 啟用。
+const VA_FEE_CONFIG: Record<string, BridgeFeeConfig> = {
+  usd: {
+    source: {
+      ach_push: { fee_percent: '0.10' },
+      wire: { fee_amount: '8.00', fee_percent: '0.10' }, // Fedwire $8 + 0.10%
+    },
+  },
+  gbp: { source: { default: { fee_percent: '0.20' } } },
+  eur: { source: { default: { fee_percent: '0.20' } } },
+  mxn: { source: { default: { fee_percent: '0.35' } } },
+  brl: { source: { default: { fee_percent: '0.35' } } },
+  cop: { source: { default: { fee_percent: '0.50' } } },
+};
+
+function isFeeConfigEnabled(): boolean {
+  return process.env.BRIDGE_FEE_CONFIG_ENABLED === 'true';
+}
+
+/**
+ * 依入金幣別組出要送給 Bridge 的費用欄位。
+ * - 現行（預設）→ 回傳 { developer_fee_percent }
+ * - BRIDGE_FEE_CONFIG_ENABLED=true 且該幣別有設定 → 回傳 { fee_config }
+ * - 無對應費率設定 → 回傳 {}（不收費）
+ * fee_config 與 developer_fee_percent 互斥，只會回傳其中一個。
+ */
+function buildVirtualAccountFeeBody(
+  sourceCurrency: string,
+): { fee_config: BridgeFeeConfig } | { developer_fee_percent: string } | Record<string, never> {
+  const currency = sourceCurrency.toLowerCase();
+  if (isFeeConfigEnabled()) {
+    const feeConfig = VA_FEE_CONFIG[currency];
+    if (feeConfig) return { fee_config: feeConfig };
+  }
+  const percent = VA_FEE_PERCENT[currency];
+  if (percent) return { developer_fee_percent: percent };
+  return {};
+}
+
 function asJson(value: unknown): Prisma.InputJsonValue {
   return value as unknown as Prisma.InputJsonValue;
 }
@@ -117,35 +183,110 @@ function canTransact(kycStatus: string, endorsements: BridgeEndorsement[]): bool
   return endorsements.some((e) => e.status === 'approved');
 }
 
+/**
+ * 判斷 Bridge 是否回報「資源不存在」（customer / kyc_link 已被刪除或 sandbox 重置）。
+ * 偵測條件：HTTP 404 且 body 的 code === 'not_found'（message 常見為 "Customer not found"）。
+ * 以 code 為主、message 為後備（較穩定）。
+ */
+function isBridgeNotFound(error: unknown): boolean {
+  if (!(error instanceof BridgeError) || error.statusCode !== 404) return false;
+  try {
+    const parsed = JSON.parse(error.bridgeBody) as { code?: string };
+    if (parsed.code === 'not_found') return true;
+  } catch {
+    // body 非 JSON，落到 message 後備比對
+  }
+  return /not[_\s]?found|customer not found/i.test(error.bridgeBody);
+}
+
 export class BridgeService {
   // ── Customer / KYC ──────────────────────────────────────────────────
 
   /**
-   * 取得或建立用戶的 Bridge KYC link。
+   * 取得或建立用戶的 Bridge KYC（individual）/ KYB（business）link。
    * 若用戶尚未有 kyc_link 則向 Bridge 建立；已存在則回傳並順手刷新狀態。
+   *
+   * KYB（type=business）時 fullName 為公司法定名稱；UBO / 文件等於 hosted 流程內收集。
    */
   static async getOrCreateKycLink(
     userId: string,
-    fullName: string,
-    email: string | undefined,
-    type: 'individual' | 'business',
+    params: CreateKycLinkParams,
   ): Promise<KycLinkResult> {
     const existing = await prisma.bridgeCustomer.findUnique({ where: { userId } });
 
     if (existing?.kycLinkId) {
-      // 已建立過：刷新狀態後回傳既有連結
-      const refreshed = await this.refreshKycLinkStatus(userId, existing.kycLinkId);
-      return refreshed;
+      try {
+        // 已建立過：刷新狀態後回傳既有連結
+        return await this.refreshKycLinkStatus(userId, existing.kycLinkId);
+      } catch (error) {
+        if (!isBridgeNotFound(error)) throw error;
+
+        // Bridge 端 customer / kyc_link 已不存在（sandbox 重置或被刪）。
+        // 清除失效參照並重建，而不是把 404 丟回 App。
+        await this.clearStaleCustomer(userId);
+
+        // 以舊 kycLinkId 推導 idempotency key：同一批並發重建會共用同一把鑰匙
+        // → Bridge 端去重，不會建立多個 customer。
+        const result = await this.createKycLinkForUser(
+          userId,
+          params,
+          `kyc-rebuild:${existing.kycLinkId}`,
+        );
+
+        appLogger.info('[BridgeService] Rebuilt stale Bridge customer', {
+          userId,
+          oldCustomerId: existing.bridgeCustomerId,
+          oldKycLinkId: existing.kycLinkId,
+          newCustomerId: result.bridgeCustomerId,
+          newKycLinkId: result.kycLinkId,
+        });
+
+        return result;
+      }
     }
 
-    const resolvedEmail = email ?? (await this.resolveUserEmail(userId)) ?? undefined;
+    // 首次建立：以 userId 為 idempotency key，避免並發首呼建立重複 customer。
+    return this.createKycLinkForUser(userId, params, `kyc-new:${userId}`);
+  }
+
+  /** 實際向 Bridge 建立 KYC/KYB link 並 upsert 本地紀錄。 */
+  private static async createKycLinkForUser(
+    userId: string,
+    params: CreateKycLinkParams,
+    idempotencyKey: string,
+  ): Promise<KycLinkResult> {
+    const { type, fullName } = params;
+    // Bridge 的 /kyc_links 將 email 列為必填
+    const resolvedEmail = params.email ?? (await this.resolveUserEmail(userId)) ?? null;
+    if (!resolvedEmail) {
+      throw new BridgeError(
+        400,
+        'email is required to create a Bridge KYC/KYB link (none provided and user has no email).',
+        'createKycLinkForUser',
+      );
+    }
 
     const created = await bridgeFetch<BridgeKycLinkResponse>('/kyc_links', {
       method: 'POST',
+      idempotencyKey,
       body: {
-        full_name: fullName,
         type,
-        ...(resolvedEmail ? { email: resolvedEmail } : {}),
+        full_name: fullName,
+        email: resolvedEmail,
+        ...(params.endorsements?.length ? { endorsements: params.endorsements } : {}),
+        ...(params.redirectUri ? { redirect_uri: params.redirectUri } : {}),
+        ...(params.transliteratedFirstName
+          ? { transliterated_first_name: params.transliteratedFirstName }
+          : {}),
+        ...(params.transliteratedMiddleName
+          ? { transliterated_middle_name: params.transliteratedMiddleName }
+          : {}),
+        ...(params.transliteratedLastName
+          ? { transliterated_last_name: params.transliteratedLastName }
+          : {}),
+        ...(type === 'business' && params.transliteratedBusinessLegalName
+          ? { transliterated_business_legal_name: params.transliteratedBusinessLegalName }
+          : {}),
       },
     });
 
@@ -156,7 +297,7 @@ export class BridgeService {
         bridgeCustomerId: created.customer_id ?? null,
         kycLinkId: created.id,
         customerType: type,
-        email: resolvedEmail ?? null,
+        email: resolvedEmail,
         fullName,
         kycLink: created.kyc_link ?? null,
         tosLink: created.tos_link ?? null,
@@ -165,10 +306,10 @@ export class BridgeService {
         rawCustomer: asJson(created),
       },
       update: {
-        ...(created.customer_id ? { bridgeCustomerId: created.customer_id } : {}),
+        bridgeCustomerId: created.customer_id ?? null,
         kycLinkId: created.id,
         customerType: type,
-        ...(resolvedEmail ? { email: resolvedEmail } : {}),
+        email: resolvedEmail,
         fullName,
         kycLink: created.kyc_link ?? null,
         tosLink: created.tos_link ?? null,
@@ -178,16 +319,40 @@ export class BridgeService {
       },
     });
 
-    appLogger.info('[BridgeService] KYC link created', { userId, kycLinkId: created.id });
+    appLogger.info('[BridgeService] KYC/KYB link created', {
+      userId,
+      kycLinkId: created.id,
+      type,
+    });
 
     return {
       bridgeCustomerId: record.bridgeCustomerId,
       kycLinkId: record.kycLinkId,
+      customerType: record.customerType as BridgeCustomerType,
       kycLink: record.kycLink,
       tosLink: record.tosLink,
       kycStatus: record.kycStatus,
       tosStatus: record.tosStatus,
     };
+  }
+
+  /**
+   * 清除本地失效的 Bridge customer 參照（Bridge 端已不存在時呼叫）。
+   * 將 customer / kyc_link ids 與狀態歸零，讓下一次建立以「無 customer」乾淨開始。
+   */
+  private static async clearStaleCustomer(userId: string): Promise<void> {
+    await prisma.bridgeCustomer.update({
+      where: { userId },
+      data: {
+        bridgeCustomerId: null,
+        kycLinkId: null,
+        kycLink: null,
+        tosLink: null,
+        kycStatus: 'not_started',
+        tosStatus: 'pending',
+        endorsements: Prisma.JsonNull,
+      },
+    });
   }
 
   /** 透過 kyc_link ID 向 Bridge 拉取最新 KYC / TOS 狀態並同步 DB。 */
@@ -212,6 +377,7 @@ export class BridgeService {
     return {
       bridgeCustomerId: record.bridgeCustomerId,
       kycLinkId: record.kycLinkId,
+      customerType: record.customerType as BridgeCustomerType,
       kycLink: record.kycLink,
       tosLink: record.tosLink,
       kycStatus: record.kycStatus,
@@ -234,6 +400,7 @@ export class BridgeService {
       const reloaded = await prisma.bridgeCustomer.findUnique({ where: { userId } });
       return {
         bridgeCustomerId: reloaded?.bridgeCustomerId ?? null,
+        customerType: (reloaded?.customerType ?? record.customerType) as BridgeCustomerType,
         kycStatus: reloaded?.kycStatus ?? 'not_started',
         tosStatus: reloaded?.tosStatus ?? 'pending',
         endorsements: [],
@@ -241,7 +408,30 @@ export class BridgeService {
       };
     }
 
-    const customer = await bridgeFetch<BridgeCustomerResponse>(`/customers/${record.bridgeCustomerId}`);
+    let customer: BridgeCustomerResponse;
+    try {
+      customer = await bridgeFetch<BridgeCustomerResponse>(`/customers/${record.bridgeCustomerId}`);
+    } catch (error) {
+      if (!isBridgeNotFound(error)) throw error;
+
+      // Bridge 端 customer 已不存在：主動清除 stale 參照，
+      // 讓下一次 POST /kyc-link 以乾淨狀態重建，不再卡關。
+      appLogger.warn('[BridgeService] Stale Bridge customer on status fetch, clearing', {
+        userId,
+        staleCustomerId: record.bridgeCustomerId,
+      });
+      await this.clearStaleCustomer(userId);
+
+      return {
+        bridgeCustomerId: null,
+        customerType: record.customerType as BridgeCustomerType,
+        kycStatus: 'not_started',
+        tosStatus: 'pending',
+        endorsements: [],
+        canTransact: false,
+      };
+    }
+
     const endorsements = customer.endorsements ?? [];
     const kycStatus = customer.kyc_status ?? record.kycStatus;
     const tosStatus = customer.tos_status ?? record.tosStatus;
@@ -258,6 +448,7 @@ export class BridgeService {
 
     return {
       bridgeCustomerId: record.bridgeCustomerId,
+      customerType: record.customerType as BridgeCustomerType,
       kycStatus,
       tosStatus,
       endorsements,
@@ -285,57 +476,304 @@ export class BridgeService {
     return record.bridgeCustomerId;
   }
 
-  // ── Transfers ───────────────────────────────────────────────────────
-
-  static async createOnRamp(
+  /**
+   * 包裝會用到 bridgeCustomerId 的 Bridge 呼叫（transfer / external account）。
+   * 若 Bridge 回報 customer 已不存在（404 not_found），清除 stale 參照並要求重新 KYC，
+   * 與 kyc-link / customer 查詢採同一套自我修復邏輯，避免使用者卡關。
+   */
+  private static async withStaleCustomerGuard<T>(
     userId: string,
-    params: {
-      amount: string;
-      sourceRail: string;
-      sourceCurrency: string;
-      destinationRail: string;
-      destinationCurrency: string;
-      toAddress?: string;
-      developerFee?: string;
-      clientReferenceId?: string;
-      flexibleAmount?: boolean;
-    },
-  ): Promise<TransferResult> {
+    path: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await fn();
+    } catch (error) {
+      if (!isBridgeNotFound(error)) throw error;
+
+      appLogger.warn('[BridgeService] Stale Bridge customer during transaction, clearing', {
+        userId,
+        path,
+      });
+      await this.clearStaleCustomer(userId);
+
+      throw new BridgeError(
+        409,
+        'Bridge customer no longer exists. Re-complete KYC before transacting.',
+        path,
+      );
+    }
+  }
+
+  // ── On-ramp：Virtual Accounts（入金）────────────────────────────────
+
+  /**
+   * 取得或建立使用者的入金 Virtual Account（每組 source/destination 一個）。
+   * VA 是持久的法幣入金帳戶：入金後 Bridge 自動轉成穩定幣送往 destination，免 memo。
+   */
+  static async getOrCreateVirtualAccount(
+    userId: string,
+    params: CreateVirtualAccountParams,
+  ): Promise<VirtualAccountResult> {
     const bridgeCustomerId = await this.requireTransactableCustomer(userId);
 
-    const toAddress = params.toAddress ?? (await this.resolveUserWalletAddress(userId));
-    if (!toAddress) {
+    const address = params.toAddress ?? (await this.resolveUserWalletAddress(userId));
+    if (!address) {
       throw new BridgeError(
         400,
         'No destination address: provide toAddress or set the user wallet address.',
-        'createOnRamp',
+        'getOrCreateVirtualAccount',
       );
     }
 
-    const transfer = await bridgeFetch<BridgeTransferResponse>('/transfers', {
-      method: 'POST',
-      body: {
-        amount: params.amount,
-        on_behalf_of: bridgeCustomerId,
-        ...(params.developerFee ? { developer_fee: params.developerFee } : {}),
-        ...(params.clientReferenceId ? { client_reference_id: params.clientReferenceId } : {}),
-        source: {
-          payment_rail: params.sourceRail,
-          currency: params.sourceCurrency,
+    const existing = await prisma.bridgeVirtualAccount.findUnique({
+      where: {
+        userId_sourceCurrency_destinationRail_destinationCurrency: {
+          userId,
+          sourceCurrency: params.sourceCurrency,
+          destinationRail: params.destinationRail,
+          destinationCurrency: params.destinationCurrency,
         },
-        destination: {
-          payment_rail: params.destinationRail,
-          currency: params.destinationCurrency,
-          to_address: toAddress,
-        },
-        ...(params.flexibleAmount ? { features: { flexible_amount: true } } : {}),
       },
     });
 
-    return this.persistTransfer(userId, bridgeCustomerId, 'onramp', transfer, {
-      destinationAddress: toAddress,
+    if (existing) {
+      try {
+        // 向 Bridge 確認 VA 仍存在並同步最新 deposit instructions / 狀態
+        const va = await bridgeFetch<BridgeVirtualAccountResponse>(
+          `/customers/${bridgeCustomerId}/virtual_accounts/${existing.bridgeVirtualAccountId}`,
+        );
+        return this.persistVirtualAccount(userId, bridgeCustomerId, params, address, va);
+      } catch (error) {
+        if (!isBridgeNotFound(error)) throw error;
+        // VA 在 Bridge 端已不存在（sandbox 重置等）：刪本地後重建
+        await prisma.bridgeVirtualAccount.delete({ where: { id: existing.id } }).catch(() => undefined);
+        appLogger.warn('[BridgeService] Stale virtual account, recreating', {
+          userId,
+          staleVirtualAccountId: existing.bridgeVirtualAccountId,
+        });
+      }
+    }
+
+    // idempotency key 綁定 (userId + 組合)，並發首建會在 Bridge 端去重
+    const idempotencyKey = `va:${userId}:${params.sourceCurrency}:${params.destinationRail}:${params.destinationCurrency}`;
+
+    const va = await this.withStaleCustomerGuard(userId, 'getOrCreateVirtualAccount', () =>
+      bridgeFetch<BridgeVirtualAccountResponse>(
+        `/customers/${bridgeCustomerId}/virtual_accounts`,
+        {
+          method: 'POST',
+          idempotencyKey,
+          body: {
+            source: { currency: params.sourceCurrency },
+            destination: {
+              payment_rail: params.destinationRail,
+              currency: params.destinationCurrency,
+              address,
+            },
+            // 費率由後端依入金幣別套用（fee_config 或 developer_fee_percent）
+            ...buildVirtualAccountFeeBody(params.sourceCurrency),
+          },
+        },
+      ),
+    );
+
+    return this.persistVirtualAccount(userId, bridgeCustomerId, params, address, va);
+  }
+
+  /** 列出使用者的入金 Virtual Accounts。 */
+  static async listVirtualAccounts(userId: string): Promise<VirtualAccountResult[]> {
+    const records = await prisma.bridgeVirtualAccount.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    });
+    return records.map((r) => this.toVirtualAccountResult(r));
+  }
+
+  /**
+   * 列出使用者的入金紀錄（供前端輪詢）。
+   * 把 VA 活動事件依 depositId 聚合成「一筆入金」，帶出狀態與金額。
+   * @param virtualAccountId 選填，只查特定 VA 的入金。
+   */
+  static async listDeposits(userId: string, virtualAccountId?: string): Promise<DepositResult[]> {
+    const events = await prisma.bridgeVirtualAccountEvent.findMany({
+      where: {
+        userId,
+        // 只聚合屬於某筆存款的事件（排除 account_update / activation 等無 depositId 的）
+        depositId: { not: null },
+        ...(virtualAccountId ? { bridgeVirtualAccountId: virtualAccountId } : {}),
+      },
+      orderBy: { occurredAt: 'asc' },
+    });
+
+    // 依 depositId 分組
+    const groups = new Map<string, typeof events>();
+    for (const e of events) {
+      const key = e.depositId as string;
+      const list = groups.get(key);
+      if (list) list.push(e);
+      else groups.set(key, [e]);
+    }
+
+    const deposits: DepositResult[] = [];
+    for (const [depositId, group] of groups) {
+      // group 已依 occurredAt 升序（null 在前），保險起見再排一次
+      const sorted = [...group].sort(
+        (a, b) => this.eventTime(a).getTime() - this.eventTime(b).getTime(),
+      );
+      const latest = sorted[sorted.length - 1]!;
+      const first = sorted[0]!;
+      const received = sorted.find((e) => e.type === 'funds_received');
+      const payment = [...sorted]
+        .reverse()
+        .find((e) => e.type === 'payment_processed' || e.type === 'payment_submitted');
+      const txHashEvent = [...sorted].reverse().find((e) => e.destinationTxHash);
+
+      deposits.push({
+        depositId,
+        bridgeVirtualAccountId: latest.bridgeVirtualAccountId,
+        status: latest.type,
+        completed: sorted.some((e) => e.type === 'payment_processed'),
+        amount: received?.amount ?? latest.amount,
+        currency: received?.currency ?? latest.currency,
+        netAmount: payment?.subtotalAmount ?? latest.subtotalAmount,
+        developerFeeAmount: payment?.developerFeeAmount ?? latest.developerFeeAmount,
+        exchangeFeeAmount: payment?.exchangeFeeAmount ?? latest.exchangeFeeAmount,
+        gasFee: payment?.gasFee ?? latest.gasFee,
+        destinationTxHash: txHashEvent?.destinationTxHash ?? null,
+        createdAt: this.eventTime(first).toISOString(),
+        updatedAt: this.eventTime(latest).toISOString(),
+        events: sorted.map((e) => ({
+          type: e.type,
+          amount: e.amount,
+          currency: e.currency,
+          subtotalAmount: e.subtotalAmount,
+          developerFeeAmount: e.developerFeeAmount,
+          exchangeFeeAmount: e.exchangeFeeAmount,
+          gasFee: e.gasFee,
+          destinationTxHash: e.destinationTxHash,
+          occurredAt: e.occurredAt ? e.occurredAt.toISOString() : null,
+        })),
+      });
+    }
+
+    // 最新的入金排前面
+    deposits.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    return deposits;
+  }
+
+  private static eventTime(e: {
+    occurredAt: Date | null;
+    createdAt: Date;
+  }): Date {
+    return e.occurredAt ?? e.createdAt;
+  }
+
+  private static async persistVirtualAccount(
+    userId: string,
+    bridgeCustomerId: string,
+    params: CreateVirtualAccountParams,
+    address: string,
+    va: BridgeVirtualAccountResponse,
+  ): Promise<VirtualAccountResult> {
+    const data = {
+      userId,
+      bridgeCustomerId,
+      bridgeVirtualAccountId: va.id,
+      status: va.status ?? 'activated',
+      sourceCurrency: params.sourceCurrency,
+      destinationRail: va.destination?.payment_rail ?? params.destinationRail,
+      destinationCurrency: va.destination?.currency ?? params.destinationCurrency,
+      destinationAddress: va.destination?.address ?? address,
+      developerFeePercent: va.developer_fee_percent ?? null,
+      depositInstructions: va.source_deposit_instructions
+        ? asJson(va.source_deposit_instructions)
+        : Prisma.JsonNull,
+      rawAccount: asJson(va),
+    };
+
+    const record = await prisma.bridgeVirtualAccount.upsert({
+      where: { bridgeVirtualAccountId: va.id },
+      create: data,
+      update: data,
+    });
+
+    appLogger.info('[BridgeService] Virtual account ready', {
+      userId,
+      bridgeVirtualAccountId: va.id,
+      sourceCurrency: params.sourceCurrency,
+    });
+
+    return this.toVirtualAccountResult(record);
+  }
+
+  private static toVirtualAccountResult(
+    record: Prisma.BridgeVirtualAccountGetPayload<Record<string, never>>,
+  ): VirtualAccountResult {
+    return {
+      bridgeVirtualAccountId: record.bridgeVirtualAccountId,
+      status: record.status,
+      sourceCurrency: record.sourceCurrency,
+      destinationRail: record.destinationRail,
+      destinationCurrency: record.destinationCurrency,
+      destinationAddress: record.destinationAddress,
+      developerFeePercent: record.developerFeePercent,
+      depositInstructions:
+        (record.depositInstructions as unknown as VirtualAccountResult['depositInstructions']) ??
+        null,
+      createdAt: record.createdAt.toISOString(),
+    };
+  }
+
+  /** 處理 virtual_account.activity webhook：寫入入金/出款活動帳本。 */
+  static async syncVirtualAccountActivity(
+    event: BridgeVirtualAccountEventResponse,
+  ): Promise<void> {
+    const vaId = event.virtual_account_id;
+    if (!event.id || !vaId) return;
+
+    const va = await prisma.bridgeVirtualAccount.findUnique({
+      where: { bridgeVirtualAccountId: vaId },
+      select: { userId: true },
+    });
+    if (!va) {
+      logDebug('[BridgeService] VA activity for untracked virtual account', { vaId });
+      return;
+    }
+
+    const occurredAt = event.created_at ? new Date(event.created_at) : null;
+    const data = {
+      userId: va.userId,
+      bridgeVirtualAccountId: vaId,
+      bridgeEventId: event.id,
+      type: event.type ?? 'unknown',
+      amount: event.amount ?? null,
+      currency: event.currency ?? null,
+      subtotalAmount: event.subtotal_amount ?? null,
+      developerFeeAmount: event.developer_fee_amount ?? null,
+      exchangeFeeAmount: event.exchange_fee_amount ?? null,
+      gasFee: event.gas_fee ?? null,
+      depositId: event.deposit_id ?? null,
+      destinationTxHash: event.destination_tx_hash ?? null,
+      rawEvent: asJson(event),
+      occurredAt,
+    };
+
+    await prisma.bridgeVirtualAccountEvent.upsert({
+      where: { bridgeEventId: event.id },
+      create: data,
+      update: data,
+    });
+
+    appLogger.info('[BridgeService] VA activity recorded', {
+      userId: va.userId,
+      vaId,
+      type: event.type,
+      depositId: event.deposit_id,
     });
   }
+
+  // ── Off-ramp：Transfers（出金）──────────────────────────────────────
 
   static async createOffRamp(
     userId: string,
@@ -361,24 +799,26 @@ export class BridgeService {
       throw new BridgeError(404, 'External account not found for this user.', 'createOffRamp');
     }
 
-    const transfer = await bridgeFetch<BridgeTransferResponse>('/transfers', {
-      method: 'POST',
-      body: {
-        amount: params.amount,
-        on_behalf_of: bridgeCustomerId,
-        ...(params.developerFee ? { developer_fee: params.developerFee } : {}),
-        ...(params.clientReferenceId ? { client_reference_id: params.clientReferenceId } : {}),
-        source: {
-          payment_rail: params.sourceRail,
-          currency: params.sourceCurrency,
+    const transfer = await this.withStaleCustomerGuard(userId, 'createOffRamp', () =>
+      bridgeFetch<BridgeTransferResponse>('/transfers', {
+        method: 'POST',
+        body: {
+          amount: params.amount,
+          on_behalf_of: bridgeCustomerId,
+          ...(params.developerFee ? { developer_fee: params.developerFee } : {}),
+          ...(params.clientReferenceId ? { client_reference_id: params.clientReferenceId } : {}),
+          source: {
+            payment_rail: params.sourceRail,
+            currency: params.sourceCurrency,
+          },
+          destination: {
+            payment_rail: params.destinationRail,
+            currency: params.destinationCurrency,
+            external_account_id: params.externalAccountId,
+          },
         },
-        destination: {
-          payment_rail: params.destinationRail,
-          currency: params.destinationCurrency,
-          external_account_id: params.externalAccountId,
-        },
-      },
-    });
+      }),
+    );
 
     return this.persistTransfer(userId, bridgeCustomerId, 'offramp', transfer, {
       destinationExternalId: params.externalAccountId,
@@ -430,9 +870,11 @@ export class BridgeService {
 
     const payload = this.buildExternalAccountPayload(body);
 
-    const account = await bridgeFetch<BridgeExternalAccountResponse>(
-      `/customers/${bridgeCustomerId}/external_accounts`,
-      { method: 'POST', body: payload },
+    const account = await this.withStaleCustomerGuard(userId, 'createExternalAccount', () =>
+      bridgeFetch<BridgeExternalAccountResponse>(
+        `/customers/${bridgeCustomerId}/external_accounts`,
+        { method: 'POST', body: payload },
+      ),
     );
 
     const record = await prisma.bridgeExternalAccount.upsert({

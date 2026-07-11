@@ -9,6 +9,8 @@ export {
   createKycLink,
   getCustomerStatus,
   createOnRamp,
+  listVirtualAccounts,
+  listDeposits,
   createOffRamp,
   getTransfer,
   listTransfers,
@@ -20,9 +22,15 @@ export {
 // 型別
 export type {
   BridgeCustomerType,
+  BridgeEndorsementType,
   BridgeTransferDirection,
+  CreateKycLinkParams,
+  CreateVirtualAccountParams,
   KycLinkResult,
   CustomerStatusResult,
   TransferResult,
+  VirtualAccountResult,
+  DepositResult,
+  DepositEvent,
   ExternalAccountResult,
 } from './models/types';

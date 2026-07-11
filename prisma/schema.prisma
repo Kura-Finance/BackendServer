@@ -106,6 +106,13 @@ model User {
   bridgeCustomer         BridgeCustomer?
   bridgeTransfers        BridgeTransfer[]
   bridgeExternalAccounts BridgeExternalAccount[]
+  bridgeVirtualAccounts  BridgeVirtualAccount[]
+  bridgeVaEvents         BridgeVirtualAccountEvent[]
+
+  // 關聯：Dinari Tokenized Stocks（dShares）
+  dinariEntity   DinariEntity?
+  dinariAccounts DinariAccount[]
+  dinariOrders   DinariOrder[]
 
   @@index([referredByUserId])
 }
@@ -867,7 +874,8 @@ model BridgeCustomer {
   kycLink   String? // hosted KYC 連結
   tosLink   String? // hosted TOS 連結
   kycStatus String  @default("not_started")
-  // not_started | under_review | incomplete | awaiting_ubo | approved | rejected | paused | offboarded
+  // not_started | incomplete | awaiting_questionnaire | awaiting_ubo | under_review | approved | rejected | paused | offboarded
+  // 註：awaiting_questionnaire / awaiting_ubo 為 KYB（business）流程特有
   tosStatus String  @default("pending") // pending | approved
 
   endorsements Json? // Bridge 回傳的 endorsements 陣列（base / sepa / spei ...）
@@ -949,6 +957,72 @@ model BridgeTransfer {
   @@index([bridgeCustomerId])
 }
 
+// Bridge Virtual Account（每用戶專屬、持久的法幣入金帳戶；on-ramp 主要入金方式）
+// 入金到此帳戶會自動轉成穩定幣並送到 destination，且不需每次帶 memo。
+model BridgeVirtualAccount {
+  id                     String  @id @default(uuid())
+  userId                 String
+  bridgeCustomerId       String? // 所屬 Bridge customer（cust_...）
+  bridgeVirtualAccountId String  @unique // Bridge virtual account ID
+
+  status String @default("activated") // activated | deactivated
+
+  // ── source（法幣入金幣別）──
+  sourceCurrency String // usd | eur | mxn ...
+
+  // ── destination（自動轉換後送往的 crypto 目的地）──
+  destinationRail     String // ethereum | base | polygon | solana ...
+  destinationCurrency String // usdc | usdb ...
+  destinationAddress  String
+
+  developerFeePercent String? // 開發者抽成百分比（base 100，例如 "1.0" = 1%）
+
+  // Bridge 回傳的銀行入金資訊（持久，直接回給前端顯示）
+  depositInstructions Json?
+  rawAccount          Json? // 最後一次完整 virtual_account payload
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  events BridgeVirtualAccountEvent[]
+
+  // 每個用戶針對同一組（入金幣別 + 目的鏈 + 目的幣別）只開一個 VA
+  @@unique([userId, sourceCurrency, destinationRail, destinationCurrency])
+  @@index([userId])
+  @@index([bridgeVirtualAccountId])
+}
+
+// Virtual Account 活動帳本（入金 / 出款事件，來自 webhook 與 history）
+model BridgeVirtualAccountEvent {
+  id                     String @id @default(uuid())
+  userId                 String
+  bridgeVirtualAccountId String // 所屬 Bridge virtual account
+  bridgeEventId          String @unique // VA event id（去重）
+
+  type String // funds_received | payment_submitted | payment_processed | refunded | in_review | ...
+
+  amount             String?
+  currency           String?
+  subtotalAmount     String?
+  developerFeeAmount String?
+  exchangeFeeAmount  String?
+  gasFee             String?
+  depositId          String? // 同一筆存款的關聯 id（多個事件共用）
+  destinationTxHash  String?
+
+  rawEvent   Json?
+  occurredAt DateTime?
+  createdAt  DateTime @default(now())
+
+  user           User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  virtualAccount BridgeVirtualAccount @relation(fields: [bridgeVirtualAccountId], references: [bridgeVirtualAccountId], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([bridgeVirtualAccountId])
+  @@index([depositId])
+}
+
 // Bridge webhook 事件去重（event_id 為全域唯一）
 model BridgeWebhookEvent {
   id            String   @id @default(uuid())
@@ -960,4 +1034,80 @@ model BridgeWebhookEvent {
   createdAt     DateTime @default(now())
 
   @@index([eventType])
+}
+
+// ============================================================
+// Dinari Tokenized Stocks（dShares）
+// 模型：User → DinariEntity（Dinari 客戶 entity）→ DinariAccount（交易帳戶）→ DinariOrder
+// 用戶自管錢包（SCA）：下單走鏈上 EIP155 permit。
+// ============================================================
+
+// 每個 Kura 用戶對應一個 Dinari customer Entity
+model DinariEntity {
+  id        String @id @default(uuid())
+  userId    String @unique
+  entityId  String @unique // Dinari entity id（uuid）
+  kycStatus String @default("not_started") // not_started | PENDING | APPROVED | REJECTED | ...
+
+  rawKyc    Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Dinari 交易帳戶（連接用戶 SCA）
+model DinariAccount {
+  id        String @id @default(uuid())
+  userId    String
+  entityId  String // Dinari entity id
+  accountId String @unique // Dinari account id（uuid）
+
+  walletAddress String? // 已連接的用戶錢包（SCA）
+  walletChainId String? // CAIP-2，例如 eip155:8453
+  isActive      Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orders DinariOrder[]
+
+  @@index([userId])
+  @@index([accountId])
+}
+
+// dShare 下單紀錄（EIP155 order request → on-chain order）
+model DinariOrder {
+  id             String  @id @default(uuid())
+  userId         String
+  accountId      String // Dinari account id
+  orderRequestId String  @unique // EIP155 order request id（主鍵，prepare 後取得）
+  orderId        String? // Dinari order id（送出後 on-chain 才有）
+
+  stockId String?
+  side    String // BUY | SELL
+  type    String // MARKET | LIMIT
+  tif     String  @default("DAY") // DAY | GTC | IOC | FOK
+  status  String  @default("QUOTED") // QUOTED | PENDING | SUBMITTED | ERROR | CANCELLED | EXPIRED | REJECTED | (order status)
+
+  chainId              String?
+  paymentToken         String?
+  paymentTokenQuantity String? // 市價買：付款穩定幣數量
+  assetTokenQuantity   String? // 市價賣 / 限價：dShare 數量
+  limitPrice           String?
+  clientOrderId        String?
+
+  rawOrderRequest Json?
+  rawOrder        Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account DinariAccount @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([accountId])
+  @@index([orderId])
 }
