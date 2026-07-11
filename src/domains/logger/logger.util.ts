@@ -38,7 +38,7 @@ export const logDatabaseOperation = (operation: string, table: string, duration:
 /**
  * 认证事件日志
  */
-export const logAuthEvent = (event: 'login' | 'logout' | 'register' | 'failed_login' | 'failed_register', userId?: string | number, details?: Record<string, any>) => {
+export const logAuthEvent = (event: 'login' | 'logout' | 'register' | 'failed_login' | 'failed_register' | 'password_reset_requested' | 'failed_password_reset_request' | 'password_reset_success' | 'failed_password_reset' | 'failed_send_verification' | 'failed_email_verification' | 'email_verified' | 'password_reset_code_sent' | 'failed_password_reset_code' | 'password_reset_verified' | 'verification_code_sent' | 'failed_verification' | 'verification_success' | 'email_changed', userId?: string | number, details?: Record<string, any>) => {
   appLogger.info(`Auth event: ${event}`, {
     event,
     userId: userId || 'unknown',
@@ -97,14 +97,17 @@ export const logDebug = (message: string, data?: Record<string, any>) => {
 
 /**
  * 打印漂亮的启动信息
+/**
+ * 服務啟動日誌
  */
-export const logStartup = (serviceName: string, version: string, port?: number) => {
+export const logStartup = (serviceName: string, version: string, port?: number, protocol?: string) => {
   const env = process.env.NODE_ENV || 'development';
+  const protocolStr = protocol ? ` (${protocol})` : '';
+  const portStr = port ? `\n║  Port: ${port}${protocolStr}` : '';
   appLogger.info(`
 ╔══════════════════════════════════════╗
 ║  ${serviceName} v${version}
-║  Environment: ${env}
-║  ${port ? `Port: ${port}` : ''}
+║  Environment: ${env}${portStr}
 ╚══════════════════════════════════════╝
   `);
 };

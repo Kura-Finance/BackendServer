@@ -1,11 +1,11 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
-import fs from 'fs';
-import https from 'https';
-import path from 'path';
+import { initializeEnv } from './config/env';
+import { prisma, initializeDatabase, closeDatabase } from './domains/shared/lib/database';
 import { authRouter } from './domains/auth';
 import { plaidRouter } from './domains/plaid';
+import { assetRouter } from './domains/asset';
+import { exchangeRouter } from './domains/exchange';
 import {
   appLogger,
   httpLogger,
@@ -14,44 +14,68 @@ import {
   logStartup,
 } from './domains/logger';
 
-const envFile = process.env.NODE_ENV === 'production' ? '.env.production' : '.env.development';
-const envResult = dotenv.config({ path: envFile });
-if (envResult.error) {
-  dotenv.config();
-}
+// ========================================
+// 1. 初始化環境變數和數據庫 URL
+// ========================================
+initializeEnv();
 
 const app = express();
-const defaultFrontendOrigin =
-  process.env.NODE_ENV === 'production' ? 'http://localhost:3000' : 'https://localhost:3000';
-const fallbackOrigins = Array.from(
-  new Set([
-    defaultFrontendOrigin,
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    'http://localhost:3001',
-    'http://127.0.0.1:3001',
-    'https://localhost:3000',
-    'https://127.0.0.1:3000',
-    'https://localhost:3001',
-    'https://127.0.0.1:3001',
-  ])
-);
+const PORT = Number(process.env.PORT || 8080);
 
-// Middleware
+// ========================================
+// 2. 設置 CORS
+// ========================================
+const developmentOrigins = [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:3001',
+  'http://127.0.0.1:3001',
+  'https://localhost:3000',
+  'https://127.0.0.1:3000',
+  'https://localhost:3001',
+  'https://127.0.0.1:3001',
+];
+const fallbackOrigins = process.env.NODE_ENV === 'production' 
+  ? [] // 生產環境必須通過環境變數設定
+  : developmentOrigins;
+
 const corsOptions = {
   origin: process.env.ALLOWED_ORIGINS?.split(',') || fallbackOrigins,
   credentials: true,
 };
+
+// ========================================
+// 3. 中間件
+// ========================================
 app.use(cors(corsOptions));
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(requestBodyLogger);
 app.use(httpLogger);
 
-// Domain Router Registration
+// ========================================
+// 4. Health Check 端點
+// ========================================
+app.get('/health', (req: Request, res: Response) => {
+  res.status(200).json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development',
+  });
+});
+
+// ========================================
+// 5. API 路由
+// ========================================
 app.use('/api/auth', authRouter);
 app.use('/api/plaid', plaidRouter);
+app.use('/api/assets', assetRouter);
+app.use('/api/exchange', exchangeRouter);
 
-// 錯誤處理中間件
+// ========================================
+// 6. 錯誤處理中間件
+// ========================================
 app.use(errorLogger);
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   const statusCode = res.statusCode || 500;
@@ -64,39 +88,48 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   res.status(statusCode).json({ error: '伺服器錯誤' });
 });
 
-// 啟動 Server
-const PORT = Number(process.env.PORT || 8080);
-const defaultCertPath = path.resolve(process.cwd(), '../certificates/localhost.pem');
-const defaultKeyPath = path.resolve(process.cwd(), '../certificates/localhost-key.pem');
-const certPath = process.env.SSL_CERT_PATH
-  ? path.resolve(process.cwd(), process.env.SSL_CERT_PATH)
-  : defaultCertPath;
-const keyPath = process.env.SSL_KEY_PATH
-  ? path.resolve(process.cwd(), process.env.SSL_KEY_PATH)
-  : defaultKeyPath;
-const shouldUseHttps = (process.env.BACKEND_USE_HTTPS || '').toLowerCase() === 'true';
+// ========================================
+// 7. 全局錯誤處理
+// ========================================
+process.on('uncaughtException', (error) => {
+  console.error('❌ 未捕獲的異常:', error);
+  appLogger.error('Uncaught exception', error);
+  process.exit(1);
+});
 
-if (shouldUseHttps) {
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ 未處理的 Promise 拒絕:', reason);
+  appLogger.error('Unhandled rejection', { reason, promise });
+  process.exit(1);
+});
+
+// ========================================
+// 8. 啟動服務器
+// ========================================
+async function startServer() {
   try {
-    const cert = fs.readFileSync(certPath);
-    const key = fs.readFileSync(keyPath);
+    // 初始化數據庫連接
+    await initializeDatabase();
 
-    https.createServer({ key, cert }, app).listen(PORT, () => {
-      logStartup('Kura Backend', '1.0.0', PORT);
+    // 啟動 Express 服務器
+    const server = app.listen(PORT, '0.0.0.0', () => {
+      logStartup('Kura Backend', '1.0.0', PORT, 'HTTP');
+    });
+
+    // 優雅關閉
+    process.on('SIGTERM', async () => {
+      console.log('💤 Received SIGTERM signal, shutting down...');
+      server.close(async () => {
+        await closeDatabase();
+        console.log('✅ Server closed gracefully');
+        process.exit(0);
+      });
     });
   } catch (error) {
-    appLogger.warn('HTTPS cert/key not found, falling back to HTTP', {
-      certPath,
-      keyPath,
-      error: error instanceof Error ? error.message : error,
-    });
-
-    app.listen(PORT, () => {
-      logStartup('Kura Backend', '1.0.0', PORT);
-    });
+    console.error('❌ Failed to start server:', error);
+    await closeDatabase();
+    process.exit(1);
   }
-} else {
-  app.listen(PORT, () => {
-    logStartup('Kura Backend', '1.0.0', PORT);
-  });
 }
+
+startServer();

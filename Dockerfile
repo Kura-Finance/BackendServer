@@ -1,26 +1,62 @@
-# 使用輕量級的 Node.js 20 Alpine 版本
-FROM node:20-alpine
+# ============================================
+# 編譯階段 (Build Stage)
+# ============================================
+FROM node:24-alpine AS builder
 
-# 設定工作目錄
 WORKDIR /app
 
-# 先複製 package.json 和 lock 檔，以利用 Docker 的快取機制
+# 複製 package.json 和 lock 檔
 COPY package*.json ./
 
-# 複製 Prisma schema (生成 Client 需要)
+# 複製 Prisma schema 和 migrations
 COPY prisma ./prisma/
 
-# 安裝所有相依套件
-RUN npm install
+# 複製 TypeScript 設定
+COPY tsconfig.json ./
 
-# 生成 Prisma Client
-RUN npx prisma generate
+# 安裝所有相依套件（包括 devDependencies，編譯需要）
+RUN npm ci
 
-# 複製其餘所有原始碼
-COPY . .
+# 複製原始碼
+COPY src ./src
 
-# 暴露對外的 Port
+# 使用虛擬 DATABASE_URL 生成 Prisma Client（僅用於編譯時）
+RUN DATABASE_URL="postgresql://dummy:dummy@localhost/dummy" npx prisma generate || true
+
+# 編譯 TypeScript
+RUN npm run build
+
+# ============================================
+# 運行階段 (Runtime Stage)
+# ============================================
+FROM node:24-alpine
+
+WORKDIR /app
+
+# 安裝 dumb-init 和 openssl（優雅處理信號和 Prisma 需要）
+RUN apk add --no-cache dumb-init openssl
+
+# 複製 package.json 和 package-lock.json
+COPY --from=builder /app/package*.json ./
+
+# 只安裝生產依賴
+RUN npm ci --only=production
+
+# 複製編譯結果、Prisma schema 和生成的 Prisma 客戶端
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+
+# 建立非 root 用戶
+RUN addgroup -g 1001 -S nodejs
+RUN adduser -S nodejs -u 1001
+USER nodejs
+
+# 暴露通訊埠
 EXPOSE 8080
 
-# 啟動開發伺服器 (支援熱更新)
-CMD ["npm", "run", "dev"]
+# 使用 dumb-init 優雅處理信號
+ENTRYPOINT ["dumb-init", "--"]
+
+# 啟動應用
+CMD ["node", "dist/index.js"]

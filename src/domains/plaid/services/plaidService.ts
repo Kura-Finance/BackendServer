@@ -1,7 +1,26 @@
 import { plaidClient } from '../lib/plaid';
+import { createPlaidClientForUser } from '../lib/plaidClientFactory';
+import {
+  shouldRefreshAccountsCache,
+  shouldRefreshTransactionsCache,
+  shouldRefreshInvestmentsCache,
+  upsertAccountsCache,
+  upsertTransactionsCache,
+  upsertInvestmentAccountsCache,
+  upsertInvestmentsCache,
+  getAccountsFromCache,
+  getTransactionsFromCache,
+  getInvestmentAccountsFromCache,
+  getInvestmentsFromCache,
+  updateSyncTimestamp,
+  getOrCreateSyncLog,
+} from '../lib/plaidCacheUtil';
+import { getStockLogoUrl } from '../lib/stockIconUtil';
 import { prisma } from '../../shared/lib/prisma';
 import { CountryCode, Products } from 'plaid';
 import { appLogger, logError, logBusinessEvent, logPerformance, logDebug, logDatabaseOperation } from '../../logger';
+import { AuditLogger } from '../../logger/auditLog';
+import { EncryptionUtil } from '../../shared/lib/encryption';
 import {
   BankingAccountType,
   TransactionType,
@@ -100,6 +119,22 @@ const orderItemsByStoredIds = <T extends { id: string }>(items: T[], orderedIds:
 };
 
 /**
+ * 獲取用戶的 email
+ */
+const getUserEmail = async (userId: string): Promise<string> => {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { email: true },
+  });
+
+  if (!user?.email) {
+    throw new Error(`User not found or email is missing for userId: ${userId}`);
+  }
+
+  return user.email;
+};
+
+/**
  * Plaid Service - Business Logic Layer
  */
 export class PlaidService {
@@ -141,30 +176,119 @@ export class PlaidService {
    */
   static async createLinkToken(userId: string): Promise<string> {
     const startTime = Date.now();
-    const defaultFrontendUrl =
-      process.env.NODE_ENV === 'production' ? 'http://localhost:3000' : 'https://localhost:3000';
-    const plaidRedirectUri = process.env.PLAID_REDIRECT_URI || `${defaultFrontendUrl}/dashboard`;
+    
+    // 根據用戶 email 獲取相應的 Plaid Client
+    const userEmail = await getUserEmail(userId);
+    const userPlaidClient = createPlaidClientForUser(userEmail);
+    
+    // Plaid 要求 redirect_uri 必須使用 HTTPS (安全要求)
+    // 優先使用 PLAID_REDIRECT_URI 環境變數，必須是 HTTPS URL
+    let plaidRedirectUri = process.env.PLAID_REDIRECT_URI;
+    
+    if (!plaidRedirectUri) {
+      // 如果未設定環境變數，則根據環境生成預設值
+      // 開發環境: 使用 FRONTEND_HOST 或 localhost:3000 (使用自簽憑證)
+      // 生產環境: 必須在環境變數中明確設定 PLAID_REDIRECT_URI
+      const frontendHost = process.env.ALLOWED_ORIGINS?.split(',')[0]?.replace('http://', '').replace('https://', '') || 'localhost:3000';
+      
+      if (process.env.NODE_ENV === 'production') {
+        logError('PLAID_REDIRECT_URI not configured', new Error('Missing required environment variable'), {
+          environment: 'production',
+        });
+        throw new Error('PLAID_REDIRECT_URI 環境變數未設定。請在部署時設定此變數。');
+      }
+      
+      plaidRedirectUri = `https://${frontendHost}/dashboard`;
+    }
 
-    logDebug('Creating Plaid link token', { userId, redirectUri: plaidRedirectUri });
+    logDebug('Creating Plaid link token', {
+      userId,
+      userEmail,
+      redirectUri: plaidRedirectUri,
+      environment: process.env.NODE_ENV,
+    });
+
+    // 默认只支持 US，可通过环境变量扩展支持的国家代码
+    // Plaid 免费层可能只支持 US，高级账户可解锁更多国家
+    const supportedCountryCodes = process.env.PLAID_COUNTRY_CODES
+      ? process.env.PLAID_COUNTRY_CODES.split(',').map((code) => code.trim().toUpperCase() as CountryCode)
+      : [CountryCode.Us];
 
     const request: any = {
       user: { client_user_id: userId },
       client_name: 'Kura',
       products: [Products.Transactions],
       optional_products: [Products.Investments],
-      country_codes: [CountryCode.Us, CountryCode.Gb, CountryCode.Fr, CountryCode.De],
+      country_codes: supportedCountryCodes,
       language: 'en',
     };
 
     request.redirect_uri = plaidRedirectUri;
 
-    const response = await plaidClient.linkTokenCreate(request);
+    logDebug('Link token request payload', {
+      userId,
+      countryCodes: supportedCountryCodes,
+      products: request.products,
+    });
 
-    const duration = Date.now() - startTime;
-    logPerformance('create_link_token', duration, 2000);
-    logBusinessEvent('link_token_created', userId, { redirectUri: plaidRedirectUri });
+    try {
+      const response = await userPlaidClient.linkTokenCreate(request);
 
-    return response.data.link_token;
+      const duration = Date.now() - startTime;
+      logPerformance('create_link_token', duration, 2000);
+      logBusinessEvent('link_token_created', userId, {
+        redirectUri: plaidRedirectUri,
+        countryCodes: supportedCountryCodes,
+      });
+
+      logDebug('Link token created successfully', {
+        userId,
+        linkToken: response.data.link_token?.substring(0, 10) + '...',
+      });
+
+      return response.data.link_token;
+    } catch (error: any) {
+      const errorData = error.response?.data;
+      const errorCode = errorData?.error_code;
+      const errorMessage = errorData?.error_message;
+      const displayMessage = errorData?.display_message;
+
+      logError('Failed to create Plaid link token', error, {
+        userId,
+        countryCodes: supportedCountryCodes,
+        redirectUri: plaidRedirectUri,
+        errorCode,
+        errorMessage,
+        displayMessage,
+        errorType: errorData?.error_type,
+        requestId: errorData?.request_id,
+        rawError: error.message,
+      });
+
+      // 国家代码不支持
+      if (errorCode === 'INVALID_FIELD' && errorMessage?.includes('country')) {
+        throw new Error(
+          `Plaid 不支援所選國家代碼 (${supportedCountryCodes.join(', ')})。請確認您的 Plaid 帳戶已啟用這些國家，或更新 PLAID_COUNTRY_CODES 環境變數。`
+        );
+      }
+
+      // 其他 INVALID_FIELD 錯誤
+      if (errorCode === 'INVALID_FIELD') {
+        throw new Error(
+          `Plaid API 返回無效欄位錯誤: ${displayMessage || errorMessage || '未知錯誤'}。請檢查 PLAID_REDIRECT_URI 設定或其他配置。`
+        );
+      }
+
+      // Plaid API 連接錯誤
+      if (errorCode === 'INVALID_REQUEST') {
+        throw new Error(
+          `Plaid API 無效請求: ${displayMessage || errorMessage || '請檢查 API 憑證和配置'}。`
+        );
+      }
+
+      // 通用錯誤
+      throw error;
+    }
   }
 
   /**
@@ -173,88 +297,361 @@ export class PlaidService {
   static async exchangePublicToken(userId: string, publicToken: string, institutionName?: string): Promise<void> {
     const startTime = Date.now();
 
-    logDebug('Exchanging Plaid public token', { userId, institution: institutionName });
+    try {
+      // 根據用戶 email 獲取相應的 Plaid Client
+      const userEmail = await getUserEmail(userId);
+      const userPlaidClient = createPlaidClientForUser(userEmail);
 
-    const response = await plaidClient.itemPublicTokenExchange({ public_token: publicToken });
-    const accessToken = response.data.access_token;
-    const itemId = response.data.item_id;
+      logDebug('Exchanging Plaid public token', { userId, userEmail, institution: institutionName });
 
-    const dbStartTime = Date.now();
-    await prisma.plaidItem.create({
-      data: {
-        userId,
-        accessToken,
-        itemId,
-        institutionName: institutionName || 'Unknown Bank',
-      },
-    });
-    logDatabaseOperation('CREATE', 'plaid_items', Date.now() - dbStartTime, true);
+      const response = await userPlaidClient.itemPublicTokenExchange({ public_token: publicToken });
+      const accessToken = response.data.access_token;
+      const itemId = response.data.item_id;
 
-    const duration = Date.now() - startTime;
-    logPerformance('exchange_public_token', duration, 3000);
-    logBusinessEvent('bank_account_connected', userId, {
-      institution: institutionName || 'Unknown',
-      itemId,
-    });
+      // 加密敏感信息
+      const encryptedAccessToken = EncryptionUtil.encrypt(accessToken);
+      const encryptedItemId = EncryptionUtil.encrypt(itemId);
+
+      const dbStartTime = Date.now();
+      const plaidItem = await prisma.plaidItem.create({
+        data: {
+          userId,
+          accessToken: encryptedAccessToken,
+          itemId: encryptedItemId,
+          institutionName: institutionName || 'Unknown Bank',
+        },
+      });
+      logDatabaseOperation('CREATE', 'plaid_items', Date.now() - dbStartTime, true);
+
+      const duration = Date.now() - startTime;
+      logPerformance('exchange_public_token', duration, 3000);
+      logBusinessEvent('bank_account_connected', userId, {
+        institution: institutionName || 'Unknown',
+      });
+
+      // 記錄審計日誌
+      AuditLogger.logPlaidOperation('EXCHANGE_TOKEN', userId, 'SUCCESS', plaidItem.id, {
+        institution: institutionName || 'Unknown Bank',
+      }, undefined, duration);
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      
+      // 記錄審計日誌（失敗）
+      AuditLogger.logPlaidOperation('EXCHANGE_TOKEN', userId, 'FAILURE', undefined, {
+        institution: institutionName,
+      }, errorMsg, duration);
+      
+      throw error;
+    }
   }
 
   /**
    * 断开 Plaid 账户
    */
   static async disconnectAccount(userId: string, accountId: string): Promise<void> {
-    logDebug('Disconnecting Plaid account', { userId, accountId });
+    const startTime = Date.now();
+    try {
+      logDebug('Disconnecting Plaid account', { userId, accountId });
 
-    const dbStartTime = Date.now();
-    const plaidItems = await prisma.plaidItem.findMany({
-      where: { userId },
-      select: {
-        id: true,
-        accessToken: true,
-        institutionName: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-    logDatabaseOperation('SELECT', 'plaid_items', Date.now() - dbStartTime, true);
+      // 根據用戶 email 獲取相應的 Plaid Client
+      const userEmail = await getUserEmail(userId);
+      const userPlaidClient = createPlaidClientForUser(userEmail);
 
-    let matchedPlaidItemId: string | null = null;
-    let institutionName: string | null = null;
+      const dbStartTime = Date.now();
+      const plaidItems = await prisma.plaidItem.findMany({
+        where: { userId },
+        select: {
+          id: true,
+          accessToken: true,
+          institutionName: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      logDatabaseOperation('SELECT', 'plaid_items', Date.now() - dbStartTime, true);
 
-    for (const item of plaidItems) {
-      try {
-        const accountsResponse = await plaidClient.accountsGet({
-          access_token: item.accessToken,
-        });
+      let matchedPlaidItemId: string | null = null;
+      let institutionName: string | null = null;
 
-        const hasAccount = accountsResponse.data.accounts.some((account) => account.account_id === accountId);
+      for (const item of plaidItems) {
+        try {
+          const { decryptedAccessToken } = this.decryptPlaidItem(item);
+          const accountsResponse = await userPlaidClient.accountsGet({
+            access_token: decryptedAccessToken,
+          });
 
-        if (hasAccount) {
-          matchedPlaidItemId = item.id;
-          institutionName = item.institutionName;
-          break;
+          const hasAccount = accountsResponse.data.accounts.some((account) => account.account_id === accountId);
+
+          if (hasAccount) {
+            matchedPlaidItemId = item.id;
+            institutionName = item.institutionName;
+            break;
+          }
+        } catch (error: any) {
+          appLogger.warn('Failed to inspect Plaid item during disconnect', {
+            error: error.response?.data || error.message || error,
+            userId,
+            plaidItemId: item.id,
+          });
         }
-      } catch (error: any) {
-        appLogger.warn('Failed to inspect Plaid item during disconnect', {
-          error: error.response?.data || error.message || error,
-          userId,
-          plaidItemId: item.id,
-        });
       }
+
+      if (!matchedPlaidItemId) {
+        return;
+      }
+
+      const deleteStartTime = Date.now();
+      await prisma.plaidItem.delete({
+        where: { id: matchedPlaidItemId },
+      });
+      logDatabaseOperation('DELETE', 'plaid_items', Date.now() - deleteStartTime, true);
+
+      const duration = Date.now() - startTime;
+      logBusinessEvent('bank_account_disconnected', userId, {
+        accountId,
+        institution: institutionName,
+      });
+
+      // 記錄審計日誌
+      AuditLogger.logPlaidOperation('DISCONNECT', userId, 'SUCCESS', matchedPlaidItemId, {
+        institution: institutionName,
+        accountId,
+      }, undefined, duration);
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      
+      // 記錄審計日誌（失敗）
+      AuditLogger.logPlaidOperation('DISCONNECT', userId, 'FAILURE', undefined, {
+        accountId,
+      }, errorMsg, duration);
+      
+      throw error;
+    }
+  }
+
+  /**
+   * 获取财务快照（带缓存）
+   * 如果缓存未过期，直接从缓存获取；否则从 Plaid API 获取并保存缓存
+   * @param userId 用户 ID
+   * @param forceRefresh 是否强制刷新（忽略缓存）
+   */
+  static async getFinanceSnapshotOptimized(userId: string, forceRefresh: boolean = false): Promise<FinanceSnapshot> {
+    const cacheStartTime = Date.now();
+    
+    // 检查缓存状态
+    const shouldRefreshAccounts = forceRefresh || (await shouldRefreshAccountsCache(userId));
+    const shouldRefreshTransactions = forceRefresh || (await shouldRefreshTransactionsCache(userId));
+    const shouldRefreshInvestments = forceRefresh || (await shouldRefreshInvestmentsCache(userId));
+
+    logDebug('Cache status check', {
+      userId,
+      shouldRefreshAccounts,
+      shouldRefreshTransactions,
+      shouldRefreshInvestments,
+    });
+
+    // 如果所有缓存都没有过期且不是强制刷新，直接从缓存获取
+    if (
+      !forceRefresh &&
+      !shouldRefreshAccounts &&
+      !shouldRefreshTransactions &&
+      !shouldRefreshInvestments
+    ) {
+      logDebug('Using cached data', { userId });
+
+      const [cachedAccounts, cachedTransactions, cachedInvestmentAccounts, cachedInvestments, user] =
+        await Promise.all([
+          getAccountsFromCache(userId),
+          getTransactionsFromCache(userId),
+          getInvestmentAccountsFromCache(userId),
+          getInvestmentsFromCache(userId),
+          prisma.user.findUnique({
+            where: { id: userId },
+          }),
+        ]);
+
+      const cachedDuration = Date.now() - cacheStartTime;
+      logPerformance('get_finance_snapshot_cached', cachedDuration, 100);
+
+      // 转换缓存数据为 API 格式
+      const accounts: PlaidAccountPayload[] = cachedAccounts.map((acc: any) => ({
+        id: acc.accountId,
+        name: acc.name,
+        balance: acc.balance,
+        type: acc.type as BankingAccountType,
+        logo: acc.logo,
+      }));
+
+      const transactions: PlaidTransactionPayload[] = cachedTransactions.map((tx: any) => ({
+        id: tx.transactionId,
+        accountId: tx.accountId,
+        accountName: tx.accountId,
+        accountType: tx.type as BankingAccountType,
+        amount: tx.amount,
+        date: tx.date,
+        merchant: tx.merchant,
+        category: tx.category,
+        type: tx.type as TransactionType,
+      }));
+
+      const investmentAccounts: PlaidInvestmentAccountPayload[] = cachedInvestmentAccounts.map((acc: any) => ({
+        id: acc.accountId,
+        name: acc.name,
+        type: 'Broker',
+        logo: acc.logo,
+      }));
+
+      const investments: PlaidInvestmentPayload[] = cachedInvestments.map((inv: any) => ({
+        id: inv.investmentId,
+        accountId: inv.accountId,
+        symbol: inv.symbol,
+        name: inv.name,
+        holdings: inv.holdings,
+        currentPrice: inv.currentPrice,
+        change24h: 0,
+        type: inv.type as InvestmentType,
+        logo: getStockLogoUrl(inv.symbol),
+      }));
+
+      const userRecord = user as
+        | {
+            bankingAccountOrder?: string[] | null;
+            investmentAccountOrder?: string[] | null;
+          }
+        | null;
+
+      const orderedAccounts = orderItemsByStoredIds(accounts, userRecord?.bankingAccountOrder ?? []);
+      const orderedInvestmentAccounts = orderItemsByStoredIds(
+        investmentAccounts,
+        userRecord?.investmentAccountOrder ?? []
+      );
+
+      logBusinessEvent('finance_snapshot_fetched_from_cache', userId, {
+        source: 'cache',
+        accountCount: accounts.length,
+        transactionCount: transactions.length,
+        investmentAccountCount: investmentAccounts.length,
+        investmentCount: investments.length,
+      });
+
+      return {
+        accounts: orderedAccounts,
+        transactions,
+        investmentAccounts: orderedInvestmentAccounts,
+        investments,
+      };
     }
 
-    if (!matchedPlaidItemId) {
-      return;
+    // 否则从 Plaid API 获取数据
+    logDebug('Fetching fresh data from Plaid API', { userId });
+
+    const snapshot = await this.getFinanceSnapshot(userId);
+
+    // 异步保存到缓存，不阻塞响应
+    this.saveFinanceSnapshotToCache(userId, snapshot).catch((error) => {
+      appLogger.warn('Failed to save finance snapshot to cache', {
+        userId,
+        error: error.message,
+      });
+    });
+
+    const apiDuration = Date.now() - cacheStartTime;
+    logPerformance('get_finance_snapshot_api', apiDuration, 5000);
+    logBusinessEvent('finance_snapshot_fetched_from_api', userId, {
+      source: 'api',
+      accountCount: snapshot.accounts.length,
+      transactionCount: snapshot.transactions.length,
+      investmentAccountCount: snapshot.investmentAccounts.length,
+      investmentCount: snapshot.investments.length,
+    });
+
+    return snapshot;
+  }
+
+  /**
+   * 将财务快照保存到缓存
+   */
+  private static async saveFinanceSnapshotToCache(userId: string, snapshot: FinanceSnapshot): Promise<void> {
+    const syncLog = await getOrCreateSyncLog(userId);
+
+    try {
+      // 保存账户数据
+      if (snapshot.accounts.length > 0) {
+        const accountsToCache = snapshot.accounts.map((acc) => ({
+          plaidItemId: '', // 我们没有这个信息，但这是可选的
+          accountId: acc.id,
+          name: acc.name,
+          balance: acc.balance,
+          type: 'bank',
+          bucket: 'banking' as const,
+          institutionName: acc.name.split('·')[0]?.trim() || 'Bank',
+          logo: acc.logo,
+        }));
+
+        await upsertAccountsCache(userId, accountsToCache);
+        await updateSyncTimestamp(userId, 'accounts', { total: accountsToCache.length });
+      }
+
+      // 保存交易数据
+      if (snapshot.transactions.length > 0) {
+        const monthNow = new Date().toISOString().slice(0, 7); // YYYY-MM
+
+        const transactionsToCache = snapshot.transactions.map((tx) => ({
+          accountId: tx.accountId,
+          transactionId: tx.id,
+          merchant: tx.merchant,
+          amount: tx.amount,
+          category: tx.category,
+          type: tx.type,
+          date: tx.date,
+          month: tx.date.slice(0, 7), // YYYY-MM
+        }));
+
+        await upsertTransactionsCache(userId, transactionsToCache);
+        await updateSyncTimestamp(userId, 'transactions', { total: transactionsToCache.length });
+      }
+
+      // 保存投资账户数据
+      if (snapshot.investmentAccounts.length > 0) {
+        const investmentAccountsToCache = snapshot.investmentAccounts.map((acc) => ({
+          accountId: acc.id,
+          name: acc.name,
+          institutionName: acc.name.split('·')[0]?.trim() || 'Broker',
+          logo: acc.logo,
+        }));
+
+        await upsertInvestmentAccountsCache(userId, investmentAccountsToCache);
+      }
+
+      // 保存投资持仓数据
+      if (snapshot.investments.length > 0) {
+        const investmentsToCache = snapshot.investments.map((inv) => ({
+          accountId: inv.accountId,
+          investmentId: inv.id,
+          symbol: inv.symbol,
+          name: inv.name,
+          holdings: inv.holdings,
+          currentPrice: inv.currentPrice,
+          type: inv.type,
+          logo: inv.logo,
+        }));
+
+        await upsertInvestmentsCache(userId, investmentsToCache);
+        await updateSyncTimestamp(userId, 'investments', { total: investmentsToCache.length });
+      }
+
+      logDebug('Saved finance snapshot to cache', {
+        userId,
+        accounts: snapshot.accounts.length,
+        transactions: snapshot.transactions.length,
+        investmentAccounts: snapshot.investmentAccounts.length,
+        investments: snapshot.investments.length,
+      });
+    } catch (error) {
+      appLogger.warn('Error saving to cache', { userId, error });
+      throw error;
     }
-
-    const deleteStartTime = Date.now();
-    await prisma.plaidItem.delete({
-      where: { id: matchedPlaidItemId },
-    });
-    logDatabaseOperation('DELETE', 'plaid_items', Date.now() - deleteStartTime, true);
-
-    logBusinessEvent('bank_account_disconnected', userId, {
-      accountId,
-      institution: institutionName,
-    });
   }
 
   /**
@@ -264,6 +661,10 @@ export class PlaidService {
     const startTime = Date.now();
 
     logDebug('Fetching finance snapshot', { userId });
+
+    // 根據用戶 email 獲取相應的 Plaid Client
+    const userEmail = await getUserEmail(userId);
+    const userPlaidClient = createPlaidClientForUser(userEmail);
 
     const plaidItems = await prisma.plaidItem.findMany({
       where: { userId },
@@ -309,8 +710,9 @@ export class PlaidService {
       const accountBucketById = new Map<string, PlaidAccountBucket>();
 
       try {
-        const accountsResponse = await plaidClient.accountsGet({
-          access_token: item.accessToken,
+        const { decryptedAccessToken } = this.decryptPlaidItem(item);
+        const accountsResponse = await userPlaidClient.accountsGet({
+          access_token: decryptedAccessToken,
         });
 
         for (const account of accountsResponse.data.accounts) {
@@ -350,8 +752,9 @@ export class PlaidService {
       }
 
       try {
-        const txResponse = await plaidClient.transactionsGet({
-          access_token: item.accessToken,
+        const { decryptedAccessToken } = this.decryptPlaidItem(item);
+        const txResponse = await userPlaidClient.transactionsGet({
+          access_token: decryptedAccessToken,
           start_date: startDateString,
           end_date: endDateString,
           options: { count: 100 },
@@ -399,8 +802,9 @@ export class PlaidService {
       }
 
       try {
-        const holdingsResponse = await plaidClient.investmentsHoldingsGet({
-          access_token: item.accessToken,
+        const { decryptedAccessToken } = this.decryptPlaidItem(item);
+        const holdingsResponse = await userPlaidClient.investmentsHoldingsGet({
+          access_token: decryptedAccessToken,
         });
 
         const securitiesById = new Map(
@@ -433,7 +837,7 @@ export class PlaidService {
             currentPrice: Number(holding.institution_price || 0),
             change24h: 0,
             type: mapPlaidInvestmentType(security.type),
-            logo: PLAID_FALLBACK_LOGO,
+            logo: getStockLogoUrl(security.ticker_symbol || ''),
           });
         }
       } catch (error: any) {
@@ -468,11 +872,43 @@ export class PlaidService {
       investmentCount: dedupedInvestments.length,
     });
 
+    // 記錄審計日誌
+    AuditLogger.logPlaidOperation('FETCH_SNAPSHOT', userId, 'SUCCESS', undefined, {
+      accountCount: orderedAccounts.length,
+      transactionCount: dedupedTransactions.length,
+      investmentAccountCount: dedupedInvestmentAccounts.length,
+      investmentCount: dedupedInvestments.length,
+    }, undefined, duration);
+
     return {
       accounts: orderedAccounts,
       transactions: dedupedTransactions,
       investmentAccounts: orderedInvestmentAccounts,
       investments: dedupedInvestments,
     };
+  }
+
+  /**
+   * 獲取並解密 PlaidItem
+   */
+  private static decryptPlaidItem(item: any): { decryptedAccessToken: string; itemId: string } {
+    let decryptedAccessToken: string;
+    let decryptedItemId: string;
+
+    try {
+      decryptedAccessToken = EncryptionUtil.decrypt(item.accessToken);
+    } catch (error) {  
+      throw new Error(`Failed to decrypt Plaid access token: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+
+    // 如果 itemId 也被存儲為加密，進行解密
+    // 否則使用原始值
+    try {
+      decryptedItemId = item.itemId && item.itemId.includes(':') ? EncryptionUtil.decrypt(item.itemId) : item.itemId;
+    } catch (error) {
+      decryptedItemId = item.itemId;
+    }
+
+    return { decryptedAccessToken, itemId: decryptedItemId };
   }
 }

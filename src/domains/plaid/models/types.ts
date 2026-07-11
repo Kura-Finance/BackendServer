@@ -4,7 +4,7 @@
 
 export type BankingAccountType = 'checking' | 'saving' | 'credit' | 'crypto';
 export type TransactionType = 'credit' | 'deposit' | 'transfer';
-export type InvestmentAccountType = 'Broker' | 'Exchange' | 'Web3 Wallet';
+export type InvestmentAccountType = 'Broker' | 'Exchange';
 export type InvestmentType = 'crypto' | 'stock';
 export type PlaidAccountBucket = 'banking' | 'investment';
 

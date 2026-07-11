@@ -3,11 +3,46 @@
 import dotenv from "dotenv";
 import { defineConfig } from "prisma/config";
 
+// 如果 NODE_ENV 未設置，預設為 development
+if (!process.env.NODE_ENV) {
+  process.env.NODE_ENV = "development";
+  console.log("ℹ️ NODE_ENV not set, defaulting to 'development'");
+}
+
 const envFile = process.env.NODE_ENV === "production" ? ".env.production" : ".env.development";
 const envResult = dotenv.config({ path: envFile });
 if (envResult.error) {
+  console.log(`⚠️ Failed to load ${envFile}, trying .env`);
   dotenv.config();
 }
+
+// 構建 DATABASE_URL（參考 saori 的做法）
+function buildDatabaseUrl(): string {
+  const dbUser = process.env.DB_USER || "postgres";
+  const rawPassword = process.env.DB_PASSWORD || "";
+  // URL encode password to handle special characters
+  const dbPassword = encodeURIComponent(rawPassword);
+  const dbName = process.env.DB_NAME || "kura_db";
+  const dbSchema = process.env.DB_SCHEMA || "public";
+  const isProduction = process.env.NODE_ENV === "production";
+  const dbHost = process.env.DB_HOST || "localhost";
+  const dbPort = process.env.DB_PORT || "5432";
+
+  console.log(`📊 Database config: ${dbUser}@${dbHost}:${dbPort}/${dbName}`);
+
+  // 生產環境：使用 Unix Socket（Cloud SQL Proxy）
+  if (isProduction && dbHost.startsWith("/cloudsql/")) {
+    console.log("🔌 Using Cloud SQL Proxy Unix Socket");
+    // For Unix sockets: hostname must be localhost, socket path in ?host parameter
+    return `postgresql://${dbUser}:${dbPassword}@localhost/${dbName}?host=${dbHost}&schema=${dbSchema}`;
+  }
+
+  // 開發環境：使用 TCP 連接
+  console.log(`🔌 Using TCP connection to ${dbHost}:${dbPort}`);
+  return `postgresql://${dbUser}:${dbPassword}@${dbHost}:${dbPort}/${dbName}?schema=${dbSchema}`;
+}
+
+process.env.DATABASE_URL = buildDatabaseUrl();
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {

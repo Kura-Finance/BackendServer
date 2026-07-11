@@ -1,5 +1,15 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { createLinkToken, exchangePublicToken, disconnectPlaidAccount, getFinanceSnapshot, updatePlaidAccountOrder } from './controllers/plaidController';
+import {
+  createLinkToken,
+  exchangePublicToken,
+  disconnectPlaidAccount,
+  getFinanceSnapshot,
+  getFinanceSnapshotOptimized,
+  updatePlaidAccountOrder,
+  refreshPlaidCache,
+  clearPlaidCache,
+  getCacheInfo,
+} from './controllers/plaidController';
 import { requireAuth } from '../auth/middleware/auth';
 import { appLogger } from '../logger';
 
@@ -54,5 +64,34 @@ router.post('/account-order', requireAuth, wrapAsync(updatePlaidAccountOrder));
  * Body: { accountId: string }
  */
 router.post('/disconnect', requireAuth, wrapAsync(disconnectPlaidAccount));
+
+/**
+ * GET /api/plaid/finance-snapshot-optimized
+ * Get finance snapshot with caching (optimized)
+ * Query: ?refresh=true to force refresh
+ * Authentication: Required
+ */
+router.get('/finance-snapshot-optimized', requireAuth, wrapAsync(getFinanceSnapshotOptimized));
+
+/**
+ * POST /api/plaid/cache/refresh
+ * Manually refresh Plaid cache (force API call)
+ * Authentication: Required
+ */
+router.post('/cache/refresh', requireAuth, wrapAsync(refreshPlaidCache));
+
+/**
+ * POST /api/plaid/cache/clear
+ * Clear all Plaid cache completely
+ * Authentication: Required
+ */
+router.post('/cache/clear', requireAuth, wrapAsync(clearPlaidCache));
+
+/**
+ * GET /api/plaid/cache/info
+ * Get cache statistics and sync information
+ * Authentication: Required
+ */
+router.get('/cache/info', requireAuth, wrapAsync(getCacheInfo));
 
 export default router;

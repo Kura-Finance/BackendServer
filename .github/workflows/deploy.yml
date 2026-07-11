@@ -1,0 +1,105 @@
+name: Deploy to Google Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: us-central1
+  SERVICE_NAME: kura-backend
+  DB_INSTANCE_NAME: kura-492622:us-central1:kura-postgres
+
+jobs:
+  deploy:
+    name: Build and Deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    
+    steps:
+      # 步驟 1: 檢出代碼
+      - name: Checkout code
+        uses: actions/checkout@v4.1.7
+
+      # 步驟 2: 認證 Google Cloud (使用 Service Account Key)
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2.1.3
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      # 步驟 3: 設置 Google Cloud SDK
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2.1.0
+
+      # 步驟 4: 設置 Docker 認證
+      - name: Configure Docker for Google Container Registry
+        run: gcloud auth configure-docker
+
+      # 步驟 5: 構建 Docker 鏡像
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
+            -t gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:latest \
+            .
+
+      # 步驟 6: 推送鏡像到 Google Container Registry
+      - name: Push image to Google Container Registry
+        run: |
+          docker push gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+          docker push gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:latest
+
+      # 步驟 7: 部署到 Cloud Run (參考 saori 的做法)
+      - name: Deploy to Cloud Run
+        uses: 'google-github-actions/deploy-cloudrun@v2'
+        with:
+          service: ${{ env.SERVICE_NAME }}
+          region: ${{ env.REGION }}
+          image: gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+          flags: --add-cloudsql-instances=${{ env.DB_INSTANCE_NAME }} --allow-unauthenticated --port=8080 --memory=512Mi --cpu=1 --timeout=3600
+          env_vars: |-
+            NODE_ENV=production
+            DB_HOST=/cloudsql/${{ env.DB_INSTANCE_NAME }}
+            DB_PORT=5432
+            DB_USER=kura_user
+            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            DB_NAME=kura_db
+            DB_SCHEMA=public
+            JWT_SECRET=${{ secrets.JWT_SECRET }}
+            ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
+            PLAID_CLIENT_ID=${{ secrets.PLAID_CLIENT_ID }}
+            PLAID_SANDBOX_SECRET=${{ secrets.PLAID_SANDBOX_SECRET }}
+            PLAID_PRODUCTION_SECRET=${{ secrets.PLAID_PRODUCTION_SECRET }}
+            PLAID_REDIRECT_URI=${{ secrets.PLAID_REDIRECT_URI }}
+            ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}
+            RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
+            RESEND_FROM_EMAIL=${{ secrets.RESEND_FROM_EMAIL }}
+            APP_NAME=${{ secrets.APP_NAME }}
+            APP_URL=${{ secrets.APP_URL }}
+
+      # 步驟 8: 驗證部署
+      - name: Verify Cloud Run deployment
+        run: |
+          gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --platform managed \
+            --region ${{ env.REGION }} \
+            --project ${{ env.PROJECT_ID }}
+
+      # 步驟 9: 部署成功通知
+      - name: Deploy successful
+        if: success()
+        run: |
+          echo "✅ Successfully deployed to Cloud Run"
+          echo "Service: ${{ env.SERVICE_NAME }}"
+          echo "Region: ${{ env.REGION }}"
+          echo "Project: ${{ env.PROJECT_ID }}"
+          echo "Image: gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }}"
+
+      # 步驟 10: 部署失敗通知
+      - name: Deploy failed
+        if: failure()
+        run: echo "❌ Deployment failed"

@@ -18,15 +18,40 @@ model User {
   email     String   @unique
   password  String
   name      String?  // 顯示名稱
-  avatarUrl String?  // 大頭貼連結
+  avatarUrl String?  // 大頭貼 (支援 URL 或 Base64 編碼的圖片數據)
   bankingAccountOrder String[] @default([])
   investmentAccountOrder String[] @default([])
+  emailVerified Boolean @default(false)  // 郵件已驗證
+  emailVerificationCode String?  // 郵件驗證碼 (已棄用，保留向後相容)
+  emailVerificationExpiresAt DateTime?  // 郵件驗證碼過期時間 (已棄用)
+  pendingEmailChange String?  // 待驗證的新郵箱 (已棄用，改用 VerificationCode 表)
+  emailChangeCode String?  // 郵箱修改驗證碼 (已棄用)
+  emailChangeExpiresAt DateTime?  // 郵箱修改驗證碼過期時間 (已棄用)
+  passwordResetCode String?  // 密碼重置驗證碼 (已棄用)
+  passwordResetExpiresAt DateTime?  // 密碼重置碼過期時間 (已棄用)
+  resetToken String?  // 舊版密碼重置令牌 (已棄用，保留向後相容)
+  resetTokenExpiry DateTime?  // 舊版重置令牌過期時間 (已棄用)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // 關聯：驗證碼管理
+  verificationCodes VerificationCode[]
+
   // 關聯：Dashboard 模組 (金融帳戶)
   plaidItems     PlaidItem[]
-  web3Wallets    Web3Wallet[]
+  exchangeAccounts ExchangeAccount[]   // 加密貨幣交易所連接
+  
+  // 關聯：Plaid 快取模組 (減少 API 調用)
+  plaidAccountCache PlaidAccountCache[]
+  plaidTransactionCache PlaidTransactionCache[]
+  plaidInvestmentAccountCache PlaidInvestmentAccountCache[]
+  plaidInvestmentCache PlaidInvestmentCache[]
+  plaidSyncLog PlaidSyncLog?
+  
+  // 關聯：交易所快取模組 (交易所餘額與資產)
+  exchangeBalanceCache ExchangeBalanceCache[]
+  exchangeAssetCache ExchangeAssetCache[]
+  exchangeSyncLog ExchangeSyncLog?
 
   // 關聯：Reward Hunter 模組 (獎勵獵人)
   rewardProfile  RewardProfile?
@@ -37,11 +62,15 @@ model User {
   posts          ForumPost[]
   comments       ForumComment[]
   postVotes      ForumPostVote[]       // 用戶的文章按讚/倒讚紀錄
+
+  // 關聯：Asset Performance 模組 (資產績效追蹤)
+  assetSnapshots AssetSnapshot[]
+  assetPerformance AssetPerformance?
 }
 
 
 // ==========================================
-// 2. Dashboard 模組 (Banking & Web3)
+// 2. Dashboard 模組 (Banking & Crypto Exchange)
 // ==========================================
 
 // 傳統金融綁定 (Plaid 授權紀錄)
@@ -56,16 +85,99 @@ model PlaidItem {
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
-// 去中心化錢包綁定 (WalletConnect)
-model Web3Wallet {
-  id              String   @id @default(uuid())
-  userId          String
-  address         String   @unique // 錢包的公鑰地址 (0x...)
-  walletName      String   // 錢包 App 名稱 (例如: MetaMask, Phantom)
-  chain           String   // 該錢包的主力區塊鏈 (例如: Ethereum, Solana)
-  createdAt       DateTime @default(now())
+// ==========================================
+// 2.5 加密貨幣交易所 (Exchange via CCXT)
+// 2.5 加密貨幣交易所 (Exchange via CCXT)
+// ==========================================
 
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+// 交易所帳戶綁定 (使用者連結的交易所 API 金鑰)
+model ExchangeAccount {
+  id                  String   @id @default(uuid())
+  userId              String
+  exchange            String   // 交易所名稱 (例如: "binance", "kraken", "coinbase")
+  exchangeDisplayName String   // 交易所顯示名稱 (例如: "Binance", "Kraken", "Coinbase")
+  apiKey              String   // 加密存儲的 API Key (需加密)
+  apiSecret           String   // 加密存儲的 API Secret (需加密)
+  passphrase          String?  // 某些交易所需要的密語 (如 OKX)
+  isActive            Boolean  @default(true)
+  
+  // 驗證狀態
+  isVerified          Boolean  @default(false) // 是否已驗證連接有效
+  lastVerifiedAt      DateTime? // 上次驗證時間
+  verificationError   String?  // 驗證失敗的錯誤信息
+  
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, exchange])
+  @@index([userId])
+}
+
+// 交易所餘額快取 (按交易所与幣種快取，减少 API 調用)
+model ExchangeBalanceCache {
+  id                  String   @id @default(uuid())
+  userId              String
+  exchangeAccountId   String   // 所屬的交易所帳戶
+  exchange            String   // 交易所名稱
+  symbol              String   // 幣種代碼 (例如: "BTC", "ETH", "USDT")
+  free                Float    // 可用餘額
+  used                Float    // 鎖定餘額 (訂單中)
+  total               Float    // 總餘額 (free + used)
+  
+  cacheTtl            Int      @default(300) // 快取過期時間 (秒，預設 5 分鐘)
+  cachedAt            DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, exchangeAccountId, symbol])
+  @@index([userId])
+  @@index([userId, exchangeAccountId])
+}
+
+// 交易所資產快取 (用户在交易所持有的加密貨幣)
+model ExchangeAssetCache {
+  id                  String   @id @default(uuid())
+  userId              String
+  exchangeAccountId   String   // 所屬的交易所帳戶
+  exchange            String   // 交易所名稱
+  symbol              String   // 幣種代碼 (例如: "BTC", "ETH")
+  holdings            Float    // 持有數量
+  price               Float    // 當前價格 (USD)
+  value               Float    // 資產價值 (USD，= holdings × price)
+  percentageOfTotal   Float    // 佔總資產的百分比
+  
+  cacheTtl            Int      @default(300) // 快取過期時間 (秒)
+  cachedAt            DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, exchangeAccountId, symbol])
+  @@index([userId])
+  @@index([userId, exchangeAccountId])
+}
+
+// 交易所同步狀態 (跟踪每個用戶的交易所最後同步時間)
+model ExchangeSyncLog {
+  id                  String   @id @default(uuid())
+  userId              String   @unique
+  
+  // 同步狀態
+  lastSyncedAt        DateTime? // 上次完整同步時間
+  balancesSyncedAt    DateTime? // 上次同步餘額
+  assetsSyncedAt      DateTime? // 上次同步資產
+
+  // 快取設定 (秒)
+  balanceCacheTtl     Int      @default(300)  // 餘額 5 分鐘更新一次
+  assetCacheTtl       Int      @default(300)  // 資產 5 分鐘更新一次
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 
@@ -226,4 +338,187 @@ model ForumPostVote {
 
   // 核心防呆：確保同一使用者對同一篇文章只能有一筆有效的投票紀錄
   @@unique([postId, userId])
+}
+
+
+// ==========================================
+// 5. Asset Performance 模組 (資產績效追蹤)
+// ==========================================
+
+// 資產快照 (記錄某個時間點的資產狀況，用於繪製資產曲線圖)
+model AssetSnapshot {
+  id              String   @id @default(uuid())
+  userId          String
+  assetId         String   // 資產標識 (例如: account-id 或 investment-id)
+  name            String   // 資產名稱 (例如: "Checking Account", "VTSAX Portfolio")
+  type            String   // 資產類型 (bank_account, investment, crypto_wallet)
+  value           Float    // 當前資產價值 (USD)
+  currency        String   @default("USD")
+  
+  // 記錄時間戳
+  recordedAt      DateTime // 記錄時間
+  createdAt       DateTime @default(now())
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, recordedAt])
+  @@index([userId, assetId])
+}
+
+// 資產性能總覽 (用戶層級，快取用於快速查詢)
+model AssetPerformance {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  
+  // 總資產
+  totalAssets     Float    @default(0) // 所有資產的總價值 (USD)
+  lastRecordedTime DateTime? // 上次記錄時間
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+
+// ==========================================
+// 6. Plaid 快取模組 (減少 API 調用，降低成本)
+// ==========================================
+
+// Plaid 帳戶快取 (銀行帳戶與投資帳戶基本資訊)
+model PlaidAccountCache {
+  id                String   @id @default(uuid())
+  userId            String
+  plaidItemId       String   // 所屬的 Plaid Item
+  accountId         String   // Plaid 的帳戶 ID
+  name              String   // 帳戶名稱 (例如: "Chase Checking")
+  balance           Float    // 帳戶餘額 (僅針對銀行帳戶)
+  type              String   // 帳戶類型 (checking, saving, credit, investment)
+  bucket            String   // 帳戶分類 (banking, investment)
+  institutionName   String   // 銀行/券商名稱
+  logo              String   @default("https://www.google.com/s2/favicons?domain=plaid.com&sz=128")
+  
+  cachedAt          DateTime @default(now()) // 快取時間
+  updatedAt         DateTime @updatedAt
+
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, accountId])
+  @@index([userId])
+  @@index([userId, plaidItemId])
+}
+
+// Plaid 交易快取 (每個月份的交易記錄，按月份分區)
+model PlaidTransactionCache {
+  id                String   @id @default(uuid())
+  userId            String
+  accountId         String   // 所屬帳戶 ID
+  transactionId     String   // Plaid 交易 ID
+  merchant          String   // 商家名稱
+  amount            String   // 交易金額
+  category          String   // 交易分類
+  type              String   // 交易類型 (deposit, credit, transfer)
+  date              String   // 交易日期 (YYYY-MM-DD)
+  month             String   // 快取月份 (YYYY-MM)，用於快速查詢
+  
+  cachedAt          DateTime @default(now())
+
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, transactionId])
+  @@index([userId])
+  @@index([userId, month])
+  @@index([userId, accountId])
+}
+
+// Plaid 投資帳戶快取
+model PlaidInvestmentAccountCache {
+  id                String   @id @default(uuid())
+  userId            String
+  accountId         String   // Plaid 投資帳戶 ID
+  name              String   // 帳戶名稱
+  institutionName   String   // 券商名稱
+  logo              String   @default("https://www.google.com/s2/favicons?domain=plaid.com&sz=128")
+
+  cachedAt          DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, accountId])
+  @@index([userId])
+}
+
+// Plaid 投資持倉快取 (股票、加密貨幣等)
+model PlaidInvestmentCache {
+  id                String   @id @default(uuid())
+  userId            String
+  accountId         String   // 所屬投資帳戶 ID
+  investmentId      String   // 投資 ID (accountId-securityId)
+  symbol            String   // 股票代碼或名稱
+  name              String   // 資產名稱
+  holdings          Float    // 持有數量
+  currentPrice      Float    // 當前價格
+  type              String   // 資產類型 (stock, crypto, 等)
+  logo              String   @default("https://www.google.com/s2/favicons?domain=plaid.com&sz=128")
+
+  cachedAt          DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, investmentId])
+  @@index([userId])
+  @@index([userId, accountId])
+}
+
+// Plaid 同步狀態 (跟踪每個用戶的最後同步時間，避免過於頻繁的 API 調用)
+model PlaidSyncLog {
+  id                String   @id @default(uuid())
+  userId            String   @unique
+  
+  // 同步狀態
+  lastSyncedAt      DateTime? // 上次完整同步時間
+  accountsSyncedAt  DateTime? // 上次同步帳戶資料
+  transactionsSyncedAt DateTime? // 上次同步交易資料 (按月份追蹤)
+  investmentsSyncedAt DateTime? // 上次同步投資資料
+
+  // 同步統計
+  totalAccounts     Int      @default(0)
+  totalTransactions Int      @default(0) 
+  totalInvestments  Int      @default(0)
+
+  // 同步間隔設定 (秒)
+  accountsCacheTtl  Int      @default(3600)  // 帳戶資訊 1 小時更新一次
+  transactionsCacheTtl Int   @default(1800)  // 交易資訊 30 分鐘更新一次
+  investmentsCacheTtl Int    @default(3600)  // 投資資訊 1 小時更新一次
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+
+// ==========================================
+// 7. 統一驗證碼管理
+// ==========================================
+
+// 驗證碼表 (統一管理所有驗證場景: 註冊、密碼重置、郵箱修改等)
+model VerificationCode {
+  id          String   @id @default(uuid())
+  userId      String?  // 對於未註冊用戶可為 null (例如: 註冊驗證)
+  email       String   // 驗證碼的目標郵箱
+  code        String   // 6位驗證碼
+  type        String   // 驗證碼類型: 'register', 'password-reset', 'email-change'
+  metadata    Json?    // 額外數據 (例如: 新郵箱、重置令牌等)
+  expiresAt   DateTime // 過期時間
+  createdAt   DateTime @default(now())
+
+  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@index([email, type])
+  @@index([code])
+  @@index([expiresAt])
 }

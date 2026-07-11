@@ -1,0 +1,44 @@
+steps:
+  # 步驟 1: 構建 Docker 鏡像
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/kura-backend:$SHORT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/kura-backend:latest'
+      - '.'
+    env:
+      - 'CLOUDSDK_COMPUTE_REGION=asia-east1'
+
+  # 步驟 2: 推送鏡像到 Google Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/kura-backend:$SHORT_SHA'
+    env:
+      - 'CLOUDSDK_COMPUTE_REGION=asia-east1'
+
+  # 步驟 3: 部署到 Cloud Run
+  - name: 'gcr.io/cloud-builders/gke-deploy'
+    args:
+      - run
+      - --filename=k8s/
+      - --image=gcr.io/$PROJECT_ID/kura-backend:$SHORT_SHA
+      - --location=asia-east1
+      - --cluster=kura-cluster
+    env:
+      - 'CLOUDSDK_COMPUTE_REGION=asia-east1'
+
+# 構建的鏡像
+images:
+  - 'gcr.io/$PROJECT_ID/kura-backend:$SHORT_SHA'
+  - 'gcr.io/$PROJECT_ID/kura-backend:latest'
+
+# 超時時間
+timeout: '1800s'
+
+# 構建選項
+options:
+  machineType: 'N1_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY
