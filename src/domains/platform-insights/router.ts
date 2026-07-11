@@ -1,16 +1,16 @@
 import { Router } from 'express';
 import { validateRequest } from '../shared/middleware/validateRequest';
 import {
-  backfillRevenueEvents,
+  backfillProcessEvents,
   getInvestorSummary,
   listRecords,
-  listRevenueEvents,
+  listProcessEvents,
 } from './controllers/platformInsightsController';
 import {
   investorPeriodQuerySchema,
   lazyUpdateQuerySchema,
   platformRecordsQuerySchema,
-  revenueEventsQuerySchema,
+  processEventsQuerySchema,
 } from './schemas/platformInsightsSchemas';
 
 /**
@@ -33,15 +33,15 @@ router.get(
 );
 
 router.get(
-  '/revenue-events',
-  validateRequest({ query: revenueEventsQuerySchema }),
-  listRevenueEvents,
+  '/process-events',
+  validateRequest({ query: processEventsQuerySchema }),
+  listProcessEvents,
 );
 
 router.post(
   '/backfill',
   validateRequest({ query: lazyUpdateQuerySchema }),
-  backfillRevenueEvents,
+  backfillProcessEvents,
 );
 
 export const platformInsightsRouter = router;

@@ -2,6 +2,11 @@ import { Response } from 'express';
 import { Request } from 'express';
 import { logError } from '../../logger';
 import { sendError, sendSuccess } from '../../shared/lib/apiResponse';
+import { toPlatformRecordResponse } from '../lib/platformRecordResponse';
+import type {
+  PlatformRecordsListResponse,
+  ProcessEventsListResponse,
+} from '../models/types';
 import { PlatformRecordService } from '../services/platformRevenueService';
 
 export const getInvestorSummary = async (req: Request, res: Response): Promise<void> => {
@@ -47,7 +52,12 @@ export const listRecords = async (req: Request, res: Response): Promise<void> =>
       }),
     ]);
 
-    sendSuccess(res, { records, total, count: records.length });
+    const response: PlatformRecordsListResponse = {
+      records: records.map(toPlatformRecordResponse),
+      total,
+      count: records.length,
+    };
+    sendSuccess(res, response);
   } catch (error) {
     logError('List platform records failed', error as Error);
     sendError(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to list platform records' });
@@ -55,7 +65,7 @@ export const listRecords = async (req: Request, res: Response): Promise<void> =>
 };
 
 /** @deprecated use GET /records?category=revenue */
-export const listRevenueEvents = async (req: Request, res: Response): Promise<void> => {
+export const listProcessEvents = async (req: Request, res: Response): Promise<void> => {
   try {
     const { from, to, source, limit } = req.query as {
       from?: string;
@@ -70,14 +80,18 @@ export const listRevenueEvents = async (req: Request, res: Response): Promise<vo
       ...(source ? { source } : {}),
       ...(limit !== undefined ? { limit } : {}),
     });
-    sendSuccess(res, { events: records, count: records.length });
+    const response: ProcessEventsListResponse = {
+      events: records.map(toPlatformRecordResponse),
+      count: records.length,
+    };
+    sendSuccess(res, response);
   } catch (error) {
-    logError('List revenue events failed', error as Error);
-    sendError(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to list revenue events' });
+    logError('List process events failed', error as Error);
+    sendError(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to list process events' });
   }
 };
 
-export const backfillRevenueEvents = async (req: Request, res: Response): Promise<void> => {
+export const backfillProcessEvents = async (req: Request, res: Response): Promise<void> => {
   try {
     const { force } = req.query as { force?: boolean };
     const result = await PlatformRecordService.backfillFromExistingDataIfStale({

@@ -30,7 +30,7 @@ export interface RecordPlatformRecordInput {
   idempotencyKey: string;
   email?: string | null;
   product?: string | null;
-  grossAmount?: number | null;
+  processAmount?: number | null;
   platformFee?: number | null;
   netAmount?: number | null;
   currency?: string;
@@ -51,15 +51,25 @@ export interface RecordPlatformRecordInput {
   metadata?: Record<string, unknown>;
 }
 
+export interface InvestorProcessBySource {
+  processUsd: number;
+  platformFeeUsd: number;
+  netUsd: number;
+  count: number;
+}
+
+export interface InvestorProcessSummary {
+  totalProcessUsd: number;
+  totalPlatformFeeUsd: number;
+  totalNetUsd: number;
+  eventCount: number;
+  bySource: Record<string, InvestorProcessBySource>;
+}
+
+/** GET /api/platform-insights/summary 回應資料 */
 export interface InvestorSummary {
   period: { from: string; to: string };
-  revenue: {
-    totalGrossUsd: number;
-    totalPlatformFeeUsd: number;
-    totalNetUsd: number;
-    eventCount: number;
-    bySource: Record<string, { grossUsd: number; platformFeeUsd: number; netUsd: number; count: number }>;
-  };
+  process: InvestorProcessSummary;
   waitlist: {
     totalSignups: number;
     byProduct: Record<string, number>;
@@ -75,6 +85,41 @@ export interface InvestorSummary {
     periodTo: string;
     lastSyncedAt: string | null;
   };
+}
+
+/** GET /api/platform-insights/records、/process-events 單筆紀錄 */
+export interface PlatformRecordResponse {
+  id: string;
+  category: string;
+  userId: string | null;
+  source: string;
+  eventType: string;
+  idempotencyKey: string;
+  email: string | null;
+  product: string | null;
+  processAmount: number | null;
+  platformFee: number | null;
+  netAmount: number | null;
+  currency: string;
+  externalId: string | null;
+  depositId: string | null;
+  scaAddress: string | null;
+  occurredAt: string;
+  metadata: unknown;
+  createdAt: string;
+}
+
+/** GET /api/platform-insights/records 回應資料 */
+export interface PlatformRecordsListResponse {
+  records: PlatformRecordResponse[];
+  total: number;
+  count: number;
+}
+
+/** GET /api/platform-insights/process-events 回應資料 */
+export interface ProcessEventsListResponse {
+  events: PlatformRecordResponse[];
+  count: number;
 }
 
 /** @deprecated use RecordPlatformRecordInput */

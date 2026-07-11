@@ -103,7 +103,7 @@ export class ReferralCashbackService {
     source: string;
     eventType: string;
     idempotencyKey: string;
-    grossAmount?: number | null;
+    processAmount?: number | null;
     platformFee?: number | null;
     currency?: string;
     externalId?: string | null;
@@ -121,7 +121,7 @@ export class ReferralCashbackService {
         source: input.source,
         eventType: input.eventType,
         idempotencyKey: `referral:${input.idempotencyKey}`,
-        grossAmount: input.grossAmount ?? 0,
+        grossAmount: input.processAmount ?? 0,
         platformFee: input.platformFee ?? null,
         currency: input.currency ?? 'usd',
         externalId: input.externalId ?? null,

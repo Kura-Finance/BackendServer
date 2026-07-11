@@ -32,7 +32,7 @@ export const platformRecordsQuerySchema = investorPeriodQuerySchema.extend({
   offset: z.coerce.number().int().min(0).optional(),
 });
 
-export const revenueEventsQuerySchema = investorPeriodQuerySchema.extend({
+export const processEventsQuerySchema = investorPeriodQuerySchema.extend({
   source: z
     .enum([
       'stripe',

@@ -1303,7 +1303,7 @@ model PlatformRecord {
   idempotencyKey String   @unique
   email          String?  // waitlist
   product        String?  // waitlist product slug
-  grossAmount    Float?
+  processAmount    Float?
   platformFee    Float?
   netAmount      Float?
   currency       String   @default("usd")

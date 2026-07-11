@@ -127,7 +127,7 @@ export class PlatformRecordService {
       idempotencyKey: input.idempotencyKey,
       email: input.email ?? null,
       product: input.product ?? null,
-      grossAmount: input.grossAmount ?? null,
+      processAmount: input.processAmount ?? null,
       platformFee: input.platformFee ?? null,
       netAmount: input.netAmount ?? null,
       currency: (input.currency ?? 'usd').toLowerCase(),
@@ -146,7 +146,7 @@ export class PlatformRecordService {
         await prisma.platformRecord.update({
           where: { idempotencyKey: input.idempotencyKey },
           data: {
-            grossAmount: data.grossAmount,
+            processAmount: data.processAmount,
             platformFee: data.platformFee,
             netAmount: data.netAmount,
             ...(metadata ? { metadata: metadata as Prisma.InputJsonValue } : {}),
@@ -164,7 +164,7 @@ export class PlatformRecordService {
         source: input.source,
         eventType: input.eventType,
         idempotencyKey: input.idempotencyKey,
-        grossAmount: input.grossAmount ?? null,
+        processAmount: input.processAmount ?? null,
         platformFee: input.platformFee ?? null,
         currency: input.currency ?? 'usd',
         externalId: input.externalId ?? null,
@@ -187,7 +187,7 @@ export class PlatformRecordService {
     const amountPaidCents = invoice.amount_paid || 0;
     if (amountPaidCents <= 0) return;
 
-    const gross = roundUsd(amountPaidCents / 100);
+    const processAmount = roundUsd(amountPaidCents / 100);
     const occurredAt = invoice.status_transitions?.paid_at
       ? new Date(invoice.status_transitions.paid_at * 1000)
       : new Date();
@@ -198,9 +198,9 @@ export class PlatformRecordService {
       source: 'stripe',
       eventType: 'invoice_paid',
       idempotencyKey: `stripe:invoice:${invoiceId}`,
-      grossAmount: gross,
-      platformFee: gross,
-      netAmount: gross,
+      processAmount,
+      platformFee: processAmount,
+      netAmount: processAmount,
       currency: invoice.currency || 'usd',
       externalId: invoiceId,
       occurredAt,
@@ -230,9 +230,9 @@ export class PlatformRecordService {
   }): Promise<void> {
     if (params.eventType !== 'payment_processed') return;
 
-    const gross = parseDecimal(params.amount);
+    const processAmount = parseDecimal(params.amount);
     const platformFee = parseDecimal(params.developerFeeAmount);
-    // Gross = Kura 處理量（法幣入金）；Net = Kura 營收（developer fee）
+    // Process = Kura 處理量（法幣入金）；Net = Kura 營收（developer fee）
     const net = platformFee;
 
     const user = await prisma.user.findUnique({
@@ -246,7 +246,7 @@ export class PlatformRecordService {
       source: 'bridge_va',
       eventType: 'payment_processed',
       idempotencyKey: `bridge:va:${params.bridgeEventId}`,
-      grossAmount: gross,
+      processAmount,
       platformFee,
       netAmount: net,
       currency: params.currency ?? 'usd',
@@ -292,9 +292,9 @@ export class PlatformRecordService {
     if (!userId) return;
 
     const source = cryptoLa ? 'bridge_liquidation_in' : 'bridge_liquidation_out';
-    const gross = parseDecimal(drain.amount);
+    const processAmount = parseDecimal(drain.amount);
     const feePercent = cryptoLa?.developerFeePercent ?? payoutLa?.developerFeePercent ?? null;
-    const platformFee = feeFromPercent(gross, feePercent);
+    const platformFee = feeFromPercent(processAmount, feePercent);
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -307,7 +307,7 @@ export class PlatformRecordService {
       source,
       eventType: 'payment_processed',
       idempotencyKey: `bridge:liquidation:${drain.id}:payment_processed`,
-      grossAmount: gross,
+      processAmount,
       platformFee,
       netAmount: platformFee,
       currency: drain.currency ?? cryptoLa?.sourceCurrency ?? payoutLa?.destinationCurrency ?? 'usd',
@@ -342,7 +342,7 @@ export class PlatformRecordService {
     });
     if (!transfer || transfer.state !== 'payment_processed') return;
 
-    const gross = parseDecimal(transfer.amount);
+    const processAmount = parseDecimal(transfer.amount);
     const platformFee = parseDecimal(transfer.developerFee);
     const user = await prisma.user.findUnique({
       where: { id: transfer.userId },
@@ -355,7 +355,7 @@ export class PlatformRecordService {
       source: 'bridge_transfer',
       eventType: 'payment_processed',
       idempotencyKey: `bridge:transfer:${bridgeTransferId}:payment_processed`,
-      grossAmount: gross,
+      processAmount,
       platformFee,
       netAmount: platformFee,
       currency: transfer.sourceCurrency ?? transfer.destinationCurrency ?? 'usd',
@@ -391,7 +391,7 @@ export class PlatformRecordService {
       source: 'card',
       eventType: 'card_cleared',
       idempotencyKey: `card:${params.providerEventId}:cleared`,
-      grossAmount: roundUsd(params.amount),
+      processAmount: roundUsd(params.amount),
       platformFee: 0,
       netAmount: roundUsd(params.amount),
       currency: params.currency.toLowerCase(),
@@ -416,7 +416,7 @@ export class PlatformRecordService {
   }): Promise<void> {
     if (!isDinariOrderFilled(order.status)) return;
 
-    const gross =
+    const processAmount =
       parseDecimal(order.paymentTokenQuantity) ??
       (() => {
         const qty = parseDecimal(order.assetTokenQuantity);
@@ -438,9 +438,9 @@ export class PlatformRecordService {
       source: 'dinari',
       eventType: 'order_filled',
       idempotencyKey: `dinari:order:${order.orderRequestId}:filled`,
-      grossAmount: gross,
+      processAmount,
       platformFee: 0,
-      netAmount: gross,
+      netAmount: processAmount,
       currency: 'usd',
       externalId,
       scaAddress: user?.scaAddress ?? null,
@@ -497,7 +497,7 @@ export class PlatformRecordService {
       source: 'privy',
       eventType: 'privy_metrics_snapshot',
       idempotencyKey: `privy:metrics:${params.syncRunId}`,
-      grossAmount: params.activeUsers,
+      processAmount: params.activeUsers,
       netAmount: params.totalUsers,
       currency: 'count',
       externalId: params.syncRunId,
@@ -759,31 +759,31 @@ export class PlatformRecordService {
       },
       select: {
         source: true,
-        grossAmount: true,
+        processAmount: true,
         platformFee: true,
         netAmount: true,
       },
     });
 
-    const bySource: InvestorSummary['revenue']['bySource'] = {};
-    let totalGrossUsd = 0;
+    const bySource: InvestorSummary['process']['bySource'] = {};
+    let totalProcessUsd = 0;
     let totalPlatformFeeUsd = 0;
     let totalNetUsd = 0;
 
     for (const event of revenueEvents) {
-      const gross = event.grossAmount ?? 0;
+      const processAmount = event.processAmount ?? 0;
       const fee = event.platformFee ?? 0;
       const net = event.netAmount ?? event.platformFee ?? 0;
-      totalGrossUsd += gross;
+      totalProcessUsd += processAmount;
       totalPlatformFeeUsd += fee;
       totalNetUsd += net;
 
       let bucket = bySource[event.source];
       if (!bucket) {
-        bucket = { grossUsd: 0, platformFeeUsd: 0, netUsd: 0, count: 0 };
+        bucket = { processUsd: 0, platformFeeUsd: 0, netUsd: 0, count: 0 };
         bySource[event.source] = bucket;
       }
-      bucket.grossUsd += gross;
+      bucket.processUsd += processAmount;
       bucket.platformFeeUsd += fee;
       bucket.netUsd += net;
       bucket.count += 1;
@@ -792,7 +792,7 @@ export class PlatformRecordService {
     for (const key of Object.keys(bySource)) {
       const row = bySource[key];
       if (!row) continue;
-      row.grossUsd = roundUsd(row.grossUsd);
+      row.processUsd = roundUsd(row.processUsd);
       row.platformFeeUsd = roundUsd(row.platformFeeUsd);
       row.netUsd = roundUsd(row.netUsd);
     }
@@ -835,8 +835,8 @@ export class PlatformRecordService {
 
     return {
       period: { from: period.from.toISOString(), to: period.to.toISOString() },
-      revenue: {
-        totalGrossUsd: roundUsd(totalGrossUsd),
+      process: {
+        totalProcessUsd: roundUsd(totalProcessUsd),
         totalPlatformFeeUsd: roundUsd(totalPlatformFeeUsd),
         totalNetUsd: roundUsd(totalNetUsd),
         eventCount: revenueEvents.length,
