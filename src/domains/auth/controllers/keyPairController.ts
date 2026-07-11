@@ -17,6 +17,7 @@ import {
   KeyPairNotFoundError,
   InvalidKeyPairError,
 } from '../services/keyPairService';
+import { E2EEResetService } from '../services/e2eeResetService';
 import { logError } from '../../logger';
 import { sendError, sendSuccess } from '../../shared/lib/apiResponse';
 
@@ -123,5 +124,31 @@ export const rotateKeyPair = async (req: AuthRequest, res: Response): Promise<vo
     });
   } catch (error) {
     handleServiceError(res, error, 'Failed to rotate key pair');
+  }
+};
+
+/**
+ * POST /api/auth/keys/reset
+ *
+ * 換裝置 / 換 Passkey：砍掉整個 E2EE 加密層（passkey + keypair + 加密快取），
+ * 回到「未設定」狀態。之後客戶端走一次全新的 keypair setup + passkey 註冊，
+ * 並重新同步被保護的資料（Plaid / 交易所 / DeBank 快取）。
+ *
+ * 保留銀行 / 交易所連線（PlaidItem / ExchangeAccount），不需重連。
+ * 僅需 Privy 登入授權，不要求舊 passkey assertion（用戶正是遺失了 passkey）。
+ */
+export const resetE2EE = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = getAuthenticatedUserId(req, res);
+    if (!userId) return;
+
+    const result = await E2EEResetService.resetForUser(userId);
+    sendSuccess(res, {
+      reset: true,
+      ...result,
+    });
+  } catch (error) {
+    logError('E2EE reset failed', error, { userId: (req as AuthRequest).userId });
+    sendError(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to reset E2EE layer' });
   }
 };

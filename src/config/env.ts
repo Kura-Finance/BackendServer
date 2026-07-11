@@ -55,11 +55,19 @@ export function buildDatabaseUrl(): string {
  * 驗證必填環境變數
  */
 export function validateEnvironment(): void {
-  const required = ['JWT_SECRET'];
+  const required = ['JWT_SECRET', 'ENCRYPTION_KEY'];
   const missing = required.filter((key) => !process.env[key]);
 
   if (missing.length > 0) {
     console.error(`❌ Missing required environment variables: ${missing.join(', ')}`);
+    process.exit(1);
+  }
+
+  // 驗證 ENCRYPTION_KEY 格式：必須是 64 hex 字元（32 bytes，用於 AES-256）
+  const encKey = process.env.ENCRYPTION_KEY ?? '';
+  if (!/^[0-9a-f]{64}$/.test(encKey)) {
+    console.error('❌ ENCRYPTION_KEY must be exactly 64 lowercase hex characters (32 bytes)');
+    console.error('💡 Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
     process.exit(1);
   }
 

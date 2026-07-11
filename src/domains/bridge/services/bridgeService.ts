@@ -13,7 +13,7 @@
  * Base: https://api.bridge.xyz/v0
  */
 
-import crypto from 'crypto';
+import * as crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { prisma } from '../../shared/lib/prisma';
@@ -298,24 +298,20 @@ export class BridgeService {
         kycLinkId: created.id,
         customerType: type,
         email: resolvedEmail,
-        fullName,
         kycLink: created.kyc_link ?? null,
         tosLink: created.tos_link ?? null,
         kycStatus: created.kyc_status ?? 'not_started',
         tosStatus: created.tos_status ?? 'pending',
-        rawCustomer: asJson(created),
       },
       update: {
         bridgeCustomerId: created.customer_id ?? null,
         kycLinkId: created.id,
         customerType: type,
         email: resolvedEmail,
-        fullName,
         kycLink: created.kyc_link ?? null,
         tosLink: created.tos_link ?? null,
         kycStatus: created.kyc_status ?? 'not_started',
         tosStatus: created.tos_status ?? 'pending',
-        rawCustomer: asJson(created),
       },
     });
 
@@ -370,7 +366,6 @@ export class BridgeService {
         ...(link.tos_link ? { tosLink: link.tos_link } : {}),
         ...(link.kyc_status ? { kycStatus: link.kyc_status } : {}),
         ...(link.tos_status ? { tosStatus: link.tos_status } : {}),
-        rawCustomer: asJson(link),
       },
     });
 
@@ -442,7 +437,6 @@ export class BridgeService {
         kycStatus,
         tosStatus,
         endorsements: asJson(endorsements),
-        rawCustomer: asJson(customer),
       },
     });
 
@@ -689,7 +683,6 @@ export class BridgeService {
       depositInstructions: va.source_deposit_instructions
         ? asJson(va.source_deposit_instructions)
         : Prisma.JsonNull,
-      rawAccount: asJson(va),
     };
 
     const record = await prisma.bridgeVirtualAccount.upsert({
@@ -755,7 +748,6 @@ export class BridgeService {
       gasFee: event.gas_fee ?? null,
       depositId: event.deposit_id ?? null,
       destinationTxHash: event.destination_tx_hash ?? null,
-      rawEvent: asJson(event),
       occurredAt,
     };
 
@@ -844,7 +836,6 @@ export class BridgeService {
         depositInstructions: transfer.source_deposit_instructions
           ? asJson(transfer.source_deposit_instructions)
           : asJson(record.depositInstructions ?? null),
-        rawTransfer: asJson(transfer),
       },
     });
 
@@ -888,14 +879,12 @@ export class BridgeService {
         last4: account.last_4 ?? null,
         currency: account.currency ?? (body.currency as string) ?? 'usd',
         active: account.active ?? true,
-        rawAccount: asJson(account),
       },
       update: {
         ...(account.bank_name ? { bankName: account.bank_name } : {}),
         ...(account.account_owner_name ? { accountOwnerName: account.account_owner_name } : {}),
         ...(account.last_4 ? { last4: account.last_4 } : {}),
         ...(account.active !== undefined ? { active: account.active } : {}),
-        rawAccount: asJson(account),
       },
     });
 
@@ -993,7 +982,6 @@ export class BridgeService {
         ? asJson(transfer.source_deposit_instructions)
         : Prisma.JsonNull,
       clientReferenceId: transfer.client_reference_id ?? null,
-      rawTransfer: asJson(transfer),
     };
 
     const record = await prisma.bridgeTransfer.upsert({
@@ -1069,7 +1057,6 @@ export class BridgeService {
         ...(transfer.source_deposit_instructions
           ? { depositInstructions: asJson(transfer.source_deposit_instructions) }
           : {}),
-        rawTransfer: asJson(transfer),
       },
     });
   }
@@ -1092,7 +1079,6 @@ export class BridgeService {
         ...(customer.kyc_status ? { kycStatus: customer.kyc_status } : {}),
         ...(customer.tos_status ? { tosStatus: customer.tos_status } : {}),
         ...(customer.endorsements ? { endorsements: asJson(customer.endorsements) } : {}),
-        rawCustomer: asJson(customer),
       },
     });
   }
@@ -1115,7 +1101,6 @@ export class BridgeService {
         ...(link.customer_id ? { bridgeCustomerId: link.customer_id } : {}),
         ...(link.kyc_status ? { kycStatus: link.kyc_status } : {}),
         ...(link.tos_status ? { tosStatus: link.tos_status } : {}),
-        rawCustomer: asJson(link),
       },
     });
   }

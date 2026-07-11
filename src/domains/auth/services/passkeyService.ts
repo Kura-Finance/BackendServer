@@ -80,6 +80,86 @@ export async function getStatus(userId: string): Promise<{ registered: boolean }
   return { registered: count > 0 };
 }
 
+// ── Management（列出 / 撤銷）─────────────────────────────────────────────────
+
+export interface PasskeySummary {
+  id: string;
+  deviceType: string | null;
+  backedUp: boolean;
+  transports: string[];
+  createdAt: Date;
+  lastUsedAt: Date | null;
+}
+
+/** 列出使用者已註冊的 passkey（不含敏感欄位：publicKey / encryptedDek）。 */
+export async function listPasskeys(userId: string): Promise<PasskeySummary[]> {
+  const creds = await prisma.passkeyCredential.findMany({
+    where: { userId },
+    select: {
+      id: true,
+      deviceType: true,
+      backedUp: true,
+      transports: true,
+      createdAt: true,
+      lastUsedAt: true,
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+  return creds.map((c) => ({
+    id: c.id,
+    deviceType: c.deviceType,
+    backedUp: c.backedUp,
+    transports: c.transports as string[],
+    createdAt: c.createdAt,
+    lastUsedAt: c.lastUsedAt,
+  }));
+}
+
+/** 找不到 passkey（或不屬於該使用者）。 */
+export class PasskeyNotFoundError extends Error {
+  constructor() {
+    super('Passkey not found for this account');
+    this.name = 'PasskeyNotFoundError';
+  }
+}
+
+/** 嘗試刪除最後一個 passkey（會導致永久無法解鎖 E2EE 資料）。 */
+export class LastPasskeyError extends Error {
+  constructor() {
+    super('Cannot remove the last passkey. Register a new passkey before removing this one.');
+    this.name = 'LastPasskeyError';
+  }
+}
+
+/**
+ * 撤銷一個 passkey（依 PasskeyCredential.id）。
+ *
+ * 保護：不允許刪除最後一個 passkey —— 否則該帳號將永久失去解鎖 E2EE 資料層的能力。
+ * 「換 passkey」的正確流程是：先註冊新 passkey（前端用新 PRF 重新包裝同一把 DEK），
+ * 再呼叫本端點刪除舊的。
+ */
+export async function deletePasskey(
+  userId: string,
+  credentialDbId: string,
+): Promise<{ deleted: true }> {
+  const cred = await prisma.passkeyCredential.findUnique({
+    where: { id: credentialDbId },
+    select: { id: true, userId: true },
+  });
+  if (!cred || cred.userId !== userId) {
+    throw new PasskeyNotFoundError();
+  }
+
+  const count = await prisma.passkeyCredential.count({ where: { userId } });
+  if (count <= 1) {
+    throw new LastPasskeyError();
+  }
+
+  await prisma.passkeyCredential.delete({ where: { id: cred.id } });
+  logBusinessEvent('passkey_revoked', userId, { credentialDbId });
+  return { deleted: true };
+}
+
 // ── Registration ──────────────────────────────────────────────────────────────
 export async function createRegistrationOptions(
   userId: string,

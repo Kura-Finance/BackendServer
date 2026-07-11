@@ -14,9 +14,12 @@ import {
   setupKeyPair,
   getMyKeyPair,
   rotateKeyPair,
+  resetE2EE,
 } from './controllers/keyPairController';
 import {
   status as passkeyStatus,
+  list as passkeyList,
+  remove as passkeyRemove,
   registerChallenge as passkeyRegisterChallenge,
   register as passkeyRegister,
   authenticateChallenge as passkeyAuthenticateChallenge,
@@ -59,6 +62,7 @@ router.post('/logout', requireAuth, logout);
 router.post('/keys/setup', requireAuth, validateRequest({ body: keyPairBodySchema }), setupKeyPair);    // { publicKey, encryptedPrivateKey, kekSalt? }
 router.get('/keys/me', requireAuth, getMyKeyPair);                                                       // → { publicKey, encryptedPrivateKey, kekSalt, algorithm, createdAt }
 router.post('/keys/rotate', requireAuth, validateRequest({ body: keyPairBodySchema }), rotateKeyPair);  // ⚠️ 會讓既有 wrappedSek 失效
+router.post('/keys/reset', requireAuth, resetE2EE);                                                      // 換裝置/換 passkey：清掉 passkey + keypair + 加密快取，回到未設定狀態
 
 // ── Passkey / WebAuthn（登入後解鎖 E2EE 資料層）───────────────────────
 router.get('/passkey/status', requireAuth, passkeyStatus);                                                          // → { registered }

@@ -13,6 +13,7 @@ import { stripeRouter } from './domains/stripe';
 import { cardRouter } from './domains/card';
 import { walletRouter } from './domains/wallet';
 import { bridgeRouter } from './domains/bridge';
+import { dinariRouter } from './domains/dinari';
 import {
   appLogger,
   httpLogger,
@@ -193,6 +194,7 @@ app.use('/api/stripe', stripeRouter);
 app.use('/api/card', cardRouter);
 app.use('/api/wallet', walletRouter);
 app.use('/api/bridge', bridgeRouter);
+app.use('/api/dinari', dinariRouter);
 
 // ========================================
 // 6. 錯誤處理中間件

@@ -13,6 +13,7 @@
 
 import { prisma } from '../../shared/lib/database';
 import { appLogger } from '../../logger';
+import { EncryptionUtil } from '../../shared/lib/encryption';
 
 const GP_API = 'https://api.gnosispay.com/api/v1';
 const GP_PARTNER_ID = process.env.GNOSIS_PAY_PARTNER_ID; // optional for permissionless dev
@@ -121,7 +122,7 @@ export async function getStoredJwt(userId: string): Promise<string | null> {
   if (wallet.gpJwtExpiresAt && wallet.gpJwtExpiresAt.getTime() - Date.now() < expiryBuffer) {
     return null;
   }
-  return wallet.gpJwt;
+  return EncryptionUtil.decrypt(wallet.gpJwt);
 }
 
 export async function requireJwt(userId: string): Promise<string> {
@@ -213,18 +214,19 @@ export async function authenticate(
   // expiresIn is seconds
   const expiresAt = new Date(Date.now() + data.expiresIn * 1000);
 
+  const encryptedJwt = EncryptionUtil.encrypt(data.token);
   await prisma.cardWallet.upsert({
     where: { userId },
     create: {
       userId,
       address,
       chainId: 100,
-      gpJwt: data.token,
+      gpJwt: encryptedJwt,
       gpJwtExpiresAt: expiresAt,
     },
     update: {
       address,
-      gpJwt: data.token,
+      gpJwt: encryptedJwt,
       gpJwtExpiresAt: expiresAt,
     },
   });

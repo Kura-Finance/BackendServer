@@ -11,6 +11,7 @@ import {
   KeyPairNotConfiguredError,
   PayloadKeyHandle,
 } from '../../shared/services/payloadKeyService';
+import { DemoService } from '../../demo/demoService';
 
 /**
  * 交易所服務 - CCXT 整合層
@@ -274,6 +275,9 @@ export class ExchangeService {
     userId: string,
     exchangeAccountId: string,
   ): Promise<EncryptedExchangeSnapshot> {
+    if (await DemoService.isDemoUser(userId)) {
+      return DemoService.exchangeSnapshot(userId);
+    }
     const startTime = Date.now();
     try {
       logDebug('Fetching exchange balances and assets', {
@@ -686,6 +690,9 @@ export class ExchangeService {
     userId: string,
     exchangeAccountId: string,
   ): Promise<EncryptedExchangeSnapshot> {
+    if (await DemoService.isDemoUser(userId)) {
+      return DemoService.exchangeSnapshot(userId);
+    }
     if (!exchangeAccountId || exchangeAccountId === 'undefined') {
       throw new Error('Invalid account ID');
     }
@@ -850,6 +857,9 @@ export class ExchangeService {
    * 獲取用戶連接的所有交易所帳戶
    */
   static async getUserExchangeAccounts(userId: string) {
+    if (await DemoService.isDemoUser(userId)) {
+      return DemoService.exchangeAccounts();
+    }
     const accounts = await prisma.exchangeAccount.findMany({
       where: { userId },
       select: {

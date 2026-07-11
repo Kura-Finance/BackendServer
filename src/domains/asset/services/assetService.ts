@@ -5,6 +5,7 @@ import {
   KeyPairNotConfiguredError,
 } from '../../shared/services/payloadKeyService';
 import { appLogger, logDebug, logError } from '../../logger';
+import { DemoService } from '../../demo/demoService';
 
 /**
  * 資產服務 - 資產追蹤業務邏輯（Phase 3 Zero-Access E2EE only）
@@ -60,6 +61,19 @@ export class AssetService {
    * 不解密 payload，純粹給前端做日期選擇器。
    */
   static async getRecordDates(userId: string): Promise<Date[]> {
+    if (await DemoService.isDemoUser(userId)) {
+      const history = await DemoService.assetHistory(userId, 30);
+      const seen = new Set<number>();
+      const dates: Date[] = [];
+      for (const s of history.snapshots) {
+        const t = s.recordedAt.getTime();
+        if (!seen.has(t)) {
+          seen.add(t);
+          dates.push(s.recordedAt);
+        }
+      }
+      return dates.sort((a, b) => b.getTime() - a.getTime());
+    }
     const snapshots = await prisma.assetSnapshot.findMany({
       where: { userId },
       distinct: ['recordedAt'],
@@ -189,6 +203,9 @@ export class AssetService {
     userId: string,
     days: number = 30,
   ): Promise<EncryptedAssetHistoryResponse> {
+    if (await DemoService.isDemoUser(userId)) {
+      return DemoService.assetHistory(userId, days);
+    }
     const startDate = new Date();
     startDate.setUTCDate(startDate.getUTCDate() - days + 1);
     startDate.setUTCHours(0, 0, 0, 0);

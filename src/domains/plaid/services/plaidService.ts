@@ -7,6 +7,7 @@ import { PlaidAuthService } from './plaidAuthService';
 import { PlaidAccountService } from './plaidAccountService';
 import { PlaidCacheService, EncryptedFinanceSnapshot } from './plaidCacheService';
 import { PlaidWebhookSyncService } from './plaidWebhookSyncService';
+import { DemoService } from '../../demo/demoService';
 
 /**
  * 統一的 Plaid 服務門面（Phase 3 Zero-Access E2EE only）。
@@ -40,6 +41,9 @@ export class PlaidService {
     userId: string,
     isManualRefresh: boolean = false,
   ): Promise<EncryptedFinanceSnapshot> {
+    if (await DemoService.isDemoUser(userId)) {
+      return DemoService.plaidSnapshot(userId);
+    }
     return PlaidCacheService.getFinanceSnapshotOptimized(userId, isManualRefresh);
   }
 
@@ -47,6 +51,9 @@ export class PlaidService {
    * 僅讀快取（不觸發 Plaid API）：回傳目前 cache 中的加密形式 snapshot。
    */
   static async getEncryptedFinanceSnapshot(userId: string): Promise<EncryptedFinanceSnapshot> {
+    if (await DemoService.isDemoUser(userId)) {
+      return DemoService.plaidSnapshot(userId);
+    }
     return PlaidCacheService.getEncryptedSnapshotFromCache(userId);
   }
 

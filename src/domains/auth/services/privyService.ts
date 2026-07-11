@@ -106,12 +106,33 @@ export async function resolveIdentityFromToken(
     const accounts = (user.linked_accounts ?? []) as unknown as Array<Record<string, unknown>>;
 
     const emailAccount = accounts.find((a) => a.type === 'email');
-    const embeddedWallet = accounts.find((a) => isEmbeddedWalletLinkedAccount(a as never));
+
+    // 鎖定「主 EOA」：一個 Privy 用戶可能有多個 embedded wallet（HD index 遞增）。
+    // 為了讓每次登入都綁定同一個地址，固定挑：
+    //   1. embedded wallet（wallet_client = privy）
+    //   2. EVM 鏈（chain_type = ethereum）
+    //   3. wallet_index 最小者（index 0 = Privy 配給的主錢包）
+    // 沒有 embedded wallet 時才退回任意 linked wallet（external）。
+    const walletIndexOf = (a: Record<string, unknown>): number =>
+      typeof a.wallet_index === 'number' ? a.wallet_index : Number.MAX_SAFE_INTEGER;
+
+    const primaryEmbedded = accounts
+      .filter((a) => isEmbeddedWalletLinkedAccount(a as never))
+      .filter((a) => (typeof a.chain_type === 'string' ? a.chain_type : 'ethereum') === 'ethereum')
+      .sort((a, b) => walletIndexOf(a) - walletIndexOf(b))[0];
+
     const anyWallet = accounts.find((a) => a.type === 'wallet');
-    const wallet = embeddedWallet ?? anyWallet;
+    const wallet = primaryEmbedded ?? anyWallet;
 
     const email = typeof emailAccount?.address === 'string' ? emailAccount.address : undefined;
     const walletAddress = typeof wallet?.address === 'string' ? wallet.address : undefined;
+
+    appLogger.info('[Privy] Resolved primary EOA from identity token', {
+      privyUserId: user.id,
+      embeddedWalletCount: accounts.filter((a) => isEmbeddedWalletLinkedAccount(a as never)).length,
+      chosenWalletIndex: primaryEmbedded ? walletIndexOf(primaryEmbedded) : null,
+      chosenAddressPrefix: walletAddress?.slice(0, 10),
+    });
 
     return {
       privyUserId: user.id,

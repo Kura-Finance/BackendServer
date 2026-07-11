@@ -37,6 +37,46 @@ export const status = async (req: AuthRequest, res: Response): Promise<void> => 
   }
 };
 
+export const list = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = getUserId(req, res);
+    if (!userId) return;
+
+    const passkeys = await PasskeyService.listPasskeys(userId);
+    sendSuccess(res, { passkeys, count: passkeys.length });
+  } catch (error) {
+    logError('Passkey list failed', error, { userId: req.userId });
+    sendError(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to list passkeys' });
+  }
+};
+
+export const remove = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = getUserId(req, res);
+    if (!userId) return;
+
+    const credentialDbId = req.params.credentialId as string;
+    if (!credentialDbId) {
+      sendError(res, 400, { code: 'INVALID_REQUEST', message: 'credentialId is required' });
+      return;
+    }
+
+    const result = await PasskeyService.deletePasskey(userId, credentialDbId);
+    sendSuccess(res, result);
+  } catch (error) {
+    if (error instanceof PasskeyService.LastPasskeyError) {
+      sendError(res, 409, { code: 'PASSKEY_LAST_REMAINING', message: error.message });
+      return;
+    }
+    if (error instanceof PasskeyService.PasskeyNotFoundError) {
+      sendError(res, 404, { code: 'PASSKEY_NOT_FOUND', message: error.message });
+      return;
+    }
+    logError('Passkey delete failed', error, { userId: req.userId });
+    sendError(res, 500, { code: 'INTERNAL_ERROR', message: 'Failed to remove passkey' });
+  }
+};
+
 export const registerChallenge = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = getUserId(req, res);

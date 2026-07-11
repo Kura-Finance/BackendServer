@@ -126,6 +126,9 @@ jobs:
             BRIDGE_API_KEY=${{ secrets.BRIDGE_API_KEY }}
             BRIDGE_WEBHOOK_PUBLIC_KEY=${{ secrets.BRIDGE_WEBHOOK_PUBLIC_KEY }}
             BRIDGE_FEE_CONFIG_ENABLED=${{ vars.BRIDGE_FEE_CONFIG_ENABLED }}
+            DINARI_API_KEY_ID=${{ secrets.DINARI_API_KEY_ID }}
+            DINARI_API_SECRET_KEY=${{ secrets.DINARI_API_SECRET_KEY }}
+            DINARI_ENVIRONMENT=sandbox
             PRIVY_APP_ID=${{ secrets.PRIVY_APP_ID }}
             PRIVY_APP_SECRET=${{ secrets.PRIVY_APP_SECRET }}
             PRIVY_VERIFICATION_KEY=${{ secrets.PRIVY_VERIFICATION_KEY }}
