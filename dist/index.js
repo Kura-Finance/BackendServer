@@ -21,6 +21,8 @@ const bridge_1 = require("./domains/bridge");
 const codego_1 = require("./domains/codego");
 const dinari_1 = require("./domains/dinari");
 const waitlist_1 = require("./domains/waitlist");
+const platform_insights_1 = require("./domains/platform-insights");
+const sca_analytics_1 = require("./domains/sca-analytics");
 const logger_1 = require("./domains/logger");
 const rateLimiter_1 = require("./domains/shared/middleware/rateLimiter");
 const requireWebTier_1 = require("./domains/auth/middleware/requireWebTier");
@@ -100,7 +102,10 @@ const fallbackOrigins = process.env.NODE_ENV === 'production'
     ? [] // 生產環境必須通過環境變數設定
     : developmentOrigins;
 const corsOptions = {
-    origin: process.env.ALLOWED_ORIGINS?.split(',') || fallbackOrigins,
+    origin: (() => {
+        const fromEnv = process.env.ALLOWED_ORIGINS?.split(',').map((o) => o.trim()).filter(Boolean);
+        return fromEnv?.length ? fromEnv : fallbackOrigins;
+    })(),
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Type'],
@@ -208,6 +213,8 @@ app.use('/api/bridge', bridge_1.bridgeRouter);
 app.use('/api/codego', codego_1.codegoRouter);
 app.use('/api/dinari', dinari_1.dinariRouter);
 app.use('/api/waitlist', waitlist_1.waitlistRouter);
+app.use('/api/platform-insights', platform_insights_1.platformInsightsRouter);
+app.use('/api/sca-analytics', sca_analytics_1.scaAnalyticsRouter);
 // ========================================
 // 6. 錯誤處理中間件
 // ========================================

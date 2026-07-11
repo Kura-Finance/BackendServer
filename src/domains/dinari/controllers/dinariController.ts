@@ -8,12 +8,16 @@ import { DinariError, DinariService } from '../services/dinariService';
 
 function dinariErrorLogContext(error: unknown): Record<string, unknown> {
   if (!(error instanceof APIError)) return {};
-  const body = (error as { error?: unknown }).error;
+  const body = extractDinariErrorBody(error);
   return {
     dinariStatus: error.status,
     dinariDetails: body,
     dinariFieldSummary: formatDinariFieldErrors(body),
   };
+}
+
+function extractDinariErrorBody(error: APIError): unknown {
+  return (error as { error?: unknown }).error ?? error;
 }
 
 function getAuthenticatedUserId(req: AuthRequest, res: Response): string | null {
@@ -28,12 +32,16 @@ function getAuthenticatedUserId(req: AuthRequest, res: Response): string | null 
 function handleDinariError(res: Response, error: unknown, fallbackMessage: string): void {
   if (error instanceof DinariError) {
     const status = error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 502;
-    sendError(res, status, { code: 'DINARI_ERROR', message: error.message });
+    sendError(res, status, {
+      code: 'DINARI_ERROR',
+      message: error.message,
+      ...(error.details !== undefined ? { details: error.details } : {}),
+    });
     return;
   }
   if (error instanceof APIError) {
     const status = error.status && error.status >= 400 && error.status < 500 ? error.status : 502;
-    const dinariError = (error as { error?: unknown }).error;
+    const dinariError = extractDinariErrorBody(error);
     const fieldSummary = formatDinariFieldErrors(dinariError);
     const message = fieldSummary ? `${error.message}: ${fieldSummary}` : error.message;
     sendError(res, status, {

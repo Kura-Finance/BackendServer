@@ -17,6 +17,7 @@ import {
 } from './bridgeService';
 import type {
   BridgeCustomerResponse,
+  BridgeDrainResponse,
   BridgeKycLinkResponse,
   BridgeTransferResponse,
   BridgeVirtualAccountEventResponse,
@@ -149,6 +150,9 @@ export async function handleWebhookEvent(event: BridgeWebhookEvent): Promise<voi
       await BridgeService.syncVirtualAccountActivity(
         obj as unknown as BridgeVirtualAccountEventResponse,
       );
+      break;
+    case 'liquidation_address.drain':
+      await BridgeService.syncLiquidationDrainFromWebhook(obj as unknown as BridgeDrainResponse);
       break;
     default:
       appLogger.info('[BridgeWebhook] Unhandled event category', {

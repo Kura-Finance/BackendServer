@@ -151,7 +151,7 @@ function validateEnvironment() {
         console.warn('⚠️ DINARI_PAYMENT_TOKEN_ADDRESS not set — Dinari order placement will be rejected until configured');
     }
     if (!process.env.DINARI_WHITELIST_EMAILS) {
-        console.warn('⚠️ DINARI_WHITELIST_EMAILS not set — only @privy.io / DEMO_USER_EMAILS can access Dinari Entity/KYC');
+        console.warn('⚠️ DINARI_WHITELIST_EMAILS not set — only @privy.io / @theprism.ltd / DEMO_USER_EMAILS can access Dinari Entity/KYC');
     }
     // Codego Visa/Mastercard Card Issuing（可選；未設定時 card 端點會在 runtime 報錯）
     if (!process.env.CODEGO_API_KEY) {

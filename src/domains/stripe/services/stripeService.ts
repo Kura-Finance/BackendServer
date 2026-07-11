@@ -322,11 +322,21 @@ export class StripeService {
     const subscription = await stripe.subscriptions.retrieve(subscriptionId);
     const paidUserId = await this.syncSubscription(subscription);
 
-    if (!shouldAwardReferralCashback || !paidUserId) {
-      return;
+    if (paidUserId && shouldAwardReferralCashback) {
+      await this.applyReferralCashback(paidUserId, invoice, subscriptionId);
     }
 
-    await this.applyReferralCashback(paidUserId, invoice, subscriptionId);
+    if (paidUserId) {
+      const { PlatformRevenueService } = await import('../../platform-insights/services/platformRevenueService');
+      await PlatformRevenueService.recordFromStripeInvoice(paidUserId, invoice, subscriptionId).catch(
+        (err) => {
+          logError('Failed to record platform revenue from Stripe invoice', err as Error, {
+            userId: paidUserId,
+            invoiceId: invoice.id,
+          });
+        },
+      );
+    }
   }
 
   private static async syncSubscription(subscription: Stripe.Subscription): Promise<string | null> {

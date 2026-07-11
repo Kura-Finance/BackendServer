@@ -18,7 +18,7 @@ import * as crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { prisma } from '../../shared/lib/prisma';
-import { appLogger, logDebug } from '../../logger';
+import { appLogger, logDebug, logError } from '../../logger';
 import { DemoService } from '../../demo/demoService';
 import type {
   BridgeCustomerResponse,
@@ -230,6 +230,8 @@ const OFFRAMP_RAIL_CURRENCY: Record<string, string> = {
   faster_payments: 'gbp',
   pix: 'brl',
   spei: 'mxn',
+  bre_b: 'cop',
+  co_bank_transfer: 'cop',
 };
 
 function assertOffRampRailCurrency(destinationRail: string, destinationCurrency: string): void {
@@ -1171,6 +1173,25 @@ export class BridgeService {
       update: data,
     });
 
+    const { PlatformRevenueService } = await import('../../platform-insights/services/platformRevenueService');
+    await PlatformRevenueService.recordFromBridgeVaActivity({
+      userId: va.userId,
+      bridgeEventId: event.id,
+      eventType: event.type ?? 'unknown',
+      amount: event.amount ?? null,
+      currency: event.currency ?? null,
+      developerFeeAmount: event.developer_fee_amount ?? null,
+      subtotalAmount: event.subtotal_amount ?? null,
+      depositId: event.deposit_id ?? null,
+      bridgeVirtualAccountId: vaId,
+      occurredAt,
+    }).catch((err) => {
+      logError('[BridgeService] Failed to record platform revenue from VA activity', err as Error, {
+        bridgeEventId: event.id,
+        userId: va.userId,
+      });
+    });
+
     appLogger.info('[BridgeService] VA activity recorded', {
       userId: va.userId,
       vaId,
@@ -2050,6 +2071,15 @@ export class BridgeService {
           : {}),
       },
     });
+
+    if (transfer.state === 'payment_processed') {
+      const { PlatformRevenueService } = await import('../../platform-insights/services/platformRevenueService');
+      await PlatformRevenueService.recordFromBridgeTransfer(transfer.id).catch((err) => {
+        logError('[BridgeService] Failed to record platform revenue from transfer', err as Error, {
+          bridgeTransferId: transfer.id,
+        });
+      });
+    }
   }
 
   /** 依 customer_id 更新 KYC / endorsement 狀態（webhook 用）。 */
@@ -2071,6 +2101,19 @@ export class BridgeService {
         ...(customer.tos_status ? { tosStatus: customer.tos_status } : {}),
         ...(customer.endorsements ? { endorsements: asJson(customer.endorsements) } : {}),
       },
+    });
+  }
+
+  /** Bridge liquidation address drain（webhook 用）。 */
+  static async syncLiquidationDrainFromWebhook(drain: BridgeDrainResponse): Promise<void> {
+    if (!drain.id) return;
+
+    const { PlatformRevenueService } = await import('../../platform-insights/services/platformRevenueService');
+    await PlatformRevenueService.recordFromBridgeLiquidationDrain(drain).catch((err) => {
+      logError('[BridgeService] Failed to record platform revenue from liquidation drain', err as Error, {
+        drainId: drain.id,
+        liquidationAddressId: drain.liquidation_address_id,
+      });
     });
   }
 

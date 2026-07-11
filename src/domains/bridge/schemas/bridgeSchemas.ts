@@ -19,6 +19,8 @@ const fiatRail = z.enum([
   'faster_payments',
   'pix',
   'spei',
+  'bre_b',
+  'co_bank_transfer',
 ]);
 
 const payoutRailCurrency: Record<z.infer<typeof fiatRail>, z.infer<typeof fiatCurrency>> = {
@@ -30,6 +32,8 @@ const payoutRailCurrency: Record<z.infer<typeof fiatRail>, z.infer<typeof fiatCu
   faster_payments: 'gbp',
   pix: 'brl',
   spei: 'mxn',
+  bre_b: 'cop',
+  co_bank_transfer: 'cop',
 };
 const cryptoRail = z.enum([
   'ethereum',

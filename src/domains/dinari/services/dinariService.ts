@@ -13,8 +13,12 @@ import { APIError } from '@dinari/api-sdk';
 import { prisma } from '../../shared/lib/prisma';
 import { appLogger, logDebug } from '../../logger';
 import {
+  classifyWalletConnectTarget,
+  defaultDinariChainId,
   formatDinariFieldErrors,
-  normalizeChainId,
+  normalizeEvmAddress,
+  normalizeWalletConnectChainId,
+  resolveWalletChainId,
   walletNonceChainCandidates,
 } from '../lib/dinariWalletUtil';
 import type {
@@ -32,6 +36,7 @@ export class DinariError extends Error {
     public readonly statusCode: number,
     message: string,
     public readonly context: string,
+    public readonly details?: unknown,
   ) {
     super(message);
     this.name = 'DinariError';
@@ -54,13 +59,12 @@ function getClient(): Dinari {
   return cachedClient;
 }
 
-function defaultChainId(): string {
-  // Sandbox 用 Base Sepolia（testnet）；Production 用 Base mainnet
-  return process.env.DINARI_ENVIRONMENT === 'production' ? 'eip155:8453' : 'eip155:84532';
-}
-
 function paymentTokenAddress(): string {
-  return process.env.DINARI_ENVIRONMENT === 'production' ? '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' : '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
+  if (process.env.DINARI_PAYMENT_TOKEN_ADDRESS) {
+    return process.env.DINARI_PAYMENT_TOKEN_ADDRESS;
+  }
+  // Sandbox mockUSD 與 production 皆在 Base 主網（eip155:8453）
+  return '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 }
 
 function isSandbox(): boolean {
@@ -70,6 +74,15 @@ function isSandbox(): boolean {
 // KYC 為 PASS 才可交易
 function canTransact(kycStatus: string): boolean {
   return kycStatus === 'PASS';
+}
+
+function extractDinariErrorBody(error: APIError): unknown {
+  return (error as { error?: unknown }).error ?? error;
+}
+
+function dinariApiErrorMessage(error: APIError, fallback: string): string {
+  const summary = formatDinariFieldErrors(extractDinariErrorBody(error));
+  return summary ? `${error.message}: ${summary}` : fallback;
 }
 
 export class DinariService {
@@ -164,12 +177,25 @@ export class DinariService {
     walletAddress: string,
     chainId?: string,
   ): Promise<WalletNonceResult> {
+    const normalizedWallet = normalizeEvmAddress(walletAddress);
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { walletAddress: true, scaAddress: true },
+    });
+    classifyWalletConnectTarget(normalizedWallet, user ?? {});
+
+    const entityStatus = await this.getEntityStatus(userId);
+    if (!entityStatus.canTransact) {
+      throw new DinariError(
+        403,
+        `Complete KYC before connecting wallet (status: ${entityStatus.kycStatus}).`,
+        'getWalletNonce',
+      );
+    }
+
     const { accountId } = await this.getOrCreateAccount(userId);
     const client = getClient();
 
-    // 診斷：確認此 accountId 在「目前環境/API key」下存在且有效。
-    // 若是換過 DINARI_ENVIRONMENT / API key 後遺留的舊 account，這裡會 404，
-    // 而 nonce 對它會持續 422（field_errors 空）。同時 log jurisdiction（也可能影響可否連外部錢包）。
     let entityId: string | undefined;
     try {
       const account = await client.v2.accounts.retrieve(accountId);
@@ -180,24 +206,40 @@ export class DinariService {
         isActive: account.is_active,
         jurisdiction: account.jurisdiction,
       });
+
+      const entity = await client.v2.entities.retrieveByID(entityId);
+      if (!entity.is_kyc_complete) {
+        throw new DinariError(
+          403,
+          `Complete KYC before connecting wallet (Dinari is_kyc_complete=false, status: ${entityStatus.kycStatus}).`,
+          'getWalletNonce',
+        );
+      }
     } catch (error) {
+      if (error instanceof DinariError) throw error;
+      if (error instanceof APIError && error.status === 404) {
+        throw new DinariError(
+          409,
+          'Dinari account not found in the current sandbox API key. Reset Dinari entity/account or use matching sandbox credentials.',
+          'getWalletNonce',
+        );
+      }
       appLogger.error('[DinariService] account.retrieve failed — accountId may be stale/wrong env', {
         accountId,
         status: error instanceof APIError ? error.status : undefined,
         fieldSummary:
           error instanceof APIError
-            ? formatDinariFieldErrors((error as { error?: unknown }).error)
+            ? formatDinariFieldErrors(extractDinariErrorBody(error))
             : undefined,
       });
+      throw error;
     }
 
-    // 診斷：(1) 這個 entity 的 KYC 狀態（BASELINE entity 可能要先過 KYC 才能連錢包）；
-    // (2) 全域掃描此 API key 下所有 entity → account → wallet，找出這個 SCA 已被連在哪裡。
+    let foundAt: { entityId: string; accountId: string; chainId: string } | null = null;
     try {
-      const requested = walletAddress.toLowerCase();
+      const requested = normalizedWallet;
       const entitiesResp = await client.v2.entities.list();
       const entities = entitiesResp.data;
-      let foundAt: { entityId: string; accountId: string; chainId: string } | null = null;
 
       for (const ent of entities) {
         if (ent.id === entityId) {
@@ -207,7 +249,7 @@ export class DinariService {
           } catch {
             /* 尚無 KYC check */
           }
-          appLogger.warn('[DinariService] this entity KYC', {
+          appLogger.info('[DinariService] this entity KYC', {
             entityId: ent.id,
             entityType: ent.entity_type,
             isKycComplete: ent.is_kyc_complete,
@@ -231,7 +273,7 @@ export class DinariService {
         }
       }
 
-      appLogger.warn('[DinariService] global wallet scan', {
+      appLogger.info('[DinariService] global wallet scan', {
         requested,
         thisEntityId: entityId,
         entityCount: entities.length,
@@ -243,8 +285,28 @@ export class DinariService {
       });
     }
 
-    // 前置檢查：account 是否已連錢包。Dinari 一個 account 只能連一個 wallet，
-    // 若已連，重新請求 nonce 會被語意 422 拒絕（且 field_errors 為空）。
+    if (foundAt) {
+      if (foundAt.accountId === accountId) {
+        await prisma.dinariAccount.update({
+          where: { accountId },
+          data: { walletAddress: normalizedWallet, walletChainId: foundAt.chainId },
+        });
+        throw new DinariError(
+          409,
+          'Wallet is already connected to this Dinari account.',
+          'getWalletNonce',
+          { accountId, chainId: foundAt.chainId },
+        );
+      }
+
+      throw new DinariError(
+        409,
+        `Wallet ${normalizedWallet} is already linked to another Dinari account (${foundAt.accountId}). Use a different wallet or reset the sandbox entity.`,
+        'getWalletNonce',
+        foundAt,
+      );
+    }
+
     try {
       const linked = await client.v2.accounts.wallet.get(accountId);
       const linkedAddress = linked.address.toLowerCase();
@@ -256,14 +318,15 @@ export class DinariService {
         accountId,
         linkedAddress,
         linkedChainId: linked.chain_id,
-        requested: walletAddress.toLowerCase(),
+        requested: normalizedWallet,
       });
       throw new DinariError(
         409,
-        linkedAddress === walletAddress.toLowerCase()
+        linkedAddress === normalizedWallet
           ? 'Wallet is already connected to this Dinari account.'
           : `Dinari account is already linked to wallet ${linked.address}.`,
         'getWalletNonce',
+        { accountId, linkedAddress, linkedChainId: linked.chain_id },
       );
     } catch (error) {
       if (error instanceof DinariError) throw error;
@@ -271,51 +334,38 @@ export class DinariService {
       appLogger.info('[DinariService] No wallet linked yet — requesting nonce', { accountId, status });
     }
 
-    const candidates = walletNonceChainCandidates(chainId);
-    // connect 仍需要 chain_id，沿用第一個候選（= 前端帶來的 / 推斷的鏈）。
-    const connectChainId = candidates[0] ?? defaultChainId();
+    const connectChainId = resolveWalletChainId(normalizedWallet, {
+      chainId,
+      userWalletAddress: user?.walletAddress,
+      userScaAddress: user?.scaAddress,
+    });
+    const candidates = [
+      connectChainId,
+      ...walletNonceChainCandidates(chainId).filter((candidate) => candidate !== connectChainId),
+    ];
 
     appLogger.info('[DinariService] getWalletNonce request', {
       userId,
       accountId,
-      walletAddress,
+      walletAddress: normalizedWallet,
+      connectChainId,
       candidates,
     });
-
-    // 先照官方最新範例：getNonce 只帶 wallet_address、不帶 chain_id。
-    // 現在的 Dinari API 對 nonce 可能不再接受 chain_id（SDK 0.13.0 型別過時仍標必填），
-    // 多送 chain_id 會被回沒有 field_error 的語意 422。
-    try {
-      const resp = await client.v2.accounts.wallet.external.getNonce(accountId, {
-        wallet_address: walletAddress,
-      } as never);
-      appLogger.info('[DinariService] getWalletNonce success (no chain_id)', {
-        accountId,
-        connectChainId,
-      });
-      return { nonce: resp.nonce, message: resp.message, chainId: connectChainId, walletAddress };
-    } catch (error) {
-      const status = error instanceof APIError ? error.status : undefined;
-      appLogger.warn('[DinariService] getWalletNonce no-chain_id attempt failed', {
-        accountId,
-        status,
-        fieldSummary:
-          error instanceof APIError
-            ? formatDinariFieldErrors((error as { error?: unknown }).error)
-            : undefined,
-      });
-      if (status !== 422) throw error;
-    }
 
     let lastError: unknown;
     for (const candidate of candidates) {
       try {
         const resp = await client.v2.accounts.wallet.external.getNonce(accountId, {
-          chain_id: candidate as never,
-          wallet_address: walletAddress,
+          chain_id: candidate,
+          wallet_address: normalizedWallet,
         });
         appLogger.info('[DinariService] getWalletNonce success', { accountId, chainId: candidate });
-        return { nonce: resp.nonce, message: resp.message, chainId: candidate, walletAddress };
+        return {
+          nonce: resp.nonce,
+          message: resp.message,
+          chainId: candidate,
+          walletAddress: normalizedWallet,
+        };
       } catch (error) {
         lastError = error;
         const status = error instanceof APIError ? error.status : undefined;
@@ -325,15 +375,26 @@ export class DinariService {
           status,
           fieldSummary:
             error instanceof APIError
-              ? formatDinariFieldErrors((error as { error?: unknown }).error)
+              ? formatDinariFieldErrors(extractDinariErrorBody(error))
               : undefined,
         });
-        // 只有 422（語意拒絕）才換下一條鏈重試；其他錯誤直接拋出。
         if (status !== 422) throw error;
       }
     }
 
     appLogger.error('[DinariService] getWalletNonce exhausted all chains', { accountId, candidates });
+    if (lastError instanceof APIError) {
+      const details = extractDinariErrorBody(lastError);
+      throw new DinariError(
+        422,
+        dinariApiErrorMessage(
+          lastError,
+          'Dinari rejected wallet nonce. Use chainId eip155:8453 for SCA, complete KYC (PASS), and ensure the wallet is not already linked to another account.',
+        ),
+        'getWalletNonce',
+        details,
+      );
+    }
     throw lastError;
   }
 
@@ -342,22 +403,31 @@ export class DinariService {
     userId: string,
     params: { walletAddress: string; chainId?: string; nonce: string; signature: string },
   ): Promise<DinariAccountResult> {
+    const normalizedWallet = normalizeEvmAddress(params.walletAddress);
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { walletAddress: true, scaAddress: true },
+    });
+    classifyWalletConnectTarget(normalizedWallet, user ?? {});
+
     const { accountId } = await this.getOrCreateAccount(userId);
-    // 必須沿用 nonce 實際成功的那條鏈（前端從 nonce 回傳帶回來）；
-    // 用 normalizeChainId 以接受 sandbox testnet（如 eip155:84532）。
-    const chainId = params.chainId ? normalizeChainId(params.chainId) : defaultChainId();
+    const chainId = resolveWalletChainId(normalizedWallet, {
+      chainId: params.chainId,
+      userWalletAddress: user?.walletAddress,
+      userScaAddress: user?.scaAddress,
+    });
     const client = getClient();
 
     await client.v2.accounts.wallet.external.connect(accountId, {
-      chain_id: chainId as never,
+      chain_id: chainId,
       nonce: params.nonce,
       signature: params.signature,
-      wallet_address: params.walletAddress,
+      wallet_address: normalizedWallet,
     });
 
     const record = await prisma.dinariAccount.update({
       where: { accountId },
-      data: { walletAddress: params.walletAddress, walletChainId: chainId },
+      data: { walletAddress: normalizedWallet, walletChainId: chainId },
     });
 
     appLogger.info('[DinariService] Wallet connected', { userId, accountId, chainId });
@@ -400,7 +470,7 @@ export class DinariService {
     params: PrepareMarketOrderParams,
   ): Promise<PrepareOrderResult> {
     const account = await this.requireTradableAccount(userId);
-    const chainId = account.walletChainId || defaultChainId();
+    const chainId = account.walletChainId || defaultDinariChainId();
     const paymentToken = paymentTokenAddress();
     const client = getClient();
 
@@ -555,7 +625,7 @@ export class DinariService {
       throw new DinariError(400, 'Sandbox faucet is only available in sandbox environment.', 'faucet');
     }
     const account = await this.requireTradableAccount(userId);
-    const chainId = account.walletChainId || defaultChainId();
+    const chainId = account.walletChainId || defaultDinariChainId();
     await getClient().v2.accounts.mintSandboxTokens(account.accountId, {
       chain_id: chainId as never,
     });

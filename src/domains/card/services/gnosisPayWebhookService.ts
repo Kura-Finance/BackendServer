@@ -189,6 +189,24 @@ async function handleTransactionEvent(
   });
 
   appLogger.info('[GPWebhook] Transaction upserted', { txId, status, userId: wallet.userId });
+
+  if (status === 'cleared' && txId) {
+    const { PlatformRevenueService } = await import('../../platform-insights/services/platformRevenueService');
+    await PlatformRevenueService.recordFromCardTransaction({
+      userId: wallet.userId,
+      providerEventId: txId,
+      amount: amount ?? 0,
+      currency,
+      status,
+      authorizedAt: new Date(),
+    }).catch((err) => {
+      appLogger.error('[GPWebhook] Failed to record platform revenue from card tx', {
+        txId,
+        userId: wallet.userId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
 }
 
 async function handleCardStatusChanged(data: Record<string, unknown>): Promise<void> {

@@ -346,7 +346,7 @@ export interface PayoutOption {
   currency: string;
   label: string;
   endorsement: BridgeEndorsementType | 'base';
-  accountTypes: Array<'us' | 'iban' | 'clabe' | 'pix' | 'gb'>;
+  accountTypes: Array<'us' | 'iban' | 'clabe' | 'pix' | 'gb' | 'cop'>;
   minDeposit: MinDeposit;
 }
 
@@ -375,6 +375,13 @@ export const PAYOUT_OPTION_BASES: PayoutOptionBase[] = [
     accountTypes: ['gb'],
   },
   {
+    rail: 'sepa',
+    currency: 'eur',
+    label: 'SEPA',
+    endorsement: 'sepa',
+    accountTypes: ['iban'],
+  },
+  {
     rail: 'pix',
     currency: 'brl',
     label: 'Pix',
@@ -387,6 +394,20 @@ export const PAYOUT_OPTION_BASES: PayoutOptionBase[] = [
     label: 'SPEI',
     endorsement: 'spei',
     accountTypes: ['clabe'],
+  },
+  {
+    rail: 'bre_b',
+    currency: 'cop',
+    label: 'Bre-B',
+    endorsement: 'cop',
+    accountTypes: ['cop'],
+  },
+  {
+    rail: 'co_bank_transfer',
+    currency: 'cop',
+    label: 'Bank Transfer (COP)',
+    endorsement: 'cop',
+    accountTypes: ['cop'],
   },
 ];
 
@@ -483,6 +504,8 @@ export const PAYOUT_MIN_DEPOSIT_NET_BY_RAIL: Record<string, string> = {
   pix: '2',
   spei: '2',
   sepa: '1',
+  bre_b: '2',
+  co_bank_transfer: '2',
 };
 
 export const TRON_USDT_MIN_DEPOSIT_NET = '5';

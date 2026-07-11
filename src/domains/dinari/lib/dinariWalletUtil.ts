@@ -112,7 +112,7 @@ export function normalizeChainId(chainId: string): WalletChainID {
 
   const mapped = NUMERIC_CHAIN_TO_CAIP2[raw];
   if (!mapped) {
-    throw new Error(`Unsupported chainId: ${raw}. Use CAIP-2 (e.g. eip155:84532) or numeric chain id.`);
+    throw new Error(`Unsupported chainId: ${raw}. Use CAIP-2 (e.g. eip155:8453) or numeric chain id.`);
   }
   return mapped;
 }
@@ -120,19 +120,19 @@ export function normalizeChainId(chainId: string): WalletChainID {
 /**
  * 取得 wallet nonce 時要依序嘗試的 chain_id 候選清單。
  *
- * Dinari sandbox / production 實際開通的鏈不一定相同，且某些 422 不會回 field_errors
- * （純語意拒絕），無法事前判斷。這裡回傳一組依環境排序的候選，由 getWalletNonce 逐一嘗試，
- * 並在 log 標出哪條成功，讓我們用實證找出可行的鏈。
+ * Dinari sandbox / production Connect Wallet 皆使用 Base 主網（eip155:8453）。
+ * 某些 422 不會回 field_errors，由 getWalletNonce 逐一嘗試。
  *
- * - 有明確傳入 chainId → 放第一個優先嘗試。
- * - sandbox → 先 Base Sepolia，再 Base 主網 / Ethereum / EOA。
- * - production → 先 Base 主網，再 Ethereum / Arbitrum / EOA。
+ * - 有明確傳入 chainId → 放第一個優先嘗試（Connect 不支援的 testnet 仍可能 422）。
+ * - 預設 → Base 主網，再 Ethereum / Arbitrum / EOA。
  */
 export function walletNonceChainCandidates(explicitChainId?: string | null): WalletChainID[] {
-  const isProduction = process.env.DINARI_ENVIRONMENT === 'production';
-  const defaults: WalletChainID[] = isProduction
-    ? ['eip155:8453', 'eip155:1', 'eip155:42161', 'eip155:0']
-    : ['eip155:84532', 'eip155:8453', 'eip155:1', 'eip155:0'];
+  const defaults: WalletChainID[] = [
+    defaultDinariChainId(),
+    'eip155:1',
+    'eip155:42161',
+    'eip155:0',
+  ];
 
   const ordered: WalletChainID[] = [];
   if (explicitChainId) ordered.push(normalizeChainId(explicitChainId));
@@ -170,8 +170,12 @@ export function formatDinariFieldErrors(error: unknown): string | undefined {
   if (!error || typeof error !== 'object') return undefined;
   const root = error as {
     error_id?: string;
-    error?: { field_errors?: Array<{ field_name?: string; field_error?: string }>; body_error?: string | null };
-    field_errors?: Array<{ field_name?: string; field_error?: string }>;
+    message?: string;
+    error?: {
+      field_errors?: Array<Record<string, unknown>>;
+      body_error?: string | null;
+    };
+    field_errors?: Array<Record<string, unknown>>;
     body_error?: string | null;
   };
   const inner = root.error ?? root;
@@ -179,9 +183,14 @@ export function formatDinariFieldErrors(error: unknown): string | undefined {
   const parts: string[] = [];
   if (root.error_id) parts.push(`error_id=${root.error_id}`);
   if (inner.body_error) parts.push(String(inner.body_error));
+  if (root.message && root.message !== 'Unprocessable Entity') parts.push(root.message);
   if (Array.isArray(fieldErrors) && fieldErrors.length > 0) {
     parts.push(
-      ...fieldErrors.map((e) => `${e.field_name ?? 'field'}: ${e.field_error ?? 'invalid'}`),
+      ...fieldErrors.map((e) => {
+        const name = String(e.field_name ?? e.field ?? 'field');
+        const msg = String(e.field_error ?? e.message ?? e.error ?? 'invalid');
+        return `${name}: ${msg}`;
+      }),
     );
   }
   return parts.length > 0 ? parts.join('; ') : undefined;

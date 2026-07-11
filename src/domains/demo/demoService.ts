@@ -201,8 +201,11 @@ const DEMO_PAYOUT_RAILS: Array<{
   { destinationRail: 'ach_same_day', destinationCurrency: 'usd', externalAccountId: 'demo-ext-acct-usd' },
   { destinationRail: 'wire', destinationCurrency: 'usd', externalAccountId: 'demo-ext-acct-usd' },
   { destinationRail: 'faster_payments', destinationCurrency: 'gbp', externalAccountId: 'demo-ext-acct-gbp' },
+  { destinationRail: 'sepa', destinationCurrency: 'eur', externalAccountId: 'demo-ext-acct-eur' },
   { destinationRail: 'pix', destinationCurrency: 'brl', externalAccountId: 'demo-ext-acct-brl' },
   { destinationRail: 'spei', destinationCurrency: 'mxn', externalAccountId: 'demo-ext-acct-mxn' },
+  { destinationRail: 'bre_b', destinationCurrency: 'cop', externalAccountId: 'demo-ext-acct-cop' },
+  { destinationRail: 'co_bank_transfer', destinationCurrency: 'cop', externalAccountId: 'demo-ext-acct-cop' },
 ];
 
 function demoVaId(currency: string): string {

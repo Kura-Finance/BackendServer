@@ -16,6 +16,8 @@ import { bridgeRouter } from './domains/bridge';
 import { codegoRouter } from './domains/codego';
 import { dinariRouter } from './domains/dinari';
 import { waitlistRouter } from './domains/waitlist';
+import { platformInsightsRouter } from './domains/platform-insights';
+import { scaAnalyticsRouter } from './domains/sca-analytics';
 import {
   appLogger,
   httpLogger,
@@ -96,7 +98,10 @@ const fallbackOrigins = process.env.NODE_ENV === 'production'
   : developmentOrigins;
 
 const corsOptions = {
-  origin: process.env.ALLOWED_ORIGINS?.split(',') || fallbackOrigins,
+  origin: (() => {
+    const fromEnv = process.env.ALLOWED_ORIGINS?.split(',').map((o) => o.trim()).filter(Boolean);
+    return fromEnv?.length ? fromEnv : fallbackOrigins;
+  })(),
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Type'],
@@ -214,6 +219,8 @@ app.use('/api/bridge', bridgeRouter);
 app.use('/api/codego', codegoRouter);
 app.use('/api/dinari', dinariRouter);
 app.use('/api/waitlist', waitlistRouter);
+app.use('/api/platform-insights', platformInsightsRouter);
+app.use('/api/sca-analytics', scaAnalyticsRouter);
 
 // ========================================
 // 6. 錯誤處理中間件

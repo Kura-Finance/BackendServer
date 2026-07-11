@@ -39,6 +39,17 @@ export class WaitlistService {
     });
 
     if (existing) {
+      const { PlatformRevenueService } = await import('../../platform-insights/services/platformRevenueService');
+      await PlatformRevenueService.recordFromWaitlistEntry({
+        waitlistEntryId: existing.id,
+        email: existing.email,
+        product: existing.product,
+        source: existing.source,
+        name: existing.name,
+        occurredAt: existing.createdAt,
+        alreadyJoined: true,
+      }).catch(() => {});
+
       return {
         entry: toWaitlistEntryResult(existing),
         alreadyJoined: true,
@@ -56,6 +67,17 @@ export class WaitlistService {
         userAgent: params.userAgent ?? null,
       },
     });
+
+    const { PlatformRevenueService } = await import('../../platform-insights/services/platformRevenueService');
+    await PlatformRevenueService.recordFromWaitlistEntry({
+      waitlistEntryId: entry.id,
+      email: entry.email,
+      product: entry.product,
+      source: entry.source,
+      name: entry.name,
+      occurredAt: entry.createdAt,
+      alreadyJoined: false,
+    }).catch(() => {});
 
     return {
       entry: toWaitlistEntryResult(entry),

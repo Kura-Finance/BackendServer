@@ -15,6 +15,13 @@ export const WEB_TIER_EXEMPT_PATHS = new Set([
   '/api/waitlist',
   '/api/waitlist/count',
   '/api/waitlist/status',
+  '/api/platform-insights/records',
+  '/api/platform-insights/summary',
+  '/api/platform-insights/revenue-events',
+  '/api/platform-insights/backfill',
+  '/api/sca-analytics/scan',
+  '/api/sca-analytics/summary',
+  '/api/sca-analytics/snapshots',
 ]);
 
 export function tierHasWebAccess(tier: string): boolean {
