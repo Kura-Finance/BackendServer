@@ -266,34 +266,26 @@ export class PlatformRecordService {
     const laId = drain.liquidation_address_id;
     if (!laId) return;
 
-    const [cryptoLa, payoutLa] = await Promise.all([
-      prisma.bridgeLiquidationAddress.findUnique({
-        where: { bridgeLiquidationAddressId: laId },
-        select: {
-          userId: true,
-          sourceChain: true,
-          sourceCurrency: true,
-          destinationCurrency: true,
-          developerFeePercent: true,
-        },
-      }),
-      prisma.bridgePayoutLiquidationAddress.findUnique({
-        where: { bridgeLiquidationAddressId: laId },
-        select: {
-          userId: true,
-          destinationRail: true,
-          destinationCurrency: true,
-          developerFeePercent: true,
-        },
-      }),
-    ]);
+    const la = await prisma.bridgeLiquidationAddress.findUnique({
+      where: { bridgeLiquidationAddressId: laId },
+      select: {
+        userId: true,
+        direction: true,
+        sourceChain: true,
+        sourceCurrency: true,
+        destinationCurrency: true,
+        destinationRail: true,
+        developerFeePercent: true,
+      },
+    });
 
-    const userId = cryptoLa?.userId ?? payoutLa?.userId;
+    const userId = la?.userId;
     if (!userId) return;
 
-    const source = cryptoLa ? 'bridge_liquidation_in' : 'bridge_liquidation_out';
+    const source =
+      la.direction === 'in' ? 'bridge_liquidation_in' : 'bridge_liquidation_out';
     const processAmount = parseDecimal(drain.amount);
-    const feePercent = cryptoLa?.developerFeePercent ?? payoutLa?.developerFeePercent ?? null;
+    const feePercent = la.developerFeePercent ?? null;
     const platformFee = feeFromPercent(processAmount, feePercent);
 
     const user = await prisma.user.findUnique({
@@ -310,7 +302,7 @@ export class PlatformRecordService {
       processAmount,
       platformFee,
       netAmount: platformFee,
-      currency: drain.currency ?? cryptoLa?.sourceCurrency ?? payoutLa?.destinationCurrency ?? 'usd',
+      currency: drain.currency ?? la.sourceCurrency ?? la.destinationCurrency ?? 'usd',
       externalId: drain.id,
       scaAddress: user?.scaAddress ?? null,
       occurredAt: drain.created_at ? new Date(drain.created_at) : new Date(),
@@ -319,19 +311,18 @@ export class PlatformRecordService {
         depositTxHash: drain.deposit_tx_hash ?? null,
         destinationTxHash: drain.destination_tx_hash ?? null,
         destination: drain.destination ?? null,
-        cryptoRoute: cryptoLa
-          ? {
-              sourceChain: cryptoLa.sourceChain,
-              sourceCurrency: cryptoLa.sourceCurrency,
-              destinationCurrency: cryptoLa.destinationCurrency,
-            }
-          : null,
-        payoutRoute: payoutLa
-          ? {
-              destinationRail: payoutLa.destinationRail,
-              destinationCurrency: payoutLa.destinationCurrency,
-            }
-          : null,
+        direction: la.direction,
+        route:
+          la.direction === 'in'
+            ? {
+                sourceChain: la.sourceChain,
+                sourceCurrency: la.sourceCurrency,
+                destinationCurrency: la.destinationCurrency,
+              }
+            : {
+                destinationRail: la.destinationRail,
+                destinationCurrency: la.destinationCurrency,
+              },
       },
     });
   }
@@ -367,37 +358,6 @@ export class PlatformRecordService {
         sourceRail: transfer.sourceRail,
         destinationRail: transfer.destinationRail,
       },
-    });
-  }
-
-  static async recordFromCardTransaction(params: {
-    userId: string;
-    providerEventId: string;
-    amount: number;
-    currency: string;
-    status: string;
-    authorizedAt: Date;
-  }): Promise<void> {
-    if (params.status !== 'cleared') return;
-
-    const user = await prisma.user.findUnique({
-      where: { id: params.userId },
-      select: { scaAddress: true },
-    });
-
-    await this.record({
-      category: 'revenue',
-      userId: params.userId,
-      source: 'card',
-      eventType: 'card_cleared',
-      idempotencyKey: `card:${params.providerEventId}:cleared`,
-      processAmount: roundUsd(params.amount),
-      platformFee: 0,
-      netAmount: roundUsd(params.amount),
-      currency: params.currency.toLowerCase(),
-      externalId: params.providerEventId,
-      scaAddress: user?.scaAddress ?? null,
-      occurredAt: params.authorizedAt,
     });
   }
 
@@ -515,7 +475,6 @@ export class PlatformRecordService {
     const [
       latestVa,
       latestTransfer,
-      latestCard,
       latestStripeEvent,
       latestWaitlist,
       latestDinariOrder,
@@ -529,11 +488,6 @@ export class PlatformRecordService {
         where: { state: 'payment_processed' },
         orderBy: { updatedAt: 'desc' },
         select: { bridgeTransferId: true },
-      }),
-      prisma.cardTransaction.findFirst({
-        where: { status: 'cleared', providerEventId: { not: null } },
-        orderBy: { authorizedAt: 'desc' },
-        select: { providerEventId: true },
       }),
       prisma.stripeWebhookEvent.findFirst({
         where: { type: 'invoice.paid' },
@@ -554,9 +508,6 @@ export class PlatformRecordService {
     if (latestVa) keys.push(`bridge:va:${latestVa.bridgeEventId}`);
     if (latestTransfer) {
       keys.push(`bridge:transfer:${latestTransfer.bridgeTransferId}:payment_processed`);
-    }
-    if (latestCard?.providerEventId) {
-      keys.push(`card:${latestCard.providerEventId}:cleared`);
     }
     if (latestStripeEvent?.payload) {
       const payload = latestStripeEvent.payload as unknown as Stripe.Invoice;
@@ -642,21 +593,6 @@ export class PlatformRecordService {
     });
     for (const transfer of transfers) {
       await this.recordFromBridgeTransfer(transfer.bridgeTransferId);
-    }
-
-    const cardTxs = await prisma.cardTransaction.findMany({
-      where: { status: 'cleared', providerEventId: { not: null } },
-    });
-    for (const tx of cardTxs) {
-      if (!tx.providerEventId) continue;
-      await this.recordFromCardTransaction({
-        userId: tx.userId,
-        providerEventId: tx.providerEventId,
-        amount: tx.amount,
-        currency: tx.currency,
-        status: tx.status,
-        authorizedAt: tx.authorizedAt,
-      });
     }
 
     const stripeEvents = await prisma.stripeWebhookEvent.findMany({

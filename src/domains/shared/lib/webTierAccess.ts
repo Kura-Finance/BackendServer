@@ -14,8 +14,6 @@ export const WEB_TIER_EXEMPT_PATHS = new Set([
   '/api/stripe/billing-status',
   '/api/stripe/webhook',
   '/api/bridge/webhook',
-  '/api/codego/webhook',
-  '/api/card/webhooks/gp',
   '/api/waitlist',
   '/api/waitlist/count',
   '/api/waitlist/status',

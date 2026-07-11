@@ -452,12 +452,12 @@ export class ExchangeService {
     }
 
     try {
-      await prisma.exchangeAssetCache.deleteMany({
-        where: { userId, exchangeAccountId },
+      await prisma.exchangeCache.deleteMany({
+        where: { userId, exchangeAccountId, kind: 'asset' },
       });
 
       if (assets.length > 0) {
-        await prisma.exchangeAssetCache.createMany({
+        await prisma.exchangeCache.createMany({
           data: assets.map((asset) => {
             const holdings = Number(asset.total) || 0;
             const price = Number(asset.usdPrice) || 0;
@@ -469,6 +469,7 @@ export class ExchangeService {
               userId,
               exchangeAccountId,
               exchange,
+              kind: 'asset',
               symbol: asset.symbol,
               payloadCiphertext: encryptPayload(assetsKey.sek, {
                 holdings,
@@ -605,7 +606,7 @@ export class ExchangeService {
     }
 
     try {
-      const operations: Array<ReturnType<typeof prisma.exchangeBalanceCache.upsert>> = [];
+      const operations: Array<ReturnType<typeof prisma.exchangeCache.upsert>> = [];
 
       for (const symbol in balances) {
         if (
@@ -634,11 +635,12 @@ export class ExchangeService {
           const payloadKeyId = balancesKey.payloadKeyId;
 
           operations.push(
-            prisma.exchangeBalanceCache.upsert({
+            prisma.exchangeCache.upsert({
               where: {
-                userId_exchangeAccountId_symbol: {
+                userId_exchangeAccountId_kind_symbol: {
                   userId,
                   exchangeAccountId,
+                  kind: 'balance',
                   symbol,
                 },
               },
@@ -651,6 +653,7 @@ export class ExchangeService {
                 userId,
                 exchangeAccountId,
                 exchange,
+                kind: 'balance',
                 symbol,
                 payloadCiphertext,
                 payloadKeyId,
@@ -663,17 +666,6 @@ export class ExchangeService {
       if (operations.length > 0) {
         await Promise.all(operations);
       }
-
-      await prisma.exchangeSyncLog.upsert({
-        where: { userId },
-        update: {
-          balancesSyncedAt: new Date(),
-        },
-        create: {
-          userId,
-          balancesSyncedAt: new Date(),
-        },
-      });
     } finally {
       zeroize(balancesKey.sek);
     }
@@ -712,10 +704,11 @@ export class ExchangeService {
     }
 
     const [balanceRows, assetRows] = await Promise.all([
-      prisma.exchangeBalanceCache.findMany({
+      prisma.exchangeCache.findMany({
         where: {
           userId,
           exchangeAccountId,
+          kind: 'balance',
           NOT: [{ payloadCiphertext: null }, { payloadKeyId: null }],
         },
         select: {
@@ -726,10 +719,11 @@ export class ExchangeService {
         },
         orderBy: { cachedAt: 'desc' },
       }),
-      prisma.exchangeAssetCache.findMany({
+      prisma.exchangeCache.findMany({
         where: {
           userId,
           exchangeAccountId,
+          kind: 'asset',
           NOT: [{ payloadCiphertext: null }, { payloadKeyId: null }],
         },
         select: {
@@ -811,24 +805,10 @@ export class ExchangeService {
         throw new Error('Account not found or access denied');
       }
 
-      // 刪除帳戶及其相關快取
-      await Promise.all([
-        prisma.exchangeAccount.delete({
-          where: { id: exchangeAccountId },
-        }),
-        prisma.exchangeBalanceCache.deleteMany({
-          where: {
-            userId,
-            exchangeAccountId,
-          },
-        }),
-        prisma.exchangeAssetCache.deleteMany({
-          where: {
-            userId,
-            exchangeAccountId,
-          },
-        }),
-      ]);
+      // 刪除帳戶（ExchangeCache 透過 FK onDelete Cascade 一併清除）
+      await prisma.exchangeAccount.delete({
+        where: { id: exchangeAccountId },
+      });
 
       const duration = Date.now() - startTime;
       logBusinessEvent('exchange_account_disconnected', userId, {

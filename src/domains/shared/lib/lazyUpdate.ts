@@ -1,5 +1,4 @@
 const DEFAULT_PRIVY_METRICS_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
-const DEFAULT_SCA_SCAN_MIN_INTERVAL_MS = DEFAULT_PRIVY_METRICS_MIN_INTERVAL_MS;
 const DEFAULT_PLATFORM_BACKFILL_MIN_INTERVAL_MS = 60 * 60 * 1000; // 1h
 
 function parseIntervalMs(envValue: string | undefined, fallback: number): number {
@@ -9,14 +8,9 @@ function parseIntervalMs(envValue: string | undefined, fallback: number): number
 
 export function getPrivyMetricsMinIntervalMs(): number {
   return parseIntervalMs(
-    process.env.PRIVY_METRICS_MIN_INTERVAL_MS ?? process.env.SCA_SCAN_MIN_INTERVAL_MS,
+    process.env.PRIVY_METRICS_MIN_INTERVAL_MS,
     DEFAULT_PRIVY_METRICS_MIN_INTERVAL_MS,
   );
-}
-
-/** @deprecated use getPrivyMetricsMinIntervalMs */
-export function getScaScanMinIntervalMs(): number {
-  return getPrivyMetricsMinIntervalMs();
 }
 
 export function getPlatformBackfillMinIntervalMs(): number {
@@ -43,7 +37,7 @@ export function getBridgeDepositsPendingSyncMinIntervalMs(): number {
   );
 }
 
-export type LazyUpdateSkipReason = 'fresh' | 'scan_in_progress';
+export type LazyUpdateSkipReason = 'fresh';
 
 export interface LazyUpdateSkipped {
   skipped: true;

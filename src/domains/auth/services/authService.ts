@@ -149,7 +149,6 @@ export class AuthService {
           email: storedEmail,
           ...(walletAddress ? { walletAddress } : {}),
           referCode: await this.generateUniqueReferCode(),
-          emailVerified: !!identityEmail,
           ...(inviter ? { referredByUserId: inviter.id, referredAt: new Date() } : {}),
         },
         select: { id: true, publicKey: true },

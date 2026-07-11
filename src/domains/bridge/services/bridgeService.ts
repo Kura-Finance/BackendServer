@@ -1524,10 +1524,11 @@ export class BridgeService {
 
     const returnAddress = params.returnAddress ?? (await this.resolveUserScaAddress(userId));
 
-    const existing = await prisma.bridgePayoutLiquidationAddress.findUnique({
+    const existing = await prisma.bridgeLiquidationAddress.findUnique({
       where: {
-        userId_sourceChain_sourceCurrency_destinationRail_destinationCurrency_bridgeExternalAccountId: {
+        userId_direction_sourceChain_sourceCurrency_destinationRail_destinationCurrency_bridgeExternalAccountId: {
           userId,
+          direction: 'out',
           sourceChain: source.sourceChain,
           sourceCurrency: source.sourceCurrency,
           destinationRail: params.destinationRail,
@@ -1551,7 +1552,7 @@ export class BridgeService {
         );
       } catch (error) {
         if (!isBridgeNotFound(error)) throw error;
-        await prisma.bridgePayoutLiquidationAddress
+        await prisma.bridgeLiquidationAddress
           .delete({ where: { id: existing.id } })
           .catch(() => undefined);
         appLogger.warn('[BridgeService] Stale payout liquidation address, recreating', {
@@ -1623,8 +1624,8 @@ export class BridgeService {
       return DemoService.bridgePayoutAddresses(userId);
     }
 
-    const records = await prisma.bridgePayoutLiquidationAddress.findMany({
-      where: { userId, state: 'active' },
+    const records = await prisma.bridgeLiquidationAddress.findMany({
+      where: { userId, direction: 'out', state: 'active' },
       orderBy: { createdAt: 'desc' },
     });
     return records.map((r) => this.toPayoutLiquidationAddressResult(r));
@@ -1639,8 +1640,8 @@ export class BridgeService {
       return DemoService.bridgePayoutDrains(bridgeLiquidationAddressId);
     }
 
-    const record = await prisma.bridgePayoutLiquidationAddress.findFirst({
-      where: { userId, bridgeLiquidationAddressId },
+    const record = await prisma.bridgeLiquidationAddress.findFirst({
+      where: { userId, direction: 'out', bridgeLiquidationAddressId },
     });
     if (!record?.bridgeCustomerId) {
       throw new BridgeError(
@@ -1688,6 +1689,7 @@ export class BridgeService {
       userId,
       bridgeCustomerId,
       bridgeLiquidationAddressId: la.id,
+      direction: 'out' as const,
       state: la.state ?? 'active',
       sourceChain: la.chain ?? source.sourceChain,
       sourceCurrency: la.currency ?? source.sourceCurrency,
@@ -1701,7 +1703,7 @@ export class BridgeService {
         la.custom_developer_fee_percent ?? payoutLiquidationFeePercent(params.destinationCurrency),
     };
 
-    const record = await prisma.bridgePayoutLiquidationAddress.upsert({
+    const record = await prisma.bridgeLiquidationAddress.upsert({
       where: { bridgeLiquidationAddressId: la.id },
       create: data,
       update: data,
@@ -1718,7 +1720,7 @@ export class BridgeService {
   }
 
   private static toPayoutLiquidationAddressResult(
-    record: Prisma.BridgePayoutLiquidationAddressGetPayload<Record<string, never>>,
+    record: Prisma.BridgeLiquidationAddressGetPayload<Record<string, never>>,
   ): PayoutLiquidationAddressResult {
     const payoutFee = buildPayoutDeveloperFee(
       record.developerFeePercent,
@@ -1732,7 +1734,7 @@ export class BridgeService {
       sourceCurrency: record.sourceCurrency,
       destinationRail: record.destinationRail,
       destinationCurrency: record.destinationCurrency,
-      bridgeExternalAccountId: record.bridgeExternalAccountId,
+      bridgeExternalAccountId: record.bridgeExternalAccountId ?? '',
       depositAddress: record.depositAddress,
       blockchainMemo: record.blockchainMemo,
       developerFeePercent: payoutFee.developerFeePercent,
@@ -1785,15 +1787,15 @@ export class BridgeService {
       );
     }
 
-    const existing = await prisma.bridgeLiquidationAddress.findUnique({
+    const existing = await prisma.bridgeLiquidationAddress.findFirst({
       where: {
-        userId_sourceChain_sourceCurrency_destinationRail_destinationCurrency: {
-          userId,
-          sourceChain: pair.sourceChain,
-          sourceCurrency: pair.sourceCurrency,
-          destinationRail: pair.destinationRail,
-          destinationCurrency: pair.destinationCurrency,
-        },
+        userId,
+        direction: 'in',
+        sourceChain: pair.sourceChain,
+        sourceCurrency: pair.sourceCurrency,
+        destinationRail: pair.destinationRail,
+        destinationCurrency: pair.destinationCurrency,
+        bridgeExternalAccountId: null,
       },
     });
 
@@ -1859,7 +1861,7 @@ export class BridgeService {
     }
 
     const records = await prisma.bridgeLiquidationAddress.findMany({
-      where: { userId },
+      where: { userId, direction: 'in' },
       orderBy: { createdAt: 'desc' },
     });
     return records.map((r) => this.toLiquidationAddressResult(r));
@@ -1897,6 +1899,7 @@ export class BridgeService {
       userId,
       bridgeCustomerId,
       bridgeLiquidationAddressId: la.id,
+      direction: 'in' as const,
       state: la.state ?? 'active',
       sourceChain: la.chain,
       sourceCurrency: la.currency,
@@ -1940,7 +1943,7 @@ export class BridgeService {
       sourceCurrency: record.sourceCurrency,
       destinationRail: record.destinationRail,
       destinationCurrency: record.destinationCurrency,
-      destinationAddress: record.destinationAddress,
+      destinationAddress: record.destinationAddress ?? '',
       depositAddress: record.depositAddress,
       blockchainMemo: record.blockchainMemo,
       developerFeePercent: depositFee.developerFeePercent,

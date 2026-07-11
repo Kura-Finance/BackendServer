@@ -181,9 +181,10 @@ export class DeBankService {
     // 沒強制刷新時，只要快取仍新鮮就直接回讀加密形式
     if (!forceRefresh) {
       const staleAfter = new Date(Date.now() - ttlSeconds * 1000);
-      const freshRow = await prisma.deBankProtocolCache.findFirst({
+      const freshRow = await prisma.deBankCache.findFirst({
         where: {
           userId,
+          kind: 'protocol',
           address: normalizedAddress,
           cachedAt: { gte: staleAfter },
           NOT: [{ payloadCiphertext: null }, { payloadKeyId: null }],
@@ -233,9 +234,10 @@ export class DeBankService {
         );
         sekHandles.push(protocolKey);
 
-        await tx.deBankProtocolCache.deleteMany({
+        await tx.deBankCache.deleteMany({
           where: {
             userId,
+            kind: 'protocol',
             address: normalizedAddress,
           },
         });
@@ -244,13 +246,13 @@ export class DeBankService {
           return;
         }
 
-        await tx.deBankProtocolCache.createMany({
+        await tx.deBankCache.createMany({
           data: protocols.map((protocol, index) => ({
             userId,
+            kind: 'protocol',
             address: normalizedAddress,
-            protocolId: this.buildStableProtocolId(protocol, index),
+            entityId: this.buildStableProtocolId(protocol, index),
             chain: protocol.chain || 'unknown',
-            cacheTtl: ttlSeconds,
             cachedAt: new Date(),
             payloadCiphertext: encryptPayload(protocolKey.sek, {
               name: protocol.name || 'unknown',
@@ -329,9 +331,10 @@ export class DeBankService {
 
     if (!forceRefresh) {
       const staleAfter = new Date(Date.now() - ttlSeconds * 1000);
-      const freshRow = await prisma.deBankTokenCache.findFirst({
+      const freshRow = await prisma.deBankCache.findFirst({
         where: {
           userId,
+          kind: 'token',
           address: normalizedAddress,
           cachedAt: { gte: staleAfter },
           NOT: [{ payloadCiphertext: null }, { payloadKeyId: null }],
@@ -377,9 +380,10 @@ export class DeBankService {
         );
         sekHandles.push(tokenKey);
 
-        await tx.deBankTokenCache.deleteMany({
+        await tx.deBankCache.deleteMany({
           where: {
             userId,
+            kind: 'token',
             address: normalizedAddress,
           },
         });
@@ -388,13 +392,13 @@ export class DeBankService {
           return;
         }
 
-        await tx.deBankTokenCache.createMany({
+        await tx.deBankCache.createMany({
           data: tokens.map((token, index) => ({
             userId,
+            kind: 'token',
             address: normalizedAddress,
             chain: token.chain || 'unknown',
-            tokenId: this.buildStableTokenId(token, index),
-            cacheTtl: ttlSeconds,
+            entityId: this.buildStableTokenId(token, index),
             cachedAt: new Date(),
             payloadCiphertext: encryptPayload(tokenKey.sek, {
               symbol: token.symbol || 'UNKNOWN',
@@ -458,14 +462,15 @@ export class DeBankService {
     this.assertValidAddress(address);
     const normalizedAddress = address.toLowerCase();
 
-    const rows = await prisma.deBankProtocolCache.findMany({
+    const rows = await prisma.deBankCache.findMany({
       where: {
         userId,
+        kind: 'protocol',
         address: normalizedAddress,
         NOT: [{ payloadCiphertext: null }, { payloadKeyId: null }],
       },
       select: {
-        protocolId: true,
+        entityId: true,
         chain: true,
         cachedAt: true,
         payloadCiphertext: true,
@@ -477,7 +482,7 @@ export class DeBankService {
     const protocols = rows
       .filter((r: any) => r.payloadCiphertext && r.payloadKeyId)
       .map((r: any) => ({
-        protocolId: r.protocolId,
+        protocolId: r.entityId,
         chain: r.chain,
         cachedAt: r.cachedAt,
         payloadCiphertext: r.payloadCiphertext as string,
@@ -504,14 +509,15 @@ export class DeBankService {
     this.assertValidAddress(address);
     const normalizedAddress = address.toLowerCase();
 
-    const rows = await prisma.deBankTokenCache.findMany({
+    const rows = await prisma.deBankCache.findMany({
       where: {
         userId,
+        kind: 'token',
         address: normalizedAddress,
         NOT: [{ payloadCiphertext: null }, { payloadKeyId: null }],
       },
       select: {
-        tokenId: true,
+        entityId: true,
         chain: true,
         cachedAt: true,
         payloadCiphertext: true,
@@ -523,7 +529,7 @@ export class DeBankService {
     const tokens = rows
       .filter((r: any) => r.payloadCiphertext && r.payloadKeyId)
       .map((r: any) => ({
-        tokenId: r.tokenId,
+        tokenId: r.entityId,
         chain: r.chain,
         cachedAt: r.cachedAt,
         payloadCiphertext: r.payloadCiphertext as string,
@@ -548,15 +554,17 @@ export class DeBankService {
     const normalizedAddress = address.toLowerCase();
 
     const [deletedProtocols, deletedTokens] = await prisma.$transaction([
-      prisma.deBankProtocolCache.deleteMany({
+      prisma.deBankCache.deleteMany({
         where: {
           userId,
+          kind: 'protocol',
           address: normalizedAddress,
         },
       }),
-      prisma.deBankTokenCache.deleteMany({
+      prisma.deBankCache.deleteMany({
         where: {
           userId,
+          kind: 'token',
           address: normalizedAddress,
         },
       }),

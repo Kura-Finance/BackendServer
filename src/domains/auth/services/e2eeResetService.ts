@@ -12,7 +12,7 @@
  *   - 使用者的 keypair（publicKey / encryptedPrivateKey / kekSalt）
  *   - 所有 EncryptedPayloadKey（wrappedSek）
  *   - 所有 zero-access 加密快取 + AssetSnapshot 歷史
- *   - Plaid / 交易所同步狀態（讓下次讀取重新抓資料）
+ *   - Plaid 同步狀態（讓下次讀取重新抓資料）
  *
  * Plaid 連線會一併撤銷（itemRemove + 刪除 PlaidItem），使用者需重新走 Link 流程。
  * 交易所連線（ExchangeAccount.apiKey/apiSecret）仍保留，不需重連。
@@ -43,31 +43,24 @@ export class E2EEResetService {
         plaidTransactions,
         plaidInvestmentAccounts,
         plaidInvestments,
-        exchangeBalances,
-        exchangeAssets,
-        debankTokens,
-        debankProtocols,
+        exchangeCaches,
+        debankCaches,
         assetSnapshots,
       ] = await Promise.all([
         tx.plaidAccountCache.deleteMany({ where: { userId } }),
         tx.plaidTransactionCache.deleteMany({ where: { userId } }),
         tx.plaidInvestmentAccountCache.deleteMany({ where: { userId } }),
         tx.plaidInvestmentCache.deleteMany({ where: { userId } }),
-        tx.exchangeBalanceCache.deleteMany({ where: { userId } }),
-        tx.exchangeAssetCache.deleteMany({ where: { userId } }),
-        tx.deBankTokenCache.deleteMany({ where: { userId } }),
-        tx.deBankProtocolCache.deleteMany({ where: { userId } }),
+        tx.exchangeCache.deleteMany({ where: { userId } }),
+        tx.deBankCache.deleteMany({ where: { userId } }),
         tx.assetSnapshot.deleteMany({ where: { userId } }),
       ]);
 
       // 2. 清除 payload keys（wrappedSek，皆以舊 publicKey seal）
       const payloadKeys = await tx.encryptedPayloadKey.deleteMany({ where: { userId } });
 
-      // 3. 重置同步狀態，讓下次讀取以新 keypair 重新加密寫入
-      await Promise.all([
-        tx.plaidSyncLog.deleteMany({ where: { userId } }),
-        tx.exchangeSyncLog.deleteMany({ where: { userId } }),
-      ]);
+      // 3. 重置 Plaid 同步狀態，讓下次讀取以新 keypair 重新加密寫入
+      await tx.plaidSyncLog.deleteMany({ where: { userId } });
 
       // 4. 清除 passkey + 進行中的 challenge
       const passkeys = await tx.passkeyCredential.deleteMany({ where: { userId } });
@@ -92,10 +85,8 @@ export class E2EEResetService {
           plaidTransactions: plaidTransactions.count,
           plaidInvestmentAccounts: plaidInvestmentAccounts.count,
           plaidInvestments: plaidInvestments.count,
-          exchangeBalances: exchangeBalances.count,
-          exchangeAssets: exchangeAssets.count,
-          debankTokens: debankTokens.count,
-          debankProtocols: debankProtocols.count,
+          exchangeCaches: exchangeCaches.count,
+          debankCaches: debankCaches.count,
           assetSnapshots: assetSnapshots.count,
         },
       };

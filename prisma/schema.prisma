@@ -5,6 +5,14 @@ generator client {
   provider = "prisma-client-js"
 }
 
+generator dbml {
+  provider            = "prisma-dbml-generator"
+  output              = "./dbml"
+  outputName          = "schema.dbml"
+  projectName         = "BackendServer"
+  projectDatabaseType = "PostgreSQL"
+}
+
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -46,16 +54,15 @@ model User {
 
   name            String?
   avatarUrl       String?
-  emailVerified   Boolean  @default(false)
   tier            String   @default("Basic")
-  points          Int      @default(0)
   cashbackBalance Float    @default(0)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   // 關聯：Dashboard 模組 (金融帳戶)
-  plaidItems       PlaidItem[]
-  exchangeAccounts ExchangeAccount[] // 加密貨幣交易所連接
+  plaidItems                  PlaidItem[]
+  exchangeAccounts            ExchangeAccount[]
+  exchangeCaches              ExchangeCache[]
 
   // 關聯：Plaid 快取模組 (減少 API 調用)
   plaidAccountCache           PlaidAccountCache[]
@@ -63,15 +70,9 @@ model User {
   plaidInvestmentAccountCache PlaidInvestmentAccountCache[]
   plaidInvestmentCache        PlaidInvestmentCache[]
   plaidSyncLog                PlaidSyncLog?
-  plaidRefreshLog             PlaidRefreshLog[]
 
   // 關聯：API 操作限制 (限制用戶 API 調用頻率)
   apiOperationLogs ApiOperationLog[]
-
-  // 關聯：交易所快取模組 (交易所餘額與資產)
-  exchangeBalanceCache ExchangeBalanceCache[]
-  exchangeAssetCache   ExchangeAssetCache[]
-  exchangeSyncLog      ExchangeSyncLog?
 
   // 關聯：Asset Performance 模組 (per-metric encrypted snapshots)
   assetSnapshots AssetSnapshot[]
@@ -79,8 +80,7 @@ model User {
   // 關聯：通知系統 (Notification System)
   notifications           Notification[]
   notificationPreferences NotificationPreferences?
-  debankProtocolCache     DeBankProtocolCache[]
-  debankTokenCache        DeBankTokenCache[]
+  debankCaches            DeBankCache[]
   stripeSubscriptions     StripeSubscription[]
   inviterCashbacks        ReferralCashback[]       @relation("ReferralCashbackInviter")
   referredCashbacks       ReferralCashback[]       @relation("ReferralCashbackReferred")
@@ -90,13 +90,6 @@ model User {
 
   // 關聯：E2EE 加密 payload key（每個用戶可能有多個 wrappedSek）
   encryptedPayloadKeys EncryptedPayloadKey[]
-
-  // 關聯：Non-Custodial Crypto Card
-  cardKycApplications CardKycApplication[]
-  cardAccounts        CardAccount[]
-  cardWallet          CardWallet?
-  cardTransactions    CardTransaction[]
-  cardDailySpend      CardDailySpend[]
 
   // 關聯：Passkey / WebAuthn（E2EE 資料層解鎖）
   passkeyCredentials PasskeyCredential[]
@@ -108,17 +101,12 @@ model User {
   bridgeExternalAccounts BridgeExternalAccount[]
   bridgeVirtualAccounts  BridgeVirtualAccount[]
   bridgeVaEvents         BridgeVirtualAccountEvent[]
-  bridgeLiquidationAddresses     BridgeLiquidationAddress[]
-  bridgePayoutLiquidationAddresses BridgePayoutLiquidationAddress[]
+  bridgeLiquidationAddresses BridgeLiquidationAddress[]
 
   // 關聯：Dinari Tokenized Stocks（dShares）
   dinariEntity   DinariEntity?
   dinariAccounts DinariAccount[]
   dinariOrders   DinariOrder[]
-
-  // 關聯：Codego Visa/Mastercard Card Issuing
-  codegoCardholder CodegoCardholder?
-  codegoCards      CodegoCard[]
 
   // 關聯：平台投資人報表
   platformRecords PlatformRecord[]
@@ -150,7 +138,6 @@ model PasskeyCredential {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
-  @@index([credentialId])
 }
 
 // 進行中的 WebAuthn challenge（每個使用者同時只有一個，含過期時間）。
@@ -175,6 +162,8 @@ model WebAuthnChallenge {
 // 用該用戶的 publicKey 做 sealed box 包裝後存入此表。
 // 同一次 sync 內所有 row 共用同一個 wrappedSek。
 // 後端寫完即丟棄 SEK，永遠無法解開 wrappedSek。
+//
+// 子表以 payloadKeyId 指向此表（DB 有 FK）；刻意不在此掛反向 relation，ERD 較乾淨。
 model EncryptedPayloadKey {
   id         String   @id @default(uuid())
   userId     String
@@ -192,16 +181,7 @@ model EncryptedPayloadKey {
   algorithm  String   @default("x25519-sealedbox+aes-256-gcm")
   createdAt  DateTime @default(now())
 
-  user                        User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  plaidTransactionCache       PlaidTransactionCache[]
-  plaidAccountCache           PlaidAccountCache[]
-  plaidInvestmentAccountCache PlaidInvestmentAccountCache[]
-  plaidInvestmentCache        PlaidInvestmentCache[]
-  exchangeBalanceCache        ExchangeBalanceCache[]
-  exchangeAssetCache          ExchangeAssetCache[]
-  debankTokenCache            DeBankTokenCache[]
-  debankProtocolCache         DeBankProtocolCache[]
-  assetSnapshot               AssetSnapshot[]
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, scope, createdAt])
 }
@@ -253,81 +233,35 @@ model ExchangeAccount {
   updatedAt DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  caches ExchangeCache[]
 
   @@unique([userId, exchange])
   @@index([userId])
 }
 
-// 交易所餘額快取（Phase 3 Zero-Access E2EE only）。
-// 後端只持有 metadata（symbol / exchange）+ payloadCiphertext + payloadKeyId。
-model ExchangeBalanceCache {
+// 交易所 E2EE 快取（balance | asset）
+model ExchangeCache {
   id                String @id @default(uuid())
   userId            String
-  exchangeAccountId String // 所屬的交易所帳戶
-  exchange          String // 交易所名稱
-  symbol            String // 幣種代碼 (例如: "BTC", "ETH", "USDT")
+  exchangeAccountId String
+  exchange          String
+  kind              String // balance | asset
+  symbol            String
 
-  // ── Phase 3 E2EE payload（內含 free / used / total）──
-  payloadCiphertext String? // base64(iv | tag | AES-256-GCM(SEK, JSON{free,used,total}))
-  payloadKeyId      String?
-
-  cacheTtl  Int      @default(300) // 快取過期時間 (秒，預設 5 分鐘)
-  cachedAt  DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
-
-  @@unique([userId, exchangeAccountId, symbol])
-  @@index([userId])
-  @@index([userId, exchangeAccountId])
-  @@index([payloadKeyId])
-}
-
-// 交易所資產快取（Phase 3 Zero-Access E2EE only）。
-// 後端只持有 metadata（symbol / exchange）+ payloadCiphertext + payloadKeyId。
-model ExchangeAssetCache {
-  id                String @id @default(uuid())
-  userId            String
-  exchangeAccountId String // 所屬的交易所帳戶
-  exchange          String // 交易所名稱
-  symbol            String // 幣種代碼 (例如: "BTC", "ETH")
-
-  // ── Phase 3 E2EE payload（內含 holdings / price / value / percentageOfTotal）──
   payloadCiphertext String?
   payloadKeyId      String?
 
-  cacheTtl  Int      @default(300) // 快取過期時間 (秒)
   cachedAt  DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exchangeAccount ExchangeAccount @relation(fields: [exchangeAccountId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, exchangeAccountId, symbol])
+  @@unique([userId, exchangeAccountId, kind, symbol])
   @@index([userId])
   @@index([userId, exchangeAccountId])
+  @@index([userId, exchangeAccountId, kind])
   @@index([payloadKeyId])
-}
-
-// 交易所同步狀態 (跟踪每個用戶的交易所最後同步時間)
-model ExchangeSyncLog {
-  id     String @id @default(uuid())
-  userId String @unique
-
-  // 同步狀態
-  lastSyncedAt     DateTime? // 上次完整同步時間
-  balancesSyncedAt DateTime? // 上次同步餘額
-  assetsSyncedAt   DateTime? // 上次同步資產
-
-  // 快取設定 (秒)
-  balanceCacheTtl Int @default(300) // 餘額 5 分鐘更新一次
-  assetCacheTtl   Int @default(300) // 資產 5 分鐘更新一次
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 // ==========================================
@@ -353,8 +287,7 @@ model AssetSnapshot {
   recordedAt DateTime // 記錄時間
   createdAt  DateTime @default(now())
 
-  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, recordedAt])
   @@index([userId, metric, recordedAt])
@@ -384,9 +317,8 @@ model PlaidAccountCache {
   cachedAt  DateTime @default(now()) // 快取時間
   updatedAt DateTime @updatedAt
 
-  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  plaidItem  PlaidItem?           @relation(fields: [plaidItemId], references: [id], onDelete: Cascade)
-  payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plaidItem  PlaidItem? @relation(fields: [plaidItemId], references: [id], onDelete: Cascade)
 
   @@unique([userId, accountId])
   @@index([userId])
@@ -423,9 +355,8 @@ model PlaidTransactionCache {
 
   cachedAt DateTime @default(now())
 
-  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  plaidItem  PlaidItem?           @relation(fields: [plaidItemId], references: [id], onDelete: Cascade)
-  payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plaidItem  PlaidItem? @relation(fields: [plaidItemId], references: [id], onDelete: Cascade)
 
   @@unique([userId, transactionId])
   @@index([userId])
@@ -454,9 +385,8 @@ model PlaidInvestmentAccountCache {
   cachedAt  DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  plaidItem  PlaidItem?           @relation(fields: [plaidItemId], references: [id], onDelete: Cascade)
-  payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plaidItem  PlaidItem? @relation(fields: [plaidItemId], references: [id], onDelete: Cascade)
 
   @@unique([userId, accountId])
   @@index([userId])
@@ -483,9 +413,8 @@ model PlaidInvestmentCache {
   cachedAt  DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  plaidItem  PlaidItem?           @relation(fields: [plaidItemId], references: [id], onDelete: Cascade)
-  payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plaidItem  PlaidItem? @relation(fields: [plaidItemId], references: [id], onDelete: Cascade)
 
   @@unique([userId, investmentId])
   @@index([userId])
@@ -522,73 +451,24 @@ model PlaidSyncLog {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
-// Plaid 刷新限制日誌 (追蹤用戶每日的強制刷新次數)
-model PlaidRefreshLog {
-  id           String @id @default(uuid())
-  userId       String
-  refreshDate  String // YYYY-MM-DD 格式，用於按日期查詢
-  refreshCount Int    @default(0) // 該天的刷新次數
+// DeBank E2EE 快取（protocol | token）
+model DeBankCache {
+  id      String @id @default(uuid())
+  userId  String
+  kind    String // protocol | token
+  address String
+  chain   String
+  entityId String // protocolId 或 tokenId
 
-  createdAt DateTime @default(now())
+  payloadCiphertext String?
+  payloadKeyId      String?
+
+  cachedAt  DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, refreshDate]) // 每個用戶每天只有一條記錄
-  @@index([userId])
-  @@index([refreshDate])
-}
-
-// DeBank 協議快取（Phase 3 Zero-Access E2EE only）。
-// 後端只持有 metadata（address / protocolId / chain）+ payloadCiphertext + payloadKeyId。
-// 敏感欄位（name + rawData，內含 USD value 等）整包進 payloadCiphertext。
-model DeBankProtocolCache {
-  id         String @id @default(uuid())
-  userId     String
-  address    String // EVM 錢包地址（0x...）
-  protocolId String // DeBank 協議 ID
-  chain      String // 鏈名稱（例如：eth、bsc、arb）
-
-  // ── Phase 3 E2EE payload (內含 name + rawData) ──
-  payloadCiphertext String?
-  payloadKeyId      String?
-
-  cacheTtl  Int      @default(300) // 快取 TTL（秒）
-  cachedAt  DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
-
-  @@unique([userId, address, protocolId])
-  @@index([userId])
-  @@index([userId, address])
-  @@index([cachedAt])
-  @@index([payloadKeyId])
-}
-
-// DeBank Token 快取（Phase 3 Zero-Access E2EE only）。
-// 後端只持有 metadata（address / chain / tokenId）+ payloadCiphertext + payloadKeyId。
-// 敏感欄位（symbol, name, rawData，內含 amount/price/usd_value）整包進 payloadCiphertext。
-model DeBankTokenCache {
-  id      String @id @default(uuid())
-  userId  String
-  address String // EVM 錢包地址（0x...）
-  chain   String // 鏈名稱（例如：eth、bsc、arb）
-  tokenId String // DeBank token ID
-
-  // ── Phase 3 E2EE payload (內含 symbol, name, rawData) ──
-  payloadCiphertext String?
-  payloadKeyId      String?
-
-  cacheTtl  Int      @default(300) // 快取 TTL（秒）
-  cachedAt  DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
-
-  @@unique([userId, address, chain, tokenId])
+  @@unique([userId, kind, address, chain, entityId])
   @@index([userId])
   @@index([userId, address])
   @@index([cachedAt])
@@ -664,8 +544,6 @@ model NotificationPreferences {
   updatedAt                DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
 }
 
 // ==========================================
@@ -688,23 +566,6 @@ model WaitlistEntry {
   @@index([createdAt])
   @@index([source])
   @@index([product])
-}
-
-// ==========================================
-// 7. Admin 管理員系統
-// ==========================================
-model Admin {
-  id        String   @id @default(uuid())
-  email     String   @unique // 管理員郵箱
-  password  String // 加密的密碼
-  name      String? // 管理員名稱
-  role      String   @default("admin") // 角色 (admin, super_admin 等)
-  isActive  Boolean  @default(true) // 是否啟用此帳戶
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([email])
-  @@index([isActive])
 }
 
 // ==========================================
@@ -775,141 +636,7 @@ model ReferralCashback {
 }
 
 // ==========================================
-// 9. Non-Custodial Crypto Card
-// ==========================================
-
-// KYC 申請（使用 Gnosis Pay 內建 Sumsub KYC）
-model CardKycApplication {
-  id                String    @id @default(uuid())
-  userId            String
-  provider          String    @default("gnosispay") // gnosispay (uses Sumsub internally)
-  providerSessionId String?   @unique               // Sumsub applicant ID（可選）
-  status            String    @default("not_started")
-  // not_started | pending | under_review | approved | rejected
-  submittedAt       DateTime?
-  reviewedAt        DateTime?
-  rejectionReason   String?
-  rawWebhookData    Json?     // 最後一次 Didit webhook payload（debug 用）
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([status])
-  @@index([providerSessionId])
-}
-
-// 發卡帳戶（透過 Gnosis Pay 發卡）
-model CardAccount {
-  id                  String    @id @default(uuid())
-  userId              String
-  providerCardId      String    @unique  // GP card ID
-  providerAccountId   String?            // GP account / Safe address
-  last4               String?
-  expiryMonth         Int?
-  expiryYear          Int?
-  status              String    @default("applying")
-  // unavailable | applying | issued | active | frozen | cancelled
-  isVirtual           Boolean   @default(true)
-  isPhysical          Boolean   @default(false)
-  dailyLimitEure      Float     @default(500)   // GP uses EURe/USDCe/GBPe
-  monthlyLimitEure    Float     @default(5000)
-  currency            String    @default("EURe")
-  frozenAt            DateTime?
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
-
-  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  transactions CardTransaction[]
-
-  @@index([userId])
-  @@index([status])
-  @@index([providerCardId])
-}
-
-// Gnosis Pay 用戶 Session + Safe 狀態
-// 每個用戶同時只有一個 GP session（@@unique userId）
-// address：EOA 地址（用於 SIWE 簽名）
-// gpSafeAddress：GP 在 Gnosis Chain 上部署的 Safe 地址
-model CardWallet {
-  id             String    @id @default(uuid())
-  userId         String    @unique
-  chainId        Int       @default(100) // Gnosis Chain
-  address        String                  // EOA address for SIWE
-
-  // ── Gnosis Pay JWT (1-24h TTL, renewal requires user re-sign) ──
-  gpJwt            String?
-  gpJwtExpiresAt   DateTime?
-
-  // ── Gnosis Pay onboarding state ──────────────────────────────
-  gpTermsAccepted  Boolean   @default(false)
-  gpPhoneVerified  Boolean   @default(false)
-  gpSofCompleted   Boolean   @default(false)
-  gpKycStatus      String?   // notStarted | pending | approved | rejected | ...
-  gpAccountStatus  Int?      // 0 = Safe ready, null = not deployed
-  gpSafeAddress    String?   // Safe address on Gnosis Chain
-  gpCurrency       String?   // 'EURe' | 'GBPe' | 'USDCe' (set after Safe deploy)
-  gpCardId         String?   // GP virtual card ID
-
-  linkedAt  DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([address])
-  @@index([gpSafeAddress])
-}
-
-// 消費帳本（每筆 GP 授權或結算事件）
-model CardTransaction {
-  id                String    @id @default(uuid())
-  userId            String
-  cardAccountId     String
-  amount            Float                      // 消費金額
-  currency          String    @default("EURe") // EURe | GBPe | USDCe
-  merchantName      String?
-  merchantCategory  String?
-  txHash            String?                    // 鏈上 settlement tx hash（若有）
-  providerEventId   String?   @unique          // GP transaction ID（idempotency key）
-  status            String    @default("authorized")
-  // authorized | cleared | reversed | refunded | declined
-  kind              String    @default("Payment") // Payment | Refund | Reversal
-  isPending         Boolean   @default(true)
-  authorizedAt      DateTime  @default(now())
-  clearedAt         DateTime?
-  reversedAt        DateTime?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  cardAccount CardAccount @relation(fields: [cardAccountId], references: [id], onDelete: Cascade)
-
-  @@index([userId, authorizedAt])
-  @@index([userId, status])
-  @@index([cardAccountId])
-  @@index([providerEventId])
-}
-
-// 每日花費追蹤（用於 dailyLimit 檢查）
-model CardDailySpend {
-  id        String   @id @default(uuid())
-  userId    String
-  date      String   // YYYY-MM-DD
-  spentUsdc Float    @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, date])
-  @@index([userId])
-  @@index([date])
-}
-
-// ==========================================
-// 10. Bridge On/Off Ramp (法幣 <-> 穩定幣)
+// 9. Bridge On/Off Ramp (法幣 <-> 穩定幣)
 // ==========================================
 // Bridge (api.bridge.xyz) 提供 fiat <-> stablecoin 的 on/off ramp。
 // 流程：先建立 Bridge customer（透過 hosted KYC link 完成 KYC + TOS），
@@ -942,8 +669,11 @@ model BridgeCustomer {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
-  @@index([bridgeCustomerId])
+  externalAccounts     BridgeExternalAccount[]
+  transfers            BridgeTransfer[]
+  virtualAccounts      BridgeVirtualAccount[]
+  liquidationAddresses BridgeLiquidationAddress[]
+
   @@index([kycStatus])
 }
 
@@ -952,7 +682,7 @@ model BridgeExternalAccount {
   id                      String  @id @default(uuid())
   userId                  String
   bridgeExternalAccountId String  @unique // Bridge external_account ID
-  bridgeCustomerId        String? // 所屬 Bridge customer
+  bridgeCustomerId        String? // 所屬 Bridge customer（cust_...）
   bankName                String?
   accountOwnerName        String?
   last4                   String?
@@ -962,7 +692,9 @@ model BridgeExternalAccount {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                   User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customer               BridgeCustomer?              @relation(fields: [bridgeCustomerId], references: [bridgeCustomerId], onDelete: SetNull)
+  payoutLiquidationAddresses BridgeLiquidationAddress[]
 
   @@index([userId])
   @@index([bridgeCustomerId])
@@ -972,7 +704,7 @@ model BridgeExternalAccount {
 model BridgeTransfer {
   id               String  @id @default(uuid())
   userId           String
-  bridgeCustomerId String? // 所屬 Bridge customer（cust_...，僅供查詢，非外鍵）
+  bridgeCustomerId String? // 所屬 Bridge customer（cust_...）
   bridgeTransferId String  @unique // Bridge transfer ID
 
   direction String // onramp | offramp | crypto
@@ -1001,7 +733,8 @@ model BridgeTransfer {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customer BridgeCustomer?  @relation(fields: [bridgeCustomerId], references: [bridgeCustomerId], onDelete: SetNull)
 
   @@index([userId, createdAt])
   @@index([userId, direction])
@@ -1036,13 +769,15 @@ model BridgeVirtualAccount {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user   User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  events BridgeVirtualAccountEvent[]
+  user     User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customer BridgeCustomer?             @relation(fields: [bridgeCustomerId], references: [bridgeCustomerId], onDelete: SetNull)
+  events   BridgeVirtualAccountEvent[]
 
   // 每個用戶針對同一組（入金幣別 + 目的鏈 + 目的幣別）只開一個 VA
   @@unique([userId, sourceCurrency, destinationRail, destinationCurrency])
   @@index([userId])
   @@index([bridgeVirtualAccountId])
+  @@index([bridgeCustomerId])
 }
 
 // Virtual Account 活動帳本（入金 / 出款事件，來自 webhook 與 history）
@@ -1075,73 +810,46 @@ model BridgeVirtualAccountEvent {
   @@index([depositId])
 }
 
-// Bridge Liquidation Address（永久 crypto 入金地址；Tron USDT → Base USDC 等）
-// 與 Virtual Account 類似：建立一次，固定 Tron 地址 + memo，重複入金自動兌換。
+// Bridge Liquidation Address（永久 crypto 入金/出金地址）
+// direction=in：Tron USDT → Base USDC 等 crypto 入金
+// direction=out：Base USDC → 法幣銀行出金
 model BridgeLiquidationAddress {
   id                         String  @id @default(uuid())
   userId                     String
   bridgeCustomerId           String?
   bridgeLiquidationAddressId String  @unique // Bridge liquidation address ID (la_...)
 
-  state String @default("active") // active | deactivated
+  direction String // in | out
+  state     String @default("active") // active | deactivated
 
-  // ── source（crypto 入金）──
-  sourceChain    String // tron
-  sourceCurrency String // usdt
+  // ── source（crypto 入金/出金來源）──
+  sourceChain    String // tron | base ...
+  sourceCurrency String // usdt | usdc ...
 
-  // ── destination（自動兌換後送往的 crypto 目的地）──
-  destinationRail     String // base
-  destinationCurrency String // usdc
-  destinationAddress  String // 使用者 Base SCA
+  // ── destination（自動兌換後送往的目的地）──
+  destinationRail             String // base | wire | pix ...
+  destinationCurrency           String // usdc | usd | brl ...
+  destinationAddress            String? // in：使用者 crypto 收款地址
+  bridgeExternalAccountId       String? // out：Bridge external_account ID
+  returnAddress                 String? // out：失敗退款用的 crypto 地址
 
-  depositAddress  String  // Bridge 提供的永久 Tron 收款地址
-  blockchainMemo  String? // Tron 必填 memo
-
-  developerFeePercent String? // custom_developer_fee_percent（base 100）
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, sourceChain, sourceCurrency, destinationRail, destinationCurrency])
-  @@index([userId])
-  @@index([bridgeLiquidationAddressId])
-}
-
-// Bridge Payout Liquidation Address（永久 crypto 出金地址；Base USDC → 法幣銀行）
-// 使用者把 USDC 打到 depositAddress，Bridge 自動 drain 兌換並送到 external account。
-model BridgePayoutLiquidationAddress {
-  id                         String  @id @default(uuid())
-  userId                     String
-  bridgeCustomerId           String?
-  bridgeLiquidationAddressId String  @unique // Bridge liquidation address ID (la_...)
-
-  state String @default("active") // active | deactivated
-
-  // ── source（使用者打入的 crypto）──
-  sourceChain    String // base
-  sourceCurrency String // usdc
-
-  // ── destination（自動兌換後送往的法幣銀行）──
-  destinationRail            String // wire | pix | spei | ...
-  destinationCurrency        String // usd | brl | mxn | ...
-  bridgeExternalAccountId    String // Bridge external_account ID (ea_...)
-
-  depositAddress  String  // Bridge 提供的永久 Base USDC 收款地址
-  blockchainMemo  String?
-  returnAddress   String? // 失敗退款用的 Base 地址
+  depositAddress  String  // Bridge 提供的永久收款地址
+  blockchainMemo  String? // Tron 等鏈必填 memo
 
   developerFeePercent String? // custom_developer_fee_percent（base 100）
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user            User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customer        BridgeCustomer?        @relation(fields: [bridgeCustomerId], references: [bridgeCustomerId], onDelete: SetNull)
+  externalAccount BridgeExternalAccount? @relation(fields: [bridgeExternalAccountId], references: [bridgeExternalAccountId], onDelete: SetNull)
 
-  @@unique([userId, sourceChain, sourceCurrency, destinationRail, destinationCurrency, bridgeExternalAccountId])
+  @@unique([userId, direction, sourceChain, sourceCurrency, destinationRail, destinationCurrency, bridgeExternalAccountId])
   @@index([userId])
+  @@index([userId, direction])
   @@index([bridgeLiquidationAddressId])
+  @@index([bridgeCustomerId])
   @@index([bridgeExternalAccountId])
 }
 
@@ -1176,7 +884,8 @@ model DinariEntity {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accounts DinariAccount[]
 }
 
 // Dinari 交易帳戶（連接用戶 SCA）
@@ -1194,9 +903,11 @@ model DinariAccount {
   updatedAt DateTime @updatedAt
 
   user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entity DinariEntity  @relation(fields: [entityId], references: [entityId], onDelete: Cascade)
   orders DinariOrder[]
 
   @@index([userId])
+  @@index([entityId])
   @@index([accountId])
 }
 
@@ -1233,64 +944,7 @@ model DinariOrder {
 }
 
 // ==========================================
-// 12. Codego Visa/Mastercard Card Issuing
-// https://developers.codegotech.com/visa-crypto-card.html
-// ==========================================
-
-// Kura 用戶 ↔ Codego cardholder（externalUserId = Kura userId）
-model CodegoCardholder {
-  id                String    @id @default(uuid())
-  userId            String    @unique
-  codegoUserId      String?   @unique // user.updated webhook body.id
-  externalUserId    String    @unique // 送給 Codego 的 externalUserId（通常 = userId）
-  applicantType     String    @default("individual") // individual | company
-  kycSessionId      String?
-  iframeUrl         String?
-  sessionExpiresAt  DateTime?
-  applicationStatus String? // approved | needsVerification | pending | manualReview | needsInformation | denied
-  applicationReason String?
-  kycStatus         String?
-  canIssueCard      Boolean   @default(false)
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([codegoUserId])
-  @@index([applicationStatus])
-}
-
-// 已發行的 Codego 卡片（僅存 metadata；PAN/CVC/PIN 不可落地）
-model CodegoCard {
-  id           String   @id @default(uuid())
-  userId       String
-  codegoCardId String   @unique
-  cardType     String? // virtual | physical
-  status       String?
-  last4        String?
-  brand        String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([status])
-}
-
-// Codego webhook 去重（Idempotency-Key）
-model CodegoWebhookEvent {
-  id             String   @id @default(uuid())
-  idempotencyKey String   @unique
-  eventType      String
-  payload        Json?
-  processedAt    DateTime @default(now())
-
-  @@index([eventType])
-}
-
-// ==========================================
-// 13. Platform Insights（投資人報表 / 平台金流帳本）
+// 12. Platform Insights（投資人報表 / 平台金流帳本）
 // ==========================================
 
 // 經 Kura 管理之統一投資人資料（營收 / waitlist / AUM / Bridge liquidation）

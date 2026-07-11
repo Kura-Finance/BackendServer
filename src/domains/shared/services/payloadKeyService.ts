@@ -174,15 +174,13 @@ export class PayloadKeyService {
       distinct: ['payloadKeyId'],
     });
 
-    const [acct, txn, invAcct, inv, exBal, exAsset, dbToken, dbProto, snap] = await Promise.all([
+    const [acct, txn, invAcct, inv, exCache, dbCache, snap] = await Promise.all([
       prisma.plaidAccountCache.findMany(nullableArgs()),
       prisma.plaidTransactionCache.findMany(nullableArgs()),
       prisma.plaidInvestmentAccountCache.findMany(nullableArgs()),
       prisma.plaidInvestmentCache.findMany(nullableArgs()),
-      prisma.exchangeBalanceCache.findMany(nullableArgs()),
-      prisma.exchangeAssetCache.findMany(nullableArgs()),
-      prisma.deBankTokenCache.findMany(nullableArgs()),
-      prisma.deBankProtocolCache.findMany(nullableArgs()),
+      prisma.exchangeCache.findMany(nullableArgs()),
+      prisma.deBankCache.findMany(nullableArgs()),
       prisma.assetSnapshot.findMany({
         where: { userId },
         select: { payloadKeyId: true },
@@ -191,7 +189,7 @@ export class PayloadKeyService {
     ]);
 
     const referenced = new Set<string>();
-    for (const rows of [acct, txn, invAcct, inv, exBal, exAsset, dbToken, dbProto, snap]) {
+    for (const rows of [acct, txn, invAcct, inv, exCache, dbCache, snap]) {
       for (const r of rows) {
         if (r.payloadKeyId) referenced.add(r.payloadKeyId);
       }

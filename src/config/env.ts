@@ -131,11 +131,6 @@ export function validateEnvironment(): void {
     // Passkey endpoints will fail until configured, but the server should still boot.
   }
 
-  // Gnosis Pay 為 permissionless（無 API key），PARTNER_ID 僅用於 webhook 訂閱，可選
-  if (!process.env.GNOSIS_PAY_PARTNER_ID) {
-    console.warn('⚠️ GNOSIS_PAY_PARTNER_ID not set — running in permissionless mode (webhooks unavailable)');
-  }
-
   // 驗證 Bridge API 配置（on/off ramp）
   const bridgeVars = ['BRIDGE_API_KEY'];
   const missingBridgeVars = bridgeVars.filter((key) => !process.env[key]);
@@ -169,17 +164,6 @@ export function validateEnvironment(): void {
     console.warn(
       '⚠️ DINARI_WHITELIST_EMAILS not set — only @privy.io / @theprism.ltd / DEMO_USER_EMAILS can access Dinari Entity/KYC',
     );
-  }
-
-  // Codego Visa/Mastercard Card Issuing（可選；未設定時 card 端點會在 runtime 報錯）
-  if (!process.env.CODEGO_API_KEY) {
-    console.warn('⚠️ CODEGO_API_KEY not set — Codego card issuing endpoints will fail until configured');
-  }
-  if (!process.env.CODEGO_WEBHOOK_SECRET) {
-    console.warn('⚠️ CODEGO_WEBHOOK_SECRET not set — Codego webhooks will be rejected until configured');
-  }
-  if (!process.env.CODEGO_KYC_ORIGIN || !process.env.CODEGO_KYC_RETURN_URL) {
-    console.warn('⚠️ CODEGO_KYC_ORIGIN / CODEGO_KYC_RETURN_URL not set — KYC session create requires origin + returnUrl in request body');
   }
 
 

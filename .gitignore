@@ -3,6 +3,9 @@ node_modules
 docker-compose.yml
 dist/
 
+# Prisma DBML (auto-generated)
+prisma/dbml/
+
 # Logs
 logs/
 *.log

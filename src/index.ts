@@ -10,10 +10,8 @@ import { exchangeRouter } from './domains/exchange';
 import { notificationRouter } from './domains/notification';
 import { debankRouter } from './domains/debank';
 import { stripeRouter } from './domains/stripe';
-import { cardRouter } from './domains/card';
 import { walletRouter } from './domains/wallet';
 import { bridgeRouter } from './domains/bridge';
-import { codegoRouter } from './domains/codego';
 import { dinariRouter } from './domains/dinari';
 import { waitlistRouter } from './domains/waitlist';
 import { platformInsightsRouter } from './domains/platform-insights';
@@ -44,29 +42,6 @@ app.set('trust proxy', 1); // 信任第一層代理 (適用於 Cloud Run、Nginx
 
 // Stripe webhook 必須使用原始請求內容做簽章驗證
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
-
-// Gnosis Pay webhook: Ed25519 signature over "{timestamp}.{rawBody}"
-// Capture raw body before JSON parsing.
-app.use('/api/card/webhooks/gp', (req: Request, _res: Response, next: NextFunction) => {
-  let raw = '';
-  req.on('data', (chunk: Buffer) => { raw += chunk.toString('utf8'); });
-  req.on('end', () => {
-    (req as Request & { rawBody?: string }).rawBody = raw;
-    try { req.body = raw ? JSON.parse(raw) : {}; } catch { req.body = {}; }
-    next();
-  });
-});
-
-// Codego webhook: HMAC-SHA256 over raw body (Signature: sha256=...)
-app.use('/api/codego/webhook', (req: Request, _res: Response, next: NextFunction) => {
-  let raw = '';
-  req.on('data', (chunk: Buffer) => { raw += chunk.toString('utf8'); });
-  req.on('end', () => {
-    (req as Request & { rawBody?: string }).rawBody = raw;
-    try { req.body = raw ? JSON.parse(raw) : {}; } catch { req.body = {}; }
-    next();
-  });
-});
 
 // Bridge webhook: RSA signature over "{timestamp}.{rawBody}".
 // Capture raw body (string) before JSON parsing for signature verification.
@@ -213,10 +188,8 @@ app.use('/api/exchange', exchangeRouter);
 app.use('/api/notifications', notificationRouter);
 app.use('/api/debank', debankRouter);
 app.use('/api/stripe', stripeRouter);
-app.use('/api/card', cardRouter);
 app.use('/api/wallet', walletRouter);
 app.use('/api/bridge', bridgeRouter);
-app.use('/api/codego', codegoRouter);
 app.use('/api/dinari', dinariRouter);
 app.use('/api/waitlist', waitlistRouter);
 app.use('/api/platform-insights', platformInsightsRouter);

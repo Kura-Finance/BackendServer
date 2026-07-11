@@ -1,0 +1,2 @@
+-- Phase 1.5b: Prisma schema only — no database changes.
+-- payloadKeyId FK constraints on cache tables remain from prior migrations.
