@@ -12,6 +12,7 @@
 import crypto from 'crypto';
 import { prisma } from '../../shared/lib/database';
 import { appLogger } from '../../logger';
+import { ReferralCashbackService } from '../../auth/services/referralCashbackService';
 
 const GP_WEBHOOK_PUBKEY_URL = 'https://webhooks.gnosispay.com/api/v1/public-key';
 
@@ -206,6 +207,14 @@ async function handleTransactionEvent(
         error: err instanceof Error ? err.message : String(err),
       });
     });
+  }
+
+  if ((status === 'reversed' || status === 'refunded') && txId) {
+    await ReferralCashbackService.reverseByIdempotencyKey(
+      `card:${txId}:cleared`,
+      status === 'refunded' ? 'card_refunded' : 'card_reversed',
+      `gp:${eventType}:${txId}`,
+    );
   }
 }
 

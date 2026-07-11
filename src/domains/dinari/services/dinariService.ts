@@ -11,7 +11,8 @@
 import Dinari from '@dinari/api-sdk';
 import { APIError } from '@dinari/api-sdk';
 import { prisma } from '../../shared/lib/prisma';
-import { appLogger, logDebug } from '../../logger';
+import { appLogger, logDebug, logError } from '../../logger';
+import { ReferralCashbackService } from '../../auth/services/referralCashbackService';
 import {
   classifyWalletConnectTarget,
   defaultDinariChainId,
@@ -553,6 +554,8 @@ export class DinariService {
       orderId: updated.orderId,
     });
 
+    await this.syncReferrableRevenueForOrder(updated);
+
     return this.toOrderResult(updated);
   }
 
@@ -573,6 +576,7 @@ export class DinariService {
       where: { orderRequestId },
       data: { status: req.status ?? order.status, orderId: orderId ?? null },
     });
+    await this.syncReferrableRevenueForOrder(updated);
     return this.toOrderResult(updated);
   }
 
@@ -594,6 +598,7 @@ export class DinariService {
         status: (onchain as { status?: string }).status ?? order.status,
       },
     });
+    await this.syncReferrableRevenueForOrder(updated);
     return this.toOrderResult(updated);
   }
 
@@ -633,6 +638,53 @@ export class DinariService {
   }
 
   // ── 私有 helpers ────────────────────────────────────────────────────
+
+  private static async syncReferrableRevenueForOrder(order: {
+    userId: string;
+    orderRequestId: string;
+    orderId: string | null;
+    status: string;
+    side: string;
+    type: string;
+    stockId: string | null;
+    paymentTokenQuantity: string | null;
+    assetTokenQuantity: string | null;
+    limitPrice: string | null;
+    updatedAt: Date;
+  }): Promise<void> {
+    const { PlatformRecordService, isDinariOrderCancelled, isDinariOrderFilled } = await import(
+      '../../platform-insights/services/platformRevenueService'
+    );
+
+    if (isDinariOrderFilled(order.status)) {
+      await PlatformRecordService.recordFromDinariOrder(order).catch((err) => {
+        logError('[DinariService] Failed to record referrable revenue from order', err as Error, {
+          orderRequestId: order.orderRequestId,
+          userId: order.userId,
+        });
+      });
+      return;
+    }
+
+    if (!isDinariOrderCancelled(order.status)) return;
+
+    const eventId = order.orderId
+      ? `dinari:order:${order.orderId}:${order.status.toLowerCase()}`
+      : `dinari:order-request:${order.orderRequestId}:${order.status.toLowerCase()}`;
+
+    await ReferralCashbackService.reverseByIdempotencyKey(
+      `dinari:order:${order.orderRequestId}:filled`,
+      'dinari_order_cancelled',
+      eventId,
+    ).catch((err) => {
+      logError('[DinariService] Failed to reverse referral cashback for cancelled order', err as Error, {
+        orderRequestId: order.orderRequestId,
+        orderId: order.orderId,
+        status: order.status,
+        userId: order.userId,
+      });
+    });
+  }
 
   /** 確認帳戶可交易：KYC PASS + 已連接錢包。 */
   private static async requireTradableAccount(userId: string): Promise<DinariAccountResult> {

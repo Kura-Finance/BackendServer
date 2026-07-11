@@ -4,7 +4,9 @@ import type Stripe from 'stripe';
 import type { BridgeDrainResponse } from '../../bridge/models/types';
 import { prisma } from '../../shared/lib/prisma';
 import { appLogger } from '../../logger';
+import { ReferralCashbackService } from '../../auth/services/referralCashbackService';
 import type { InvestorSummary, RecordPlatformRecordInput } from '../models/types';
+import { REFERRABLE_REVENUE_SOURCES } from '../models/types';
 import {
   buildLazySkip,
   getPlatformBackfillMinIntervalMs,
@@ -35,9 +37,88 @@ function feeFromPercent(amount: number | null, feePercent: string | null | undef
   return roundUsd((amount * pct) / 100);
 }
 
+function extractStripeChargeId(invoice: Stripe.Invoice): string | null {
+  const invoiceCharge = (invoice as { charge?: string | { id?: string } | null }).charge;
+  if (!invoiceCharge) return null;
+  return typeof invoiceCharge === 'string' ? invoiceCharge : invoiceCharge.id ?? null;
+}
+
+/** Dinari on-chain / order-request 成交態（大小寫不敏感）。 */
+const DINARI_FILLED_STATUSES = new Set([
+  'filled',
+  'completed',
+  'settled',
+  'executed',
+  'done',
+]);
+
+/** Dinari 訂單取消／失效態（大小寫不敏感）。 */
+const DINARI_CANCELLED_STATUSES = new Set([
+  'cancelled',
+  'canceled',
+  'expired',
+  'rejected',
+  'error',
+  'failed',
+  'voided',
+  'refunded',
+]);
+
+export function isDinariOrderFilled(status: string | null | undefined): boolean {
+  if (!status) return false;
+  return DINARI_FILLED_STATUSES.has(status.trim().toLowerCase());
+}
+
+export function isDinariOrderCancelled(status: string | null | undefined): boolean {
+  if (!status) return false;
+  return DINARI_CANCELLED_STATUSES.has(status.trim().toLowerCase());
+}
+
+function resolveReferrable(input: RecordPlatformRecordInput): boolean {
+  if (input.referrable !== undefined) return input.referrable;
+  const category = input.category ?? 'revenue';
+  return category === 'revenue' && REFERRABLE_REVENUE_SOURCES.has(input.source);
+}
+
+async function resolveInviterUserId(
+  userId: string | null | undefined,
+  explicit: string | null | undefined,
+): Promise<string | null> {
+  if (explicit !== undefined) return explicit;
+  if (!userId) return null;
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { referredByUserId: true },
+  });
+  return user?.referredByUserId ?? null;
+}
+
+function buildRecordMetadata(
+  input: RecordPlatformRecordInput,
+  referrable: boolean,
+  inviterUserId: string | null,
+): Record<string, unknown> | undefined {
+  const base = { ...(input.metadata ?? {}) };
+  const category = input.category ?? 'revenue';
+  if (category !== 'revenue') {
+    return Object.keys(base).length > 0 ? base : undefined;
+  }
+  return {
+    ...base,
+    referrable,
+    inviterUserId,
+  };
+}
+
 export class PlatformRecordService {
   /** 冪等寫入 PlatformRecord（統一投資人 DB）。 */
   static async record(input: RecordPlatformRecordInput): Promise<void> {
+    const referrable = resolveReferrable(input);
+    const inviterUserId = referrable
+      ? await resolveInviterUserId(input.userId, input.inviterUserId)
+      : null;
+    const metadata = buildRecordMetadata(input, referrable, inviterUserId);
+
     try {
       await prisma.platformRecord.create({
         data: {
@@ -56,9 +137,27 @@ export class PlatformRecordService {
           depositId: input.depositId ?? null,
           scaAddress: input.scaAddress?.toLowerCase() ?? null,
           occurredAt: input.occurredAt,
-          ...(input.metadata ? { metadata: input.metadata as Prisma.InputJsonValue } : {}),
+          ...(metadata ? { metadata: metadata as Prisma.InputJsonValue } : {}),
         },
       });
+
+      if (referrable && inviterUserId && input.userId) {
+        await ReferralCashbackService.awardFromPlatformRecord({
+          userId: input.userId,
+          inviterUserId,
+          source: input.source,
+          eventType: input.eventType,
+          idempotencyKey: input.idempotencyKey,
+          grossAmount: input.grossAmount ?? null,
+          platformFee: input.platformFee ?? null,
+          currency: input.currency ?? 'usd',
+          externalId: input.externalId ?? null,
+          referrable: true,
+          stripeInvoiceId: input.referralContext?.stripeInvoiceId ?? null,
+          stripeChargeId: input.referralContext?.stripeChargeId ?? null,
+          stripeSubscriptionId: input.referralContext?.stripeSubscriptionId ?? null,
+        });
+      }
     } catch (error) {
       if (error instanceof PrismaClientKnownRequestError && error.code === 'P2002') {
         return;
@@ -95,6 +194,11 @@ export class PlatformRecordService {
       currency: invoice.currency || 'usd',
       externalId: invoiceId,
       occurredAt,
+      referralContext: {
+        stripeInvoiceId: invoiceId,
+        stripeChargeId: extractStripeChargeId(invoice),
+        stripeSubscriptionId: subscriptionId ?? null,
+      },
       metadata: {
         stripeSubscriptionId: subscriptionId ?? null,
         billingReason: invoice.billing_reason ?? null,
@@ -283,6 +387,64 @@ export class PlatformRecordService {
     });
   }
 
+  static async recordFromDinariOrder(order: {
+    userId: string;
+    orderRequestId: string;
+    orderId: string | null;
+    status: string;
+    side: string;
+    type: string;
+    stockId: string | null;
+    paymentTokenQuantity: string | null;
+    assetTokenQuantity: string | null;
+    limitPrice: string | null;
+    updatedAt: Date;
+  }): Promise<void> {
+    if (!isDinariOrderFilled(order.status)) return;
+
+    const gross =
+      parseDecimal(order.paymentTokenQuantity) ??
+      (() => {
+        const qty = parseDecimal(order.assetTokenQuantity);
+        const price = parseDecimal(order.limitPrice);
+        if (qty == null || price == null) return qty;
+        return roundUsd(qty * price);
+      })();
+
+    const user = await prisma.user.findUnique({
+      where: { id: order.userId },
+      select: { scaAddress: true },
+    });
+
+    const externalId = order.orderId ?? order.orderRequestId;
+
+    await this.record({
+      category: 'revenue',
+      userId: order.userId,
+      source: 'dinari',
+      eventType: 'order_filled',
+      idempotencyKey: `dinari:order:${order.orderRequestId}:filled`,
+      grossAmount: gross,
+      platformFee: 0,
+      netAmount: gross,
+      currency: 'usd',
+      externalId,
+      scaAddress: user?.scaAddress ?? null,
+      occurredAt: order.updatedAt,
+      metadata: {
+        orderRequestId: order.orderRequestId,
+        orderId: order.orderId,
+        side: order.side,
+        type: order.type,
+        stockId: order.stockId,
+        status: order.status,
+        paymentTokenQuantity: order.paymentTokenQuantity,
+        assetTokenQuantity: order.assetTokenQuantity,
+        limitPrice: order.limitPrice,
+      },
+    });
+  }
+
   static async recordFromWaitlistEntry(params: {
     waitlistEntryId: string;
     email: string;
@@ -342,6 +504,7 @@ export class PlatformRecordService {
       latestCard,
       latestStripeEvent,
       latestWaitlist,
+      latestDinariOrder,
     ] = await Promise.all([
       prisma.bridgeVirtualAccountEvent.findFirst({
         where: { type: 'payment_processed' },
@@ -367,6 +530,10 @@ export class PlatformRecordService {
         orderBy: { createdAt: 'desc' },
         select: { id: true, email: true, product: true },
       }),
+      prisma.dinariOrder.findFirst({
+        orderBy: { updatedAt: 'desc' },
+        select: { orderRequestId: true, status: true },
+      }),
     ]);
 
     const keys: string[] = [];
@@ -383,6 +550,9 @@ export class PlatformRecordService {
     }
     if (latestWaitlist) {
       keys.push(`waitlist:${latestWaitlist.product}:${latestWaitlist.email}`);
+    }
+    if (latestDinariOrder && isDinariOrderFilled(latestDinariOrder.status)) {
+      keys.push(`dinari:order:${latestDinariOrder.orderRequestId}:filled`);
     }
 
     if (keys.length === 0) return false;
@@ -505,6 +675,11 @@ export class PlatformRecordService {
         name: entry.name,
         occurredAt: entry.createdAt,
       });
+    }
+
+    const dinariOrders = await prisma.dinariOrder.findMany();
+    for (const order of dinariOrders) {
+      await this.recordFromDinariOrder(order);
     }
 
     const after = await prisma.platformRecord.count();

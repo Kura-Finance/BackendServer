@@ -11,6 +11,7 @@
 
 import crypto from 'crypto';
 import { appLogger } from '../../logger';
+import { ReferralCashbackService } from '../../auth/services/referralCashbackService';
 import {
   BridgeService,
   recordWebhookEvent,
@@ -138,7 +139,9 @@ export async function handleWebhookEvent(event: BridgeWebhookEvent): Promise<voi
 
   switch (event.event_category) {
     case 'transfer':
-      await BridgeService.syncTransferFromWebhook(obj as unknown as BridgeTransferResponse);
+      await BridgeService.syncTransferFromWebhook(obj as unknown as BridgeTransferResponse, {
+        webhookEventId: event.event_id,
+      });
       break;
     case 'customer':
       await BridgeService.syncCustomerFromWebhook(obj as unknown as BridgeCustomerResponse);
@@ -149,10 +152,13 @@ export async function handleWebhookEvent(event: BridgeWebhookEvent): Promise<voi
     case 'virtual_account.activity':
       await BridgeService.syncVirtualAccountActivity(
         obj as unknown as BridgeVirtualAccountEventResponse,
+        { webhookEventId: event.event_id },
       );
       break;
     case 'liquidation_address.drain':
-      await BridgeService.syncLiquidationDrainFromWebhook(obj as unknown as BridgeDrainResponse);
+      await BridgeService.syncLiquidationDrainFromWebhook(obj as unknown as BridgeDrainResponse, {
+        webhookEventId: event.event_id,
+      });
       break;
     default:
       appLogger.info('[BridgeWebhook] Unhandled event category', {
@@ -160,4 +166,6 @@ export async function handleWebhookEvent(event: BridgeWebhookEvent): Promise<voi
         type: event.event_type,
       });
   }
+
+  await ReferralCashbackService.settlePending();
 }

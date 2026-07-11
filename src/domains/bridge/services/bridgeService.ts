@@ -24,6 +24,7 @@ import {
   isWithinInterval,
 } from '../../shared/lib/lazyUpdate';
 import { appLogger, logDebug, logError } from '../../logger';
+import { ReferralCashbackService } from '../../auth/services/referralCashbackService';
 import { DemoService } from '../../demo/demoService';
 import type {
   BridgeCustomerResponse,
@@ -163,6 +164,12 @@ async function bridgeFetch<T>(path: string, options: BridgeFetchOptions = {}): P
 // ── 內部 helpers ──────────────────────────────────────────────────────
 
 const APPROVED_KYC_STATUSES = new Set(['approved', 'active']);
+const BRIDGE_TRANSFER_REVERSAL_STATES = new Set(['refunded', 'returned']);
+const BRIDGE_DRAIN_REVERSAL_STATES = new Set(['refunded', 'returned']);
+
+export interface BridgeWebhookSyncContext {
+  webhookEventId?: string;
+}
 
 // 入金 / 出金法幣幣別 → 需要的 Bridge endorsement（rail 權限）。
 // 這些全是 API 驅動：用 POST /endorsement-link 或 GET /customers/{id}/kyc_link?endorsement=... 申請。
@@ -1386,6 +1393,7 @@ export class BridgeService {
   /** 處理 virtual_account.activity webhook：寫入入金/出款活動帳本。 */
   static async syncVirtualAccountActivity(
     event: BridgeVirtualAccountEventResponse,
+    context?: BridgeWebhookSyncContext,
   ): Promise<void> {
     const vaId = event.virtual_account_id;
     if (!event.id || !vaId) return;
@@ -1441,6 +1449,14 @@ export class BridgeService {
         userId: va.userId,
       });
     });
+
+    if (event.type === 'refunded') {
+      await this.reverseReferralCashbackForBridgeVaRefund({
+        depositId: event.deposit_id ?? null,
+        refundEventId: event.id,
+        ...(context?.webhookEventId ? { webhookEventId: context.webhookEventId } : {}),
+      });
+    }
 
     appLogger.info('[BridgeService] VA activity recorded', {
       userId: va.userId,
@@ -2300,7 +2316,10 @@ export class BridgeService {
   // ── Webhook 持久化（供 webhook service 呼叫）────────────────────────
 
   /** 依 bridgeTransferId 更新 transfer 狀態（webhook 用）。找不到則略過。 */
-  static async syncTransferFromWebhook(transfer: BridgeTransferResponse): Promise<void> {
+  static async syncTransferFromWebhook(
+    transfer: BridgeTransferResponse,
+    context?: BridgeWebhookSyncContext,
+  ): Promise<void> {
     if (!transfer.id) return;
     const existing = await prisma.bridgeTransfer.findUnique({
       where: { bridgeTransferId: transfer.id },
@@ -2331,6 +2350,14 @@ export class BridgeService {
           bridgeTransferId: transfer.id,
         });
       });
+    }
+
+    if (transfer.state && BRIDGE_TRANSFER_REVERSAL_STATES.has(transfer.state)) {
+      await ReferralCashbackService.reverseByIdempotencyKey(
+        `bridge:transfer:${transfer.id}:payment_processed`,
+        'bridge_transfer_refunded',
+        context?.webhookEventId ?? `bridge:transfer:${transfer.id}:${transfer.state}`,
+      );
     }
   }
 
@@ -2363,7 +2390,10 @@ export class BridgeService {
   }
 
   /** Bridge liquidation address drain（webhook 用）。 */
-  static async syncLiquidationDrainFromWebhook(drain: BridgeDrainResponse): Promise<void> {
+  static async syncLiquidationDrainFromWebhook(
+    drain: BridgeDrainResponse,
+    context?: BridgeWebhookSyncContext,
+  ): Promise<void> {
     if (!drain.id) return;
 
     const { PlatformRevenueService } = await import('../../platform-insights/services/platformRevenueService');
@@ -2373,6 +2403,51 @@ export class BridgeService {
         liquidationAddressId: drain.liquidation_address_id,
       });
     });
+
+    if (drain.state && BRIDGE_DRAIN_REVERSAL_STATES.has(drain.state)) {
+      await ReferralCashbackService.reverseByIdempotencyKey(
+        `bridge:liquidation:${drain.id}:payment_processed`,
+        'bridge_liquidation_refunded',
+        context?.webhookEventId ?? `bridge:liquidation:${drain.id}:${drain.state}`,
+      );
+    }
+  }
+
+  /** VA 入金退款：依 depositId 找到原 payment_processed 事件並沖銷 refer 返現。 */
+  private static async reverseReferralCashbackForBridgeVaRefund(params: {
+    depositId: string | null;
+    refundEventId: string;
+    webhookEventId?: string;
+  }): Promise<void> {
+    if (!params.depositId) {
+      logDebug('[BridgeService] VA refund without depositId, skipping cashback reversal', {
+        refundEventId: params.refundEventId,
+      });
+      return;
+    }
+
+    const original = await prisma.bridgeVirtualAccountEvent.findFirst({
+      where: {
+        depositId: params.depositId,
+        type: 'payment_processed',
+      },
+      select: { bridgeEventId: true },
+      orderBy: [{ occurredAt: 'asc' }, { createdAt: 'asc' }],
+    });
+
+    if (!original) {
+      logDebug('[BridgeService] VA refund: no payment_processed event for deposit', {
+        depositId: params.depositId,
+        refundEventId: params.refundEventId,
+      });
+      return;
+    }
+
+    await ReferralCashbackService.reverseByIdempotencyKey(
+      `bridge:va:${original.bridgeEventId}`,
+      'bridge_va_refunded',
+      params.webhookEventId ?? params.refundEventId,
+    );
   }
 
   /** KYC link 狀態變化（webhook 用），用 link id 對應。 */

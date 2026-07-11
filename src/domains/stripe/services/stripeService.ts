@@ -4,6 +4,7 @@ import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { prisma } from '../../shared/lib/prisma';
 import { logDebug, logError } from '../../logger';
 import { updateUserTier } from '../../shared/lib/apiRateLimitUtil';
+import { ReferralCashbackService } from '../../auth/services/referralCashbackService';
 import type {
   BillingPortalSessionResult,
   BillingStatusResult,
@@ -16,8 +17,6 @@ const ACTIVE_SUBSCRIPTION_STATUSES = new Set<Stripe.Subscription.Status>([
   'active',
   'past_due',
 ]);
-const REFERRAL_CASHBACK_RATE = 0.1;
-const DEFAULT_REFERRAL_CASHBACK_HOLD_DAYS = 14;
 
 export class StripeService {
   private static stripeClient: Stripe | null = null;
@@ -58,14 +57,6 @@ export class StripeService {
   private static toDateTime(unixTimestamp?: number | null): Date | null {
     if (!unixTimestamp) return null;
     return new Date(unixTimestamp * 1000);
-  }
-
-  private static getCashbackHoldDays(): number {
-    const configured = Number(process.env.REFERRAL_CASHBACK_HOLD_DAYS || DEFAULT_REFERRAL_CASHBACK_HOLD_DAYS);
-    if (!Number.isFinite(configured) || configured < 0) {
-      return DEFAULT_REFERRAL_CASHBACK_HOLD_DAYS;
-    }
-    return Math.floor(configured);
   }
 
   private static async getOrCreateCustomer(userId: string): Promise<{ customerId: string; email: string | null }> {
@@ -244,7 +235,7 @@ export class StripeService {
     }
 
     // 每次 webhook 先嘗試結算已到期的 pending 返現
-    await this.settlePendingCashbacks();
+    await ReferralCashbackService.settlePending();
 
     switch (event.type) {
       case 'checkout.session.completed':
@@ -256,10 +247,10 @@ export class StripeService {
         await this.syncSubscription(event.data.object as Stripe.Subscription);
         break;
       case 'invoice.paid':
-        await this.handleInvoiceEvent(event.data.object as Stripe.Invoice, true);
+        await this.handleInvoiceEvent(event.data.object as Stripe.Invoice);
         break;
       case 'invoice.payment_failed':
-        await this.handleInvoiceEvent(event.data.object as Stripe.Invoice, false);
+        await this.handleInvoiceEvent(event.data.object as Stripe.Invoice);
         break;
       case 'charge.refunded':
         await this.handleChargeRefunded(event.data.object as Stripe.Charge, event.id);
@@ -305,10 +296,7 @@ export class StripeService {
     });
   }
 
-  private static async handleInvoiceEvent(
-    invoice: Stripe.Invoice,
-    shouldAwardReferralCashback: boolean,
-  ): Promise<void> {
+  private static async handleInvoiceEvent(invoice: Stripe.Invoice): Promise<void> {
     const parent = invoice.parent;
     if (!parent?.subscription_details?.subscription) {
       return;
@@ -321,10 +309,6 @@ export class StripeService {
     const stripe = this.getStripeClient();
     const subscription = await stripe.subscriptions.retrieve(subscriptionId);
     const paidUserId = await this.syncSubscription(subscription);
-
-    if (paidUserId && shouldAwardReferralCashback) {
-      await this.applyReferralCashback(paidUserId, invoice, subscriptionId);
-    }
 
     if (paidUserId) {
       const { PlatformRevenueService } = await import('../../platform-insights/services/platformRevenueService');
@@ -393,119 +377,6 @@ export class StripeService {
     return userId;
   }
 
-  private static async applyReferralCashback(
-    paidUserId: string,
-    invoice: Stripe.Invoice,
-    subscriptionId: string,
-  ): Promise<void> {
-    const referredUser = await prisma.user.findUnique({
-      where: { id: paidUserId },
-      select: {
-        referredByUserId: true,
-      },
-    });
-
-    const inviterUserId = referredUser?.referredByUserId;
-    if (!inviterUserId || inviterUserId === paidUserId) {
-      return;
-    }
-
-    const amountPaidCents = invoice.amount_paid || 0;
-    if (amountPaidCents <= 0) {
-      return;
-    }
-
-    const grossAmount = Number((amountPaidCents / 100).toFixed(2));
-    const cashbackAmount = Number((grossAmount * REFERRAL_CASHBACK_RATE).toFixed(2));
-    const stripeInvoiceId = invoice.id;
-    const stripeChargeId = this.extractChargeIdFromInvoice(invoice);
-    if (cashbackAmount <= 0) {
-      return;
-    }
-    if (!stripeInvoiceId) {
-      return;
-    }
-
-    const holdDays = this.getCashbackHoldDays();
-    const availableAt = new Date();
-    availableAt.setDate(availableAt.getDate() + holdDays);
-
-    try {
-      await prisma.referralCashback.create({
-        data: {
-          inviterUserId,
-          referredUserId: paidUserId,
-          stripeInvoiceId,
-          stripeChargeId,
-          stripeSubscriptionId: subscriptionId,
-          grossAmount,
-          cashbackAmount,
-          currency: invoice.currency || 'usd',
-          status: 'pending',
-          availableAt,
-        },
-      });
-    } catch (error) {
-      if (error instanceof PrismaClientKnownRequestError && error.code === 'P2002') {
-        // 同一張 invoice webhook 重送，避免重複入帳
-        return;
-      }
-      throw error;
-    }
-  }
-
-  private static extractChargeIdFromInvoice(invoice: Stripe.Invoice): string | null {
-    const invoiceCharge = (invoice as any).charge as string | { id?: string } | null | undefined;
-    if (!invoiceCharge) return null;
-    return typeof invoiceCharge === 'string' ? invoiceCharge : invoiceCharge.id || null;
-  }
-
-  private static async settlePendingCashbacks(): Promise<void> {
-    const now = new Date();
-    const dueCashbacks = await prisma.referralCashback.findMany({
-      where: {
-        status: 'pending',
-        availableAt: {
-          lte: now,
-        },
-      },
-      select: {
-        id: true,
-        inviterUserId: true,
-        cashbackAmount: true,
-      },
-      take: 200,
-    });
-
-    for (const cashback of dueCashbacks) {
-      await prisma.$transaction(async (tx) => {
-        const updated = await tx.referralCashback.updateMany({
-          where: {
-            id: cashback.id,
-            status: 'pending',
-          },
-          data: {
-            status: 'available',
-            settledAt: now,
-          },
-        });
-
-        if (updated.count === 0) {
-          return;
-        }
-
-        await tx.user.update({
-          where: { id: cashback.inviterUserId },
-          data: {
-            cashbackBalance: {
-              increment: cashback.cashbackAmount,
-            },
-          },
-        });
-      });
-    }
-  }
-
   private static async handleChargeRefunded(charge: Stripe.Charge, eventId: string): Promise<void> {
     const stripeChargeId = charge.id;
     const chargeInvoice = (charge as any).invoice as string | { id?: string } | null | undefined;
@@ -516,7 +387,7 @@ export class StripeService {
     if (stripeInvoiceId) reverseTarget.stripeInvoiceId = stripeInvoiceId;
     if (stripeChargeId) reverseTarget.stripeChargeId = stripeChargeId;
 
-    await this.reverseReferralCashback(
+    await ReferralCashbackService.reverseByStripeTarget(
       reverseTarget,
       'refund_or_chargeback',
       eventId,
@@ -535,71 +406,11 @@ export class StripeService {
     const reverseTarget: { stripeInvoiceId?: string; stripeChargeId?: string } = {};
     if (stripeChargeId) reverseTarget.stripeChargeId = stripeChargeId;
 
-    await this.reverseReferralCashback(
+    await ReferralCashbackService.reverseByStripeTarget(
       reverseTarget,
       'dispute_lost',
       eventId,
     );
-  }
-
-  private static async reverseReferralCashback(
-    target: { stripeInvoiceId?: string; stripeChargeId?: string },
-    reason: string,
-    eventId: string,
-  ): Promise<void> {
-    if (!target.stripeInvoiceId && !target.stripeChargeId) {
-      return;
-    }
-
-    const cashback = await prisma.referralCashback.findFirst({
-      where: {
-        OR: [
-          ...(target.stripeInvoiceId ? [{ stripeInvoiceId: target.stripeInvoiceId }] : []),
-          ...(target.stripeChargeId ? [{ stripeChargeId: target.stripeChargeId }] : []),
-        ],
-      },
-      orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        inviterUserId: true,
-        cashbackAmount: true,
-        status: true,
-      },
-    });
-
-    if (!cashback || cashback.status === 'reversed') {
-      return;
-    }
-
-    await prisma.$transaction(async (tx) => {
-      const updated = await tx.referralCashback.updateMany({
-        where: {
-          id: cashback.id,
-          status: cashback.status,
-        },
-        data: {
-          status: 'reversed',
-          reversedAt: new Date(),
-          reverseReason: reason,
-          reversedByEventId: eventId,
-        },
-      });
-
-      if (updated.count === 0) {
-        return;
-      }
-
-      if (cashback.status === 'available') {
-        await tx.user.update({
-          where: { id: cashback.inviterUserId },
-          data: {
-            cashbackBalance: {
-              decrement: cashback.cashbackAmount,
-            },
-          },
-        });
-      }
-    });
   }
 
   private static async resolveUserId(

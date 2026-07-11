@@ -746,7 +746,11 @@ model ReferralCashback {
   id                   String    @id @default(uuid())
   inviterUserId        String
   referredUserId       String
-  stripeInvoiceId      String    @unique
+  source               String    @default("stripe") // stripe | bridge_va | dinari | ...
+  idempotencyKey       String    @unique
+  externalId           String?
+  eventType            String?
+  stripeInvoiceId      String?   @unique
   stripeChargeId       String?
   stripeSubscriptionId String?
   grossAmount          Float
@@ -767,6 +771,7 @@ model ReferralCashback {
   @@index([referredUserId, createdAt])
   @@index([status, availableAt])
   @@index([stripeChargeId])
+  @@index([source, createdAt])
 }
 
 // ==========================================

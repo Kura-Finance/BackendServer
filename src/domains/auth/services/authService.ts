@@ -517,7 +517,10 @@ export class AuthService {
       id: string;
       referredUserId: string;
       referredUserEmail: string | null;
-      stripeInvoiceId: string;
+      source: string;
+      eventType: string | null;
+      externalId: string | null;
+      stripeInvoiceId: string | null;
       stripeSubscriptionId: string | null;
       grossAmount: number;
       cashbackAmount: number;
@@ -544,6 +547,9 @@ export class AuthService {
         select: {
           id: true,
           referredUserId: true,
+          source: true,
+          eventType: true,
+          externalId: true,
           stripeInvoiceId: true,
           stripeSubscriptionId: true,
           grossAmount: true,
@@ -582,6 +588,9 @@ export class AuthService {
         id: row.id,
         referredUserId: row.referredUserId,
         referredUserEmail: row.referred?.email || null,
+        source: row.source,
+        eventType: row.eventType,
+        externalId: row.externalId,
         stripeInvoiceId: row.stripeInvoiceId,
         stripeSubscriptionId: row.stripeSubscriptionId,
         grossAmount: row.grossAmount,
