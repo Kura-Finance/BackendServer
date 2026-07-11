@@ -10,7 +10,7 @@ export {
   createLinkToken,
   exchangePublicToken,
   disconnectPlaidAccount,
-  getFinanceSnapshot,
+  getFinanceSnapshotOptimized,
 } from './controllers/plaidController';
 
 // Types & Interfaces

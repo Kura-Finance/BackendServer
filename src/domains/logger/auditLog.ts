@@ -20,6 +20,7 @@ export type AuditAction =
   | 'DISCONNECT_EXCHANGE'
   | 'FETCH_EXCHANGE_BALANCE'
   | 'FETCH_EXCHANGE_ASSETS'
+  | 'FETCH_EXCHANGE_BALANCES_AND_ASSETS'
   
   // 敏感操作 - Plaid
   | 'EXCHANGE_PLAID_TOKEN'
@@ -37,6 +38,12 @@ export type AuditAction =
   | 'PASSWORD_RESET_COMPLETED'
   | 'EMAIL_VERIFICATION_REQUESTED'
   | 'EMAIL_VERIFIED'
+  
+  // 通知系统
+  | 'NOTIFICATION_SENT'
+  | 'NOTIFICATION_READ'
+  | 'NOTIFICATION_DELETED'
+  | 'NOTIFICATION_PREFERENCES_UPDATED'
   
   // 密钥管理
   | 'ENCRYPTION_KEY_ACCESS'
@@ -155,7 +162,7 @@ export class AuditLogger {
    * 记录敏感操作 - 交易所
    */
   static logExchangeOperation(
-    operation: 'CONNECT' | 'DISCONNECT' | 'FETCH_BALANCE' | 'FETCH_ASSETS',
+    operation: 'CONNECT' | 'DISCONNECT' | 'FETCH_BALANCE' | 'FETCH_ASSETS' | 'FETCH_BALANCES_AND_ASSETS',
     userId: string,
     exchangeId: string,
     status: 'SUCCESS' | 'FAILURE',
@@ -168,6 +175,7 @@ export class AuditLogger {
       DISCONNECT: 'DISCONNECT_EXCHANGE',
       FETCH_BALANCE: 'FETCH_EXCHANGE_BALANCE',
       FETCH_ASSETS: 'FETCH_EXCHANGE_ASSETS',
+      FETCH_BALANCES_AND_ASSETS: 'FETCH_EXCHANGE_BALANCES_AND_ASSETS',
     };
 
     const options: any = {
@@ -271,6 +279,27 @@ export class AuditLogger {
     if (error) options.error = error;
 
     this.log(action, undefined, status, options);
+  }
+
+  /**
+   * 记录通知系统操作
+   */
+  static logNotificationEvent(
+    operation: 'NOTIFICATION_SENT' | 'NOTIFICATION_READ' | 'NOTIFICATION_DELETED' | 'NOTIFICATION_PREFERENCES_UPDATED',
+    userId: string,
+    details?: Record<string, any>,
+    error?: string
+  ): void {
+    const status = error ? 'FAILURE' : 'SUCCESS';
+    const options: any = {
+      level: status === 'FAILURE' ? 'WARNING' : 'INFO',
+      resourceType: 'NOTIFICATION',
+    };
+
+    if (details) options.details = details;
+    if (error) options.error = error;
+
+    this.log(operation, userId, status, options);
   }
 
   /**

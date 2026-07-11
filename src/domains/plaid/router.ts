@@ -3,12 +3,10 @@ import {
   createLinkToken,
   exchangePublicToken,
   disconnectPlaidAccount,
-  getFinanceSnapshot,
   getFinanceSnapshotOptimized,
   updatePlaidAccountOrder,
-  refreshPlaidCache,
-  clearPlaidCache,
   getCacheInfo,
+  handlePlaidWebhook,
 } from './controllers/plaidController';
 import { requireAuth } from '../auth/middleware/auth';
 import { appLogger } from '../logger';
@@ -45,9 +43,26 @@ router.post('/exchange-public-token', requireAuth, wrapAsync(exchangePublicToken
 /**
  * GET /api/plaid/finance-snapshot
  * Get finance snapshot (accounts, transactions, investments)
+ * Uses cache by default, with optional force refresh via ?refresh=true
+ * 
+ * Query Parameters:
+ *   - refresh=true: Force refresh from Plaid API (受每日次數限制)
+ * 
+ * Response:
+ *   - accounts: 銀行帳戶列表
+ *   - transactions: 交易記錄
+ *   - investmentAccounts: 投資帳戶列表
+ *   - investments: 投資持倉
+ *   - _cacheSource: 數據來源提示 ('來自緩存' 或 '強制刷新，來自 Plaid API')
+ * 
+ * Error Codes:
+ *   - 429: 已達到每日刷新限制
+ *   - 401: 未登入
+ *   - 500: 內部錯誤
+ * 
  * Authentication: Required
  */
-router.get('/finance-snapshot', requireAuth, wrapAsync(getFinanceSnapshot));
+router.get('/finance-snapshot', requireAuth, wrapAsync(getFinanceSnapshotOptimized));
 
 /**
  * POST /api/plaid/account-order
@@ -58,7 +73,7 @@ router.get('/finance-snapshot', requireAuth, wrapAsync(getFinanceSnapshot));
 router.post('/account-order', requireAuth, wrapAsync(updatePlaidAccountOrder));
 
 /**
- * DELETE /api/plaid/account
+ * POST /api/plaid/disconnect
  * Disconnect a Plaid account
  * Authentication: Required
  * Body: { accountId: string }
@@ -66,32 +81,18 @@ router.post('/account-order', requireAuth, wrapAsync(updatePlaidAccountOrder));
 router.post('/disconnect', requireAuth, wrapAsync(disconnectPlaidAccount));
 
 /**
- * GET /api/plaid/finance-snapshot-optimized
- * Get finance snapshot with caching (optimized)
- * Query: ?refresh=true to force refresh
- * Authentication: Required
- */
-router.get('/finance-snapshot-optimized', requireAuth, wrapAsync(getFinanceSnapshotOptimized));
-
-/**
- * POST /api/plaid/cache/refresh
- * Manually refresh Plaid cache (force API call)
- * Authentication: Required
- */
-router.post('/cache/refresh', requireAuth, wrapAsync(refreshPlaidCache));
-
-/**
- * POST /api/plaid/cache/clear
- * Clear all Plaid cache completely
- * Authentication: Required
- */
-router.post('/cache/clear', requireAuth, wrapAsync(clearPlaidCache));
-
-/**
  * GET /api/plaid/cache/info
  * Get cache statistics and sync information
  * Authentication: Required
  */
 router.get('/cache/info', requireAuth, wrapAsync(getCacheInfo));
+
+/**
+ * POST /api/plaid/webhook
+ * Plaid webhook endpoint
+ * Authentication: NOT Required (called by Plaid service)
+ * Webhook Types: ITEM, TRANSACTIONS, INVESTMENTS_TRANSACTIONS, AUTH
+ */
+router.post('/webhook', wrapAsync(handlePlaidWebhook));
 
 export default router;

@@ -50,7 +50,8 @@ export const connectExchange = async (req: AuthRequest, res: Response) => {
 };
 
 /**
- * 獲取交易所餘額
+ * 獲取交易所餘額和資產 (合併端點)
+ * 返回簡化的 JSON 結構: { account, balances, assets, timestamp }
  */
 export const getExchangeBalances = async (req: AuthRequest, res: Response) => {
   try {
@@ -66,72 +67,16 @@ export const getExchangeBalances = async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    const balances = await ExchangeService.getExchangeBalances(
+    const result = await ExchangeService.getBalancesAndAssets(
       req.userId,
       exchangeAccountId
     );
 
-    // 轉換為客戶端友好的格式：只返回有餘額的幣種
-    const formattedBalances = Object.keys(balances)
-      .filter(symbol => symbol !== 'free' && symbol !== 'used' && symbol !== 'total')
-      .filter(symbol => balances[symbol].total > 0)
-      .map(symbol => ({
-        symbol,
-        free: balances[symbol].free,
-        used: balances[symbol].used,
-        total: balances[symbol].total,
-      }));
-
-    res.json({
-      exchangeAccountId,
-      balances: formattedBalances,
-      metadata: {
-        timestamp: new Date().toISOString(),
-        count: formattedBalances.length,
-      },
-    });
+    res.json(result);
   } catch (error) {
     logError('Get exchange balances failed', error, { userId: req.userId });
     res.status(500).json({
       error: error instanceof Error ? error.message : '無法取得交易所餘額',
-    });
-  }
-};
-
-/**
- * 獲取交易所資產 (持倉)
- */
-export const getExchangeAssets = async (req: AuthRequest, res: Response) => {
-  try {
-    if (!req.userId) {
-      res.status(401).json({ error: '未登入' });
-      return;
-    }
-
-    const exchangeAccountId = req.params.exchangeAccountId as string;
-
-    if (!exchangeAccountId || exchangeAccountId === 'undefined') {
-      res.status(400).json({ error: '缺少必要參數: exchangeAccountId' });
-      return;
-    }
-
-    const assets = await ExchangeService.getExchangeAssets(
-      req.userId,
-      exchangeAccountId
-    );
-
-    res.json({
-      exchangeAccountId,
-      assets,
-      metadata: {
-        timestamp: new Date().toISOString(),
-        count: assets.length,
-      },
-    });
-  } catch (error) {
-    logError('Get exchange assets failed', error, { userId: req.userId });
-    res.status(500).json({
-      error: error instanceof Error ? error.message : '無法取得交易所資產',
     });
   }
 };

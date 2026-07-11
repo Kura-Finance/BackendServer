@@ -21,10 +21,11 @@
     "dotenv": "^17.4.1",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
-    "resend": "^3.5.0",
     "plaid": "^41.4.0",
+    "resend": "^3.5.0",
     "winston": "^3.17.0",
-    "winston-daily-rotate-file": "^5.0.0"
+    "winston-daily-rotate-file": "^5.0.0",
+    "yahoo-finance2": "^3.14.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

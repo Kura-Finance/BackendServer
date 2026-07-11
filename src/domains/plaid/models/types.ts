@@ -5,7 +5,7 @@
 export type BankingAccountType = 'checking' | 'saving' | 'credit' | 'crypto';
 export type TransactionType = 'credit' | 'deposit' | 'transfer';
 export type InvestmentAccountType = 'Broker' | 'Exchange';
-export type InvestmentType = 'crypto' | 'stock';
+export type InvestmentType = 'crypto' | 'stock' | 'etf';
 export type PlaidAccountBucket = 'banking' | 'investment';
 
 export interface StoredAccountOrderPayload {

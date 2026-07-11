@@ -1,0 +1,1 @@
+{"version":3,"file":"index.d.ts","sourceRoot":"","sources":["../../../src/domains/logger/index.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,SAAS,EAAE,MAAM,UAAU,CAAC;AACrC,OAAO,EACL,cAAc,EACd,oBAAoB,EACpB,YAAY,EACZ,QAAQ,EACR,cAAc,EACd,gBAAgB,EAChB,QAAQ,EACR,UAAU,GACX,MAAM,eAAe,CAAC;AACvB,OAAO,EAAE,UAAU,EAAE,iBAAiB,EAAE,WAAW,EAAE,MAAM,qBAAqB,CAAC"}

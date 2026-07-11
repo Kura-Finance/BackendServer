@@ -205,7 +205,14 @@ export class ExchangeService {
         symbolCount: Object.keys(balances).length,
       }, undefined, duration);
 
-      return balances;
+      return {
+        account: {
+          id: account.id,
+          exchange: account.exchange,
+          exchangeDisplayName: account.exchangeDisplayName,
+        },
+        balances,
+      };
     } catch (error) {
       const duration = Date.now() - startTime;
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -219,36 +226,299 @@ export class ExchangeService {
   }
 
   /**
-   * 獲取交易所資產 (持倉)
+   * 合併獲取交易所餘額和資產 (現貨持倉)
+   * 返回簡化的 JSON 結構，便於前端使用和未來擴展
    */
-  static async getExchangeAssets(userId: string, exchangeAccountId: string) {
+  static async getBalancesAndAssets(userId: string, exchangeAccountId: string) {
+    const startTime = Date.now();
     try {
-      logDebug('Fetching exchange assets', { userId, exchangeAccountId });
+      logDebug('Fetching exchange balances and assets', {
+        userId,
+        exchangeAccountId,
+      });
 
-      const balances = await this.getExchangeBalances(userId, exchangeAccountId);
-
-      // 篩選出有餘額的幣種
-      const assets: any[] = [];
-      for (const symbol in balances) {
-        if (
-          symbol !== 'free' &&
-          symbol !== 'used' &&
-          symbol !== 'total' &&
-          balances[symbol].free > 0
-        ) {
-          assets.push({
-            symbol,
-            free: balances[symbol].free,
-            used: balances[symbol].used,
-            total: balances[symbol].total,
-          });
-        }
+      if (!exchangeAccountId || exchangeAccountId === 'undefined') {
+        throw new Error('無效的帳戶 ID');
       }
 
-      return assets;
+      // 從數據庫獲取帳戶信息
+      const account = await prisma.exchangeAccount.findUnique({
+        where: { id: exchangeAccountId },
+      });
+
+      if (!account || account.userId !== userId) {
+        throw new Error('帳戶不存在或無權限');
+      }
+
+      if (!account.isActive) {
+        throw new Error('帳戶已停用');
+      }
+
+      // 解密敏感信息
+      const decryptedApiKey = EncryptionUtil.decrypt(account.apiKey);
+      const decryptedApiSecret = EncryptionUtil.decrypt(account.apiSecret);
+      const decryptedPassphrase = account.passphrase
+        ? EncryptionUtil.decrypt(account.passphrase)
+        : undefined;
+
+      // 使用 CCXT 獲取餘額
+      const ExchangeClass = ccxt[account.exchange as keyof typeof ccxt] as any;
+      const exchangeInstance = new ExchangeClass({
+        apiKey: decryptedApiKey,
+        secret: decryptedApiSecret,
+        password: decryptedPassphrase,
+        enableRateLimit: true,
+      });
+
+      const balances = await exchangeInstance.fetchBalance();
+
+      // 快取餘額數據
+      await this.cacheBalances(userId, exchangeAccountId, account.exchange, balances);
+
+      // 獲取期貨合約持倉 (非同步,不阻塞主流程)
+      const positions = await this.getPositions(userId, exchangeInstance, account.exchange, exchangeAccountId);
+
+      // 格式化 balances - 只返回有餘額的幣種
+      const formattedBalances = Object.keys(balances)
+        .filter(symbol => {
+          if (
+            symbol === 'free' ||
+            symbol === 'used' ||
+            symbol === 'total' ||
+            symbol === 'info' ||
+            symbol === 'datetime' ||
+            symbol === 'timestamp'
+          ) {
+            return false;
+          }
+          const balance = balances[symbol];
+          return (
+            balance &&
+            typeof balance === 'object' &&
+            typeof balance.total === 'number' &&
+            balance.total > 0
+          );
+        })
+        .map(symbol => ({
+          symbol,
+          free: Number(balances[symbol].free) || 0,
+          used: Number(balances[symbol].used) || 0,
+          total: Number(balances[symbol].total) || 0,
+        }));
+
+      // 獲取所有幣種的 USD 價格和 24h 變化
+      const symbolsForPricing = formattedBalances.map(b => b.symbol);
+      const priceData = await this.getPrices(exchangeInstance, symbolsForPricing);
+
+      // 添加 USD 價值和 24h 變化到 balances
+      const balancesWithUsd = formattedBalances.map(balance => ({
+        ...balance,
+        usdPrice: priceData[balance.symbol]?.price || 0,
+        change24h: priceData[balance.symbol]?.change24h || 0,
+        usdValue: balance.total * (priceData[balance.symbol]?.price || 0),
+      }));
+
+      // 篩選出有自由餘額的資產 (現貨持倉)
+      const assets = balancesWithUsd.filter(b => b.free > 0);
+
+      // 計算 USD 總值
+      const balancesUsdTotal = balancesWithUsd.reduce((sum, b) => sum + b.usdValue, 0);
+      const assetsUsdTotal = assets.reduce((sum, a) => sum + a.usdValue, 0);
+
+      // 添加 USD 價值到 positions
+      // 提取 positions 中的基礎幣種以獲取 24h 變化
+      const positionSymbols = positions.map((pos: any) => pos.symbol.split('/')[0]); // 從 BTC/USDT 提取 BTC
+      const positionPriceData = await this.getPrices(exchangeInstance, [...new Set(positionSymbols)] as string[]);
+
+      const positionsWithChange = positions.map((pos: any) => {
+        const baseSymbol = pos.symbol.split('/')[0];
+        return {
+          ...pos,
+          change24h: positionPriceData[baseSymbol]?.change24h || 0,
+          usdValue: pos.contracts * pos.contractSize * pos.markPrice,
+        };
+      });
+      const positionsUsdTotal = positionsWithChange.reduce((sum: number, p: any) => sum + p.usdValue, 0);
+
+      const duration = Date.now() - startTime;
+      logBusinessEvent('exchange_balances_and_assets_fetched', userId, {
+        exchange: account.exchange,
+        balanceCount: balancesWithUsd.length,
+        assetCount: assets.length,
+        positionCount: positionsWithChange.length,
+        balancesUsdTotal,
+        assetsUsdTotal,
+        positionsUsdTotal,
+      });
+
+      // 記錄審計日誌
+      AuditLogger.logExchangeOperation(
+        'FETCH_BALANCES_AND_ASSETS',
+        userId,
+        exchangeAccountId,
+        'SUCCESS',
+        {
+          exchange: account.exchange,
+          balanceCount: balancesWithUsd.length,
+          assetCount: assets.length,
+          positionCount: positionsWithChange.length,
+          balancesUsdTotal: balancesUsdTotal.toFixed(2),
+          assetsUsdTotal: assetsUsdTotal.toFixed(2),
+          positionsUsdTotal: positionsUsdTotal.toFixed(2),
+        },
+        undefined,
+        duration
+      );
+
+      return {
+        account: {
+          id: account.id,
+          exchange: account.exchange,
+          displayName: account.exchangeDisplayName,
+        },
+        balances: balancesWithUsd,
+        balancesUsdTotal,
+        assets,
+        assetsUsdTotal,
+        positions: positionsWithChange,
+        positionsUsdTotal,
+        totalUsdValue: balancesUsdTotal + positionsUsdTotal,
+        timestamp: new Date().toISOString(),
+      };
     } catch (error) {
-      logError('Failed to fetch exchange assets', error, { userId, exchangeAccountId });
+      const duration = Date.now() - startTime;
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logError(
+        'Failed to fetch exchange balances and assets',
+        error,
+        { userId, exchangeAccountId }
+      );
+
+      // 記錄審計日誌（失敗）
+      AuditLogger.logExchangeOperation(
+        'FETCH_BALANCES_AND_ASSETS',
+        userId,
+        exchangeAccountId,
+        'FAILURE',
+        {},
+        errorMsg,
+        duration
+      );
+
       throw error;
+    }
+  }
+
+  /**
+   * 獲取代幣 USD 價格和 24h 變化
+   * 通過 CCXT 交易所獲取最新價格信息和 24h 漲幅
+   */
+  private static async getPrices(exchangeInstance: any, symbols: string[]): Promise<Record<string, { price: number; change24h: number }>> {
+    const prices: Record<string, { price: number; change24h: number }> = {};
+    
+    try {
+      // 批量獲取價格 (使用 USDT 對錶)
+      const tickers = await Promise.all(
+        symbols.map(async (symbol) => {
+          try {
+            const pair = `${symbol}/USDT`;
+            const ticker = await exchangeInstance.fetchTicker(pair);
+            
+            // 計算 24h 變化百分比
+            let change24h = 0;
+            if (ticker.percentage !== undefined && ticker.percentage !== null) {
+              // 優先使用 percentage 字段 (已經是百分比格式)
+              change24h = ticker.percentage;
+            } else if (ticker.open && ticker.close) {
+              // 如果沒有 percentage，從 open 和 close 計算
+              change24h = ((ticker.close - ticker.open) / ticker.open) * 100;
+              change24h = parseFloat(change24h.toFixed(2));
+            } else if (ticker.quoteVolume && ticker.baseVolume) {
+              // 備用方案：嘗試其他可用的欄位
+              logDebug(`Limited ticker data for ${symbol}`, {
+                hasPercentage: ticker.percentage !== undefined,
+                hasOpen: ticker.open !== undefined,
+                hasClose: ticker.close !== undefined,
+              });
+            }
+            
+            return {
+              symbol,
+              price: ticker.last || ticker.close || 0,
+              change24h,
+            };
+          } catch (err) {
+            // 某個幣對獲取失敗,返回 0
+            logDebug(`Failed to fetch price for ${symbol}`, {
+              error: err instanceof Error ? err.message : String(err),
+            });
+            return { symbol, price: 0, change24h: 0 };
+          }
+        })
+      );
+
+      tickers.forEach(({ symbol, price, change24h }) => {
+        prices[symbol] = { price, change24h };
+      });
+
+      logDebug('Fetched prices', {
+        symbolCount: symbols.length,
+        priceCount: Object.keys(prices).length,
+      });
+      return prices;
+    } catch (error) {
+      logDebug('Failed to fetch prices', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return prices;
+    }
+  }
+
+  /**
+   * 獲取期貨合約持倉
+   * 支持 CCXT 交易所的合約持倉數據
+   */
+  private static async getPositions(userId: string, exchangeInstance: any, exchange: string, exchangeAccountId: string) {
+    try {
+      // 檢查交易所是否支持合約
+      if (!exchangeInstance.has.fetchPositions) {
+        logDebug('Exchange does not support positions', { exchange });
+        return [];
+      }
+
+      const positions = await exchangeInstance.fetchPositions();
+      
+      // 篩選出開倉的持仓 (合約數量 > 0)
+      const openPositions = positions
+        .filter((pos: any) => pos.contracts > 0 || pos.contractSize > 0)
+        .map((pos: any) => ({
+          symbol: pos.symbol,
+          contractType: pos.type || 'linear', // linear 或 inverse
+          contracts: Number(pos.contracts) || 0,
+          contractSize: Number(pos.contractSize) || 0,
+          currentPrice: Number(pos.currentPrice) || 0,
+          markPrice: Number(pos.markPrice) || 0,
+          percentage: Number(pos.percentage) || 0, // 本金百分比營利
+          maintenanceMargin: Number(pos.maintenanceMargin) || 0,
+          collateral: Number(pos.collateral) || 0,
+          initialMargin: Number(pos.initialMargin) || 0,
+          unrealizedPnl: Number(pos.unrealizedPnl) || 0,
+          realizedPnl: Number(pos.realizedPnl) || 0,
+          leverage: Number(pos.leverage) || 1,
+          side: pos.side, // 'long' 或 'short'
+          info: pos.info,
+        }));
+
+      logDebug('Fetched positions', {
+        exchange,
+        positionCount: openPositions.length,
+      });
+
+      return openPositions;
+    } catch (error) {
+      logDebug('Failed to fetch positions', { exchange, error: error instanceof Error ? error.message : String(error) });
+      // 不中斷主流程 - 如果合約獲取失敗,仍返回空陣列
+      return [];
     }
   }
 
@@ -265,7 +535,24 @@ export class ExchangeService {
       const operations = [];
 
       for (const symbol in balances) {
-        if (symbol !== 'free' && symbol !== 'used' && symbol !== 'total') {
+        // 排除 CCXT 的元數據字段和無效項
+        if (symbol === 'free' || symbol === 'used' || symbol === 'total' || symbol === 'info' || symbol === 'datetime' || symbol === 'timestamp') {
+          continue;
+        }
+
+        const balance = balances[symbol];
+        // 檢查餘額對象有效性
+        if (!balance || typeof balance !== 'object') {
+          logDebug('Skipping invalid balance entry', { symbol, balanceType: typeof balance });
+          continue;
+        }
+
+        const free = Number(balance.free) || 0;
+        const used = Number(balance.used) || 0;
+        const total = Number(balance.total) || 0;
+
+        // 只快取有餘額的幣種
+        if (total > 0) {
           operations.push(
             prisma.exchangeBalanceCache.upsert({
               where: {
@@ -276,9 +563,9 @@ export class ExchangeService {
                 },
               },
               update: {
-                free: balances[symbol].free,
-                used: balances[symbol].used,
-                total: balances[symbol].total,
+                free,
+                used,
+                total,
                 updatedAt: new Date(),
               },
               create: {
@@ -286,9 +573,9 @@ export class ExchangeService {
                 exchangeAccountId,
                 exchange,
                 symbol,
-                free: balances[symbol].free,
-                used: balances[symbol].used,
-                total: balances[symbol].total,
+                free,
+                used,
+                total,
               },
             })
           );

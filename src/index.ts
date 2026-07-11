@@ -6,6 +6,7 @@ import { authRouter } from './domains/auth';
 import { plaidRouter } from './domains/plaid';
 import { assetRouter } from './domains/asset';
 import { exchangeRouter } from './domains/exchange';
+import { notificationRouter } from './domains/notification';
 import {
   appLogger,
   httpLogger,
@@ -72,6 +73,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/plaid', plaidRouter);
 app.use('/api/assets', assetRouter);
 app.use('/api/exchange', exchangeRouter);
+app.use('/api/notifications', notificationRouter);
 
 // ========================================
 // 6. 錯誤處理中間件

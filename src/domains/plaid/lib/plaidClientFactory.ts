@@ -1,11 +1,14 @@
 import { Configuration, PlaidApi, PlaidEnvironments } from 'plaid';
 
 /**
- * 根據用戶 Email 決定使用 Sandbox 或 Production 環境
- * test@kura.dpdns.org 使用 Sandbox，其他用戶使用 Production
+ * 根據用戶 ID 決定使用 Sandbox 或 Production 環境
+ * test@kura-finance.com 用戶（ID: 82f0cfbb-0d93-4802-adba-52e395ccac6e）使用 Sandbox
+ * 其他用戶使用 Production
  */
-export function getPlaidEnvironmentByEmail(email: string): 'sandbox' | 'production' {
-  return email === 'test@kura.dpdns.org' ? 'sandbox' : 'production';
+export function getPlaidEnvironmentByUserId(userId: string): 'sandbox' | 'production' {
+  // 測試用戶 ID
+  const testUserIds = ['82f0cfbb-0d93-4802-adba-52e395ccac6e'];
+  return testUserIds.includes(userId) ? 'sandbox' : 'production';
 }
 
 /**
@@ -29,11 +32,11 @@ function getPlaidSecret(environment: 'sandbox' | 'production'): string {
 
 /**
  * 為指定用戶創建 Plaid API Client
- * @param email - 用戶的郵件地址
+ * @param userId - 用戶的 ID
  * @returns 配置好的 PlaidApi 實例
  */
-export function createPlaidClientForUser(email: string): PlaidApi {
-  const environment = getPlaidEnvironmentByEmail(email);
+export function createPlaidClientForUser(userId: string): PlaidApi {
+  const environment = getPlaidEnvironmentByUserId(userId);
   const basePath = PlaidEnvironments[environment];
 
   if (!basePath) {

@@ -28,15 +28,10 @@ router.get('/accounts', ExchangeController.getUserExchangeAccounts);
 
 /**
  * GET /api/exchange/:exchangeAccountId/balances
- * 獲取特定交易所帳戶的餘額
+ * 獲取特定交易所帳戶的餘額和資產 (合併端點)
+ * 返回: { account, balances[], assets[], timestamp }
  */
 router.get('/:exchangeAccountId/balances', ExchangeController.getExchangeBalances);
-
-/**
- * GET /api/exchange/:exchangeAccountId/assets
- * 獲取特定交易所帳戶的資產 (持倉)
- */
-router.get('/:exchangeAccountId/assets', ExchangeController.getExchangeAssets);
 
 /**
  * DELETE /api/exchange/:exchangeAccountId

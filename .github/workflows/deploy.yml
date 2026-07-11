@@ -75,6 +75,8 @@ jobs:
             PLAID_SANDBOX_SECRET=${{ secrets.PLAID_SANDBOX_SECRET }}
             PLAID_PRODUCTION_SECRET=${{ secrets.PLAID_PRODUCTION_SECRET }}
             PLAID_REDIRECT_URI=${{ secrets.PLAID_REDIRECT_URI }}
+            PLAID_WEBHOOK_URL=${{ secrets.PLAID_WEBHOOK_URL }}
+            LOGO_DEV_TOKEN=${{ secrets.LOGO_DEV_PUBLISHABLE_KEY }}
             ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}
             RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
             RESEND_FROM_EMAIL=${{ secrets.RESEND_FROM_EMAIL }}

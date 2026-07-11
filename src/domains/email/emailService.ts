@@ -150,7 +150,7 @@ If you didn't request this verification code, please ignore this email.
       const resend = this.initializeResend();
       const fromEmail = process.env.RESEND_FROM_EMAIL;
       const appName = process.env.APP_NAME || 'Kura';
-      const appUrl = process.env.APP_URL;
+      const appUrl = process.env.APP_URL || 'https://kura-finance.com';
 
       if (!fromEmail || !appUrl) {
         throw new Error('Missing required environment variables: RESEND_FROM_EMAIL and APP_URL must be set');
