@@ -17,7 +17,7 @@ import { codegoRouter } from './domains/codego';
 import { dinariRouter } from './domains/dinari';
 import { waitlistRouter } from './domains/waitlist';
 import { platformInsightsRouter } from './domains/platform-insights';
-import { scaAnalyticsRouter } from './domains/sca-analytics';
+import { privyAnalyticsRouter } from './domains/privy-analytics';
 import {
   appLogger,
   httpLogger,
@@ -220,7 +220,7 @@ app.use('/api/codego', codegoRouter);
 app.use('/api/dinari', dinariRouter);
 app.use('/api/waitlist', waitlistRouter);
 app.use('/api/platform-insights', platformInsightsRouter);
-app.use('/api/sca-analytics', scaAnalyticsRouter);
+app.use('/api/privy-analytics', privyAnalyticsRouter);
 
 // ========================================
 // 6. 錯誤處理中間件

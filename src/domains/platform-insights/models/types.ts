@@ -1,4 +1,4 @@
-export type PlatformRecordCategory = 'revenue' | 'waitlist' | 'aum';
+export type PlatformRecordCategory = 'revenue' | 'waitlist' | 'active_users';
 
 export type PlatformRevenueSource =
   | 'stripe'
@@ -9,7 +9,7 @@ export type PlatformRevenueSource =
   | 'card'
   | 'dinari'
   | 'waitlist'
-  | 'debank';
+  | 'privy';
 
 export interface RecordPlatformRecordInput {
   category?: PlatformRecordCategory;
@@ -47,11 +47,12 @@ export interface InvestorSummary {
     activeCount: number;
     byTier: Record<string, number>;
   };
-  scaAum: {
-    totalUsd: number;
-    walletCount: number;
-    lastSnapshotAt: string | null;
-    lastScanAt: string | null;
+  activeUsers: {
+    totalUsers: number;
+    activeUsers: number;
+    periodFrom: string;
+    periodTo: string;
+    lastSyncedAt: string | null;
   };
 }
 

@@ -224,6 +224,56 @@ export async function resolvePrivyIdentity(
   return identity;
 }
 
+function getLatestVerifiedAt(user: User): number | null {
+  let latest: number | null = null;
+  for (const account of user.linked_accounts) {
+    const ts = (account as { latest_verified_at?: number | null }).latest_verified_at;
+    if (typeof ts === 'number' && Number.isFinite(ts) && (latest === null || ts > latest)) {
+      latest = ts;
+    }
+  }
+  return latest;
+}
+
+export interface PrivyUserMetrics {
+  totalUsers: number;
+  activeUsers: number;
+  periodFrom: Date;
+  periodTo: Date;
+  syncedAt: Date;
+}
+
+/** 從 Privy 列出所有用戶，統計期間內有 latest_verified_at 的活躍用戶。 */
+export async function fetchPrivyUserMetrics(periodFrom: Date, periodTo: Date): Promise<PrivyUserMetrics> {
+  const fromSec = Math.floor(periodFrom.getTime() / 1000);
+  const toSec = Math.floor(periodTo.getTime() / 1000);
+  let totalUsers = 0;
+  let activeUsers = 0;
+
+  for await (const user of getClient().users().list()) {
+    totalUsers += 1;
+    const latest = getLatestVerifiedAt(user);
+    if (latest !== null && latest >= fromSec && latest <= toSec) {
+      activeUsers += 1;
+    }
+  }
+
+  appLogger.info('[Privy] User metrics fetched', {
+    totalUsers,
+    activeUsers,
+    periodFrom: periodFrom.toISOString(),
+    periodTo: periodTo.toISOString(),
+  });
+
+  return {
+    totalUsers,
+    activeUsers,
+    periodFrom,
+    periodTo,
+    syncedAt: new Date(),
+  };
+}
+
 /** Delete Privy user by DID (best-effort; used during account deletion). */
 export async function deletePrivyUser(privyUserId: string | null | undefined): Promise<void> {
   if (!privyUserId) {

@@ -19,9 +19,8 @@ export const WEB_TIER_EXEMPT_PATHS = new Set([
   '/api/platform-insights/summary',
   '/api/platform-insights/revenue-events',
   '/api/platform-insights/backfill',
-  '/api/sca-analytics/scan',
-  '/api/sca-analytics/summary',
-  '/api/sca-analytics/snapshots',
+  '/api/privy-analytics/sync',
+  '/api/privy-analytics/summary',
 ]);
 
 export function tierHasWebAccess(tier: string): boolean {

@@ -120,9 +120,8 @@ model User {
   codegoCardholder CodegoCardholder?
   codegoCards      CodegoCard[]
 
-  // 關聯：平台投資人報表 / SCA AUM
+  // 關聯：平台投資人報表
   platformRecords PlatformRecord[]
-  scaWalletSnapshots    ScaWalletSnapshot[]
 
   @@index([referredByUserId])
   @@index([scaAddress])
@@ -1290,7 +1289,7 @@ model CodegoWebhookEvent {
 // 經 Kura 管理之統一投資人資料（營收 / waitlist / AUM / Bridge liquidation）
 model PlatformRecord {
   id             String   @id @default(uuid())
-  category       String   @default("revenue") // revenue | waitlist | aum
+  category       String   @default("revenue") // revenue | waitlist | active_users
   userId         String?
   source         String   // stripe | bridge_va | bridge_liquidation_in | bridge_liquidation_out | waitlist | debank | ...
   eventType      String
@@ -1316,39 +1315,4 @@ model PlatformRecord {
   @@index([occurredAt])
   @@index([eventType])
   @@index([product])
-}
-
-// ==========================================
-// 14. SCA Analytics（Kura 錢包 AUM 快照）
-// ==========================================
-
-model ScaWalletSnapshot {
-  id         String   @id @default(uuid())
-  userId     String
-  scaAddress String
-  spotUsd    Float    @default(0)
-  defiUsd    Float    @default(0)
-  totalUsd   Float    @default(0)
-  source     String   @default("debank")
-  snapshotAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, snapshotAt])
-  @@index([scaAddress, snapshotAt])
-  @@index([snapshotAt])
-}
-
-model ScaScanRun {
-  id             String    @id @default(uuid())
-  status         String    @default("running") // running | completed | failed
-  walletsScanned Int       @default(0)
-  walletsFailed  Int       @default(0)
-  totalAumUsd    Float     @default(0)
-  startedAt      DateTime  @default(now())
-  completedAt    DateTime?
-  errorMessage   String?
-
-  @@index([startedAt])
-  @@index([status])
 }

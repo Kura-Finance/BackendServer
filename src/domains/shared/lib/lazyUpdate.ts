@@ -1,4 +1,5 @@
-const DEFAULT_SCA_SCAN_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
+const DEFAULT_PRIVY_METRICS_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
+const DEFAULT_SCA_SCAN_MIN_INTERVAL_MS = DEFAULT_PRIVY_METRICS_MIN_INTERVAL_MS;
 const DEFAULT_PLATFORM_BACKFILL_MIN_INTERVAL_MS = 60 * 60 * 1000; // 1h
 
 function parseIntervalMs(envValue: string | undefined, fallback: number): number {
@@ -6,8 +7,16 @@ function parseIntervalMs(envValue: string | undefined, fallback: number): number
   return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : fallback;
 }
 
+export function getPrivyMetricsMinIntervalMs(): number {
+  return parseIntervalMs(
+    process.env.PRIVY_METRICS_MIN_INTERVAL_MS ?? process.env.SCA_SCAN_MIN_INTERVAL_MS,
+    DEFAULT_PRIVY_METRICS_MIN_INTERVAL_MS,
+  );
+}
+
+/** @deprecated use getPrivyMetricsMinIntervalMs */
 export function getScaScanMinIntervalMs(): number {
-  return parseIntervalMs(process.env.SCA_SCAN_MIN_INTERVAL_MS, DEFAULT_SCA_SCAN_MIN_INTERVAL_MS);
+  return getPrivyMetricsMinIntervalMs();
 }
 
 export function getPlatformBackfillMinIntervalMs(): number {

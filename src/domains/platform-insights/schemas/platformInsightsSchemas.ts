@@ -13,7 +13,7 @@ export const investorPeriodQuerySchema = z.object({
 });
 
 export const platformRecordsQuerySchema = investorPeriodQuerySchema.extend({
-  category: z.enum(['revenue', 'waitlist', 'aum']).optional(),
+  category: z.enum(['revenue', 'waitlist', 'active_users']).optional(),
   source: z
     .enum([
       'stripe',
@@ -24,7 +24,7 @@ export const platformRecordsQuerySchema = investorPeriodQuerySchema.extend({
       'card',
       'dinari',
       'waitlist',
-      'debank',
+      'privy',
     ])
     .optional(),
   product: z.string().trim().min(1).optional(),
@@ -47,6 +47,4 @@ export const revenueEventsQuerySchema = investorPeriodQuerySchema.extend({
   limit: z.coerce.number().int().min(1).max(500).optional(),
 });
 
-export const scaSnapshotsQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(200).optional(),
-});
+export const privyMetricsQuerySchema = investorPeriodQuerySchema;

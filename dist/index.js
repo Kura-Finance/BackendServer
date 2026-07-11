@@ -22,7 +22,7 @@ const codego_1 = require("./domains/codego");
 const dinari_1 = require("./domains/dinari");
 const waitlist_1 = require("./domains/waitlist");
 const platform_insights_1 = require("./domains/platform-insights");
-const sca_analytics_1 = require("./domains/sca-analytics");
+const privy_analytics_1 = require("./domains/privy-analytics");
 const logger_1 = require("./domains/logger");
 const rateLimiter_1 = require("./domains/shared/middleware/rateLimiter");
 const requireWebTier_1 = require("./domains/auth/middleware/requireWebTier");
@@ -214,7 +214,7 @@ app.use('/api/codego', codego_1.codegoRouter);
 app.use('/api/dinari', dinari_1.dinariRouter);
 app.use('/api/waitlist', waitlist_1.waitlistRouter);
 app.use('/api/platform-insights', platform_insights_1.platformInsightsRouter);
-app.use('/api/sca-analytics', sca_analytics_1.scaAnalyticsRouter);
+app.use('/api/privy-analytics', privy_analytics_1.privyAnalyticsRouter);
 // ========================================
 // 6. 錯誤處理中間件
 // ========================================

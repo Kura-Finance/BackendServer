@@ -308,30 +308,29 @@ export class PlatformRecordService {
     });
   }
 
-  static async recordFromScaSnapshot(params: {
-    userId: string;
-    scaAddress: string;
-    spotUsd: number;
-    defiUsd: number;
-    totalUsd: number;
-    snapshotAt: Date;
-    scaSnapshotId: string;
+  static async recordFromPrivyMetrics(params: {
+    syncRunId: string;
+    totalUsers: number;
+    activeUsers: number;
+    periodFrom: Date;
+    periodTo: Date;
+    syncedAt: Date;
   }): Promise<void> {
     await this.record({
-      category: 'aum',
-      userId: params.userId,
-      source: 'debank',
-      eventType: 'sca_snapshot',
-      idempotencyKey: `aum:${params.scaSnapshotId}`,
-      grossAmount: params.totalUsd,
-      netAmount: params.totalUsd,
-      currency: 'usd',
-      scaAddress: params.scaAddress,
-      externalId: params.scaSnapshotId,
-      occurredAt: params.snapshotAt,
+      category: 'active_users',
+      source: 'privy',
+      eventType: 'privy_metrics_snapshot',
+      idempotencyKey: `privy:metrics:${params.syncRunId}`,
+      grossAmount: params.activeUsers,
+      netAmount: params.totalUsers,
+      currency: 'count',
+      externalId: params.syncRunId,
+      occurredAt: params.syncedAt,
       metadata: {
-        spotUsd: params.spotUsd,
-        defiUsd: params.defiUsd,
+        totalUsers: params.totalUsers,
+        activeUsers: params.activeUsers,
+        periodFrom: params.periodFrom.toISOString(),
+        periodTo: params.periodTo.toISOString(),
       },
     });
   }
@@ -343,7 +342,6 @@ export class PlatformRecordService {
       latestCard,
       latestStripeEvent,
       latestWaitlist,
-      latestSnapshot,
     ] = await Promise.all([
       prisma.bridgeVirtualAccountEvent.findFirst({
         where: { type: 'payment_processed' },
@@ -369,10 +367,6 @@ export class PlatformRecordService {
         orderBy: { createdAt: 'desc' },
         select: { id: true, email: true, product: true },
       }),
-      prisma.scaWalletSnapshot.findFirst({
-        orderBy: { snapshotAt: 'desc' },
-        select: { id: true },
-      }),
     ]);
 
     const keys: string[] = [];
@@ -390,7 +384,6 @@ export class PlatformRecordService {
     if (latestWaitlist) {
       keys.push(`waitlist:${latestWaitlist.product}:${latestWaitlist.email}`);
     }
-    if (latestSnapshot) keys.push(`aum:${latestSnapshot.id}`);
 
     if (keys.length === 0) return false;
 
@@ -511,19 +504,6 @@ export class PlatformRecordService {
         source: entry.source,
         name: entry.name,
         occurredAt: entry.createdAt,
-      });
-    }
-
-    const scaSnapshots = await prisma.scaWalletSnapshot.findMany();
-    for (const snap of scaSnapshots) {
-      await this.recordFromScaSnapshot({
-        userId: snap.userId,
-        scaAddress: snap.scaAddress,
-        spotUsd: snap.spotUsd,
-        defiUsd: snap.defiUsd,
-        totalUsd: snap.totalUsd,
-        snapshotAt: snap.snapshotAt,
-        scaSnapshotId: snap.id,
       });
     }
 
@@ -653,18 +633,16 @@ export class PlatformRecordService {
       byTier[tier] = (byTier[tier] ?? 0) + 1;
     }
 
-    const latestAumRows = await prisma.platformRecord.findMany({
-      where: { category: 'aum' },
+    const latestPrivyMetrics = await prisma.platformRecord.findFirst({
+      where: { category: 'active_users', eventType: 'privy_metrics_snapshot' },
       orderBy: { occurredAt: 'desc' },
-      distinct: ['userId'],
-      select: { grossAmount: true, occurredAt: true },
-    });
-    const lastScan = await prisma.scaScanRun.findFirst({
-      where: { status: 'completed' },
-      orderBy: { completedAt: 'desc' },
+      select: { occurredAt: true, metadata: true },
     });
 
-    const totalAum = latestAumRows.reduce((sum, row) => sum + (row.grossAmount ?? 0), 0);
+    const privyMetadata =
+      latestPrivyMetrics?.metadata && typeof latestPrivyMetrics.metadata === 'object'
+        ? (latestPrivyMetrics.metadata as Record<string, unknown>)
+        : null;
 
     return {
       period: { from: period.from.toISOString(), to: period.to.toISOString() },
@@ -683,11 +661,18 @@ export class PlatformRecordService {
         activeCount: activeSubscriptions.length,
         byTier,
       },
-      scaAum: {
-        totalUsd: roundUsd(totalAum),
-        walletCount: latestAumRows.length,
-        lastSnapshotAt: latestAumRows[0]?.occurredAt.toISOString() ?? null,
-        lastScanAt: lastScan?.completedAt?.toISOString() ?? null,
+      activeUsers: {
+        totalUsers: typeof privyMetadata?.totalUsers === 'number' ? privyMetadata.totalUsers : 0,
+        activeUsers: typeof privyMetadata?.activeUsers === 'number' ? privyMetadata.activeUsers : 0,
+        periodFrom:
+          typeof privyMetadata?.periodFrom === 'string'
+            ? privyMetadata.periodFrom
+            : period.from.toISOString(),
+        periodTo:
+          typeof privyMetadata?.periodTo === 'string'
+            ? privyMetadata.periodTo
+            : period.to.toISOString(),
+        lastSyncedAt: latestPrivyMetrics?.occurredAt.toISOString() ?? null,
       },
     };
   }
