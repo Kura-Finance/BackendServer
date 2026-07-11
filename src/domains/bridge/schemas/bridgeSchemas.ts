@@ -6,12 +6,6 @@ const decimalAmount = z
   .trim()
   .regex(/^\d+(\.\d+)?$/, 'amount must be a positive decimal string');
 
-const optionalDecimalAmount = z
-  .string()
-  .trim()
-  .regex(/^\d+(\.\d+)?$/, 'developerFee must be a positive decimal string')
-  .optional();
-
 // EVM / Solana 地址（寬鬆驗證，由 Bridge 做最終校驗）
 const cryptoAddress = z.string().trim().min(20, 'invalid crypto address').max(120);
 
@@ -82,7 +76,7 @@ export const createOffRampBodySchema = z.object({
   destinationRail: fiatRail,
   destinationCurrency: fiatCurrency,
   externalAccountId: z.string().trim().min(1, 'externalAccountId is required'),
-  developerFee: optionalDecimalAmount,
+  // developerFee 不接受 client 指定：一律由後端依目的幣別計算（保證 ≥ Bridge 成本）。
   clientReferenceId: z.string().trim().max(200).optional(),
 });
 

@@ -16,6 +16,7 @@ import {
   PayloadKeyService,
   KeyPairNotConfiguredError,
   PayloadKeyHandle,
+  PayloadKeyDb,
 } from '../../shared/services/payloadKeyService';
 
 /**
@@ -103,9 +104,10 @@ export class DeBankService {
   private static async createPayloadKey(
     userId: string,
     scope: string,
+    db: PayloadKeyDb = prisma,
   ): Promise<PayloadKeyHandle> {
     try {
-      return await PayloadKeyService.createForUser(userId, scope);
+      return await PayloadKeyService.createForUser(userId, scope, db);
     } catch (err) {
       if (err instanceof KeyPairNotConfiguredError) {
         appLogger.warn(
@@ -218,14 +220,19 @@ export class DeBankService {
 
     const protocols = data as DeBankProtocolPosition[];
 
-    // Phase 3：必須有 keypair。沒有就拋（caller 顯示「請先 setup keypair」）。
-    const protocolKey = await this.createPayloadKey(
-      userId,
-      `debank_protocol:${normalizedAddress}:${Date.now()}`,
-    );
-
+    // Phase 3：必須有 keypair。SEK 與 cache 寫入包進同一個 transaction，
+    // EncryptedPayloadKey row 與引用它的 cache row 一起 commit / rollback，
+    // 避免「key 已建但 createMany 失敗」留下孤兒、以及 GC 在兩者之間誤刪的 race。
+    const sekHandles: PayloadKeyHandle[] = [];
     try {
       await prisma.$transaction(async (tx) => {
+        const protocolKey = await this.createPayloadKey(
+          userId,
+          `debank_protocol:${normalizedAddress}:${Date.now()}`,
+          tx,
+        );
+        sekHandles.push(protocolKey);
+
         await tx.deBankProtocolCache.deleteMany({
           where: {
             userId,
@@ -270,8 +277,18 @@ export class DeBankService {
           error: err instanceof Error ? err.message : String(err),
         });
       }
+
+      // Best-effort GC：清掉這次 delete + insert 換下來的孤兒 EncryptedPayloadKey。
+      try {
+        await PayloadKeyService.deleteOrphanedKeys(userId);
+      } catch (gcError) {
+        logDebug('Failed to GC orphaned payload keys after debank protocol sync', {
+          userId,
+          error: gcError instanceof Error ? gcError.message : String(gcError),
+        });
+      }
     } finally {
-      zeroize(protocolKey.sek);
+      sekHandles.forEach((handle) => zeroize(handle.sek));
     }
 
     if (forceRefresh) {
@@ -350,13 +367,16 @@ export class DeBankService {
 
     const tokens = data as DeBankTokenPosition[];
 
-    const tokenKey = await this.createPayloadKey(
-      userId,
-      `debank_token:${normalizedAddress}:${Date.now()}`,
-    );
-
+    const sekHandles: PayloadKeyHandle[] = [];
     try {
       await prisma.$transaction(async (tx) => {
+        const tokenKey = await this.createPayloadKey(
+          userId,
+          `debank_token:${normalizedAddress}:${Date.now()}`,
+          tx,
+        );
+        sekHandles.push(tokenKey);
+
         await tx.deBankTokenCache.deleteMany({
           where: {
             userId,
@@ -401,8 +421,17 @@ export class DeBankService {
           error: err instanceof Error ? err.message : String(err),
         });
       }
+
+      try {
+        await PayloadKeyService.deleteOrphanedKeys(userId);
+      } catch (gcError) {
+        logDebug('Failed to GC orphaned payload keys after debank token sync', {
+          userId,
+          error: gcError instanceof Error ? gcError.message : String(gcError),
+        });
+      }
     } finally {
-      zeroize(tokenKey.sek);
+      sekHandles.forEach((handle) => zeroize(handle.sek));
     }
 
     if (forceRefresh) {

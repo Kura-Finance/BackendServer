@@ -22,6 +22,7 @@ import type {
   BridgeCustomerResponse,
   BridgeCustomerType,
   BridgeEndorsement,
+  BridgeEndorsementType,
   BridgeExternalAccountResponse,
   BridgeFeeConfig,
   BridgeKycLinkResponse,
@@ -114,62 +115,130 @@ async function bridgeFetch<T>(path: string, options: BridgeFetchOptions = {}): P
 
 const APPROVED_KYC_STATUSES = new Set(['approved', 'active']);
 
-// ── 入金（VA）費率：平台向用戶收取的 developer fee，依入金幣別套用 ──────
-//
-// 設計：費率一律由後端決定（不接受 client 指定），避免用戶把 fee 改成 0。
-//
-// 現行：用 developer_fee_percent（單一百分比 / VA）。
-// 注意：Bridge VA 沒有獨立的「FX fee / spread」欄位，想對用戶收的 spread
-// 一律併進 fee_percent；Bridge 自身的匯率 spread 另從 exchange_fee 扣（吃 margin）。
-//
-// 百分比為 base 100：'0.1' = 0.1%。
-const VA_FEE_PERCENT: Record<string, string> = {
-  usd: '0.10', // ACH/Fedwire 0.10%（developer_fee_percent 無法區分 rail，也收不了 Fedwire 固定費）
-  gbp: '0.20', // FPS 0.10% + FX 0.10%
-  eur: '0.20', // SEPA 0.10% + FX 0.10%
-  mxn: '0.35', // SPEI 0.20% + FX 0.15%
-  brl: '0.35', // PIX 0.20% + FX 0.15%
-  cop: '0.50', // PSE 0.30% + FX 0.20%
+// 入金幣別 → 需要的 Bridge endorsement（rail 權限）。
+// 這些全是 API 驅動：用建立 KYC link 時帶 `endorsements` 申請即可，「不需」到 dashboard 開通。
+//   usd  → base（KYC 通過預設具備）
+//   gbp  → faster_payments（UK FPS）
+//   eur  → sepa
+//   mxn  → spei；brl → pix；cop → cop
+const CURRENCY_ENDORSEMENT: Record<string, BridgeEndorsementType> = {
+  usd: 'base',
+  gbp: 'faster_payments',
+  eur: 'sepa',
+  mxn: 'spei',
+  brl: 'pix',
+  cop: 'cop',
 };
 
-// 之後若向 Bridge 申請開通 fee_config Beta，可改用 per-rail 的固定費 + 百分比
-// （例如 USD 的 Fedwire $8 + 0.10%）。設 BRIDGE_FEE_CONFIG_ENABLED=true 啟用。
-const VA_FEE_CONFIG: Record<string, BridgeFeeConfig> = {
-  usd: {
-    source: {
-      ach_push: { fee_percent: '0.10' },
-      wire: { fee_amount: '8.00', fee_percent: '0.10' }, // Fedwire $8 + 0.10%
-    },
-  },
-  gbp: { source: { default: { fee_percent: '0.20' } } },
-  eur: { source: { default: { fee_percent: '0.20' } } },
-  mxn: { source: { default: { fee_percent: '0.35' } } },
-  brl: { source: { default: { fee_percent: '0.35' } } },
-  cop: { source: { default: { fee_percent: '0.50' } } },
+// ── 費率設計：保證不虧本 ────────────────────────────────────────────────
+//
+// 核心原則：向用戶收的 developer fee 必須 ≥ Bridge 向「平台」收的批發成本，
+// 否則每筆都在貼錢。費率一律由後端決定（不接受 client 指定），避免被改成 0。
+//
+// Bridge 向平台收的批發成本（2026 報價）：
+//   - On-ramp（VA）：0.50% of volume
+//   - Off-ramp（transfer）：0.25% of volume
+//   - FX all-in：USD<>EUR 0.50%、USD<>MXN 0.50%、USD<>BRL 0.55%
+//   - USDT 支援：+0.10%
+//   - 固定費：$2 / VA / month active、$2 KYC、$10 KYB、$0.25 / wallet / month
+//   - 第三方費（ACH / wire / gas）：pass-through
+//
+// 註：百分比固定費（$2/VA、$2 KYC 等）無法用百分比 fee 完全回收，小額入金仍會被
+// 固定費吃掉 margin。fee_config 路徑會帶 minimum_fee 設下限；developer_fee_percent
+// 路徑無法設下限（Bridge 限制），固定費由整體 margin 吸收。
+
+// 平台 margin（疊加在 Bridge 批發成本之上，base 100：'0.25' = 0.25%）。
+const PLATFORM_MARGIN_PERCENT = 0.25;
+
+// USDT 目的幣的額外批發成本，直通給用戶（不另加 margin）。
+const USDT_SURCHARGE_PERCENT = 0.1;
+
+// 每筆 off-ramp 最低 fee（USD 計），避免極小額轉帳的 fee 被四捨五入吃掉。
+const OFFRAMP_MIN_FEE = 0.5;
+
+// Bridge 向平台收的 on-ramp 批發成本（含 FX，base 100）。
+const ONRAMP_WHOLESALE_PERCENT: Record<string, number> = {
+  usd: 0.5, // onramp 0.50%
+  gbp: 0.6, // onramp 0.50% +（GBP<>USD FX 未報價，保守 +0.10% buffer）
+  eur: 0.5, // USD<>EUR FX all-in
+  mxn: 0.5, // USD<>MXN FX all-in
+  brl: 0.55, // USD<>BRL FX all-in
+  cop: 0.6, // 未報價，保守 buffer
 };
+
+// Bridge 向平台收的 off-ramp 批發成本（依目的法幣，含 FX，base 100）。
+const OFFRAMP_WHOLESALE_PERCENT: Record<string, number> = {
+  usd: 0.25, // offramp 0.25%
+  gbp: 0.35, // offramp 0.25% + buffer
+  eur: 0.5, // USD<>EUR FX all-in
+  mxn: 0.5, // USD<>MXN FX all-in
+  brl: 0.55, // USD<>BRL FX all-in
+  cop: 0.5, // 未報價，保守 buffer
+};
+
+/** 向上取兩位小數，確保收的 fee 不低於成本（不虧本）。 */
+function ceil2(n: number): number {
+  return Math.ceil(n * 100) / 100;
+}
+
+/** decimal string 去除尾端多餘 0（"0.500" → "0.5"，"1.000" → "1"）。 */
+function trimDecimal(s: string): string {
+  return s.includes('.') ? s.replace(/0+$/, '').replace(/\.$/, '') : s;
+}
+
+/** 入金費率 = 批發成本 + margin（+ USDT surcharge），向上取兩位小數。 */
+function onRampFeePercent(sourceCurrency: string, destinationCurrency: string): string | null {
+  const wholesale = ONRAMP_WHOLESALE_PERCENT[sourceCurrency.toLowerCase()];
+  if (wholesale === undefined) return null;
+  const surcharge = destinationCurrency.toLowerCase() === 'usdt' ? USDT_SURCHARGE_PERCENT : 0;
+  return ceil2(wholesale + PLATFORM_MARGIN_PERCENT + surcharge).toFixed(2);
+}
+
+// 之後若向 Bridge 申請開通 fee_config Beta，可改用 per-rail 的固定費 + 百分比
+// （例如 USD 的 Fedwire 第三方固定費）。設 BRIDGE_FEE_CONFIG_ENABLED=true 啟用。
+function buildFeeConfig(feePercent: string): BridgeFeeConfig {
+  return {
+    source: {
+      // minimum_fee 確保小額入金仍能覆蓋 Bridge 固定費（$2/VA、$2 KYC）的一部分。
+      default: { fee_percent: feePercent, minimum_fee: '2.00' },
+    },
+  };
+}
 
 function isFeeConfigEnabled(): boolean {
   return process.env.BRIDGE_FEE_CONFIG_ENABLED === 'true';
 }
 
 /**
- * 依入金幣別組出要送給 Bridge 的費用欄位。
- * - 現行（預設）→ 回傳 { developer_fee_percent }
- * - BRIDGE_FEE_CONFIG_ENABLED=true 且該幣別有設定 → 回傳 { fee_config }
- * - 無對應費率設定 → 回傳 {}（不收費）
+ * 依入金幣別 + 目的幣組出要送給 Bridge 的費用欄位。
+ * - BRIDGE_FEE_CONFIG_ENABLED=true → 回傳 { fee_config }（含 minimum_fee 下限）
+ * - 否則 → 回傳 { developer_fee_percent }
+ * - 無對應費率設定 → 回傳 {}（不收費，理論上不會發生：幣別由 schema enum 限制）
  * fee_config 與 developer_fee_percent 互斥，只會回傳其中一個。
  */
 function buildVirtualAccountFeeBody(
   sourceCurrency: string,
+  destinationCurrency: string,
 ): { fee_config: BridgeFeeConfig } | { developer_fee_percent: string } | Record<string, never> {
-  const currency = sourceCurrency.toLowerCase();
-  if (isFeeConfigEnabled()) {
-    const feeConfig = VA_FEE_CONFIG[currency];
-    if (feeConfig) return { fee_config: feeConfig };
-  }
-  const percent = VA_FEE_PERCENT[currency];
-  if (percent) return { developer_fee_percent: percent };
-  return {};
+  const percent = onRampFeePercent(sourceCurrency, destinationCurrency);
+  if (!percent) return {};
+  if (isFeeConfigEnabled()) return { fee_config: buildFeeConfig(percent) };
+  return { developer_fee_percent: percent };
+}
+
+/**
+ * 計算 off-ramp 要送給 Bridge 的 developer_fee（絕對金額，以 source 穩定幣計）。
+ * = max(amount × (批發成本 + margin)%, OFFRAMP_MIN_FEE)，向上取 2 位小數。
+ * 一律由後端計算，不接受 client 指定，避免被設成 0。
+ */
+function computeOffRampDeveloperFee(amount: string, destinationCurrency: string): string {
+  const amt = Number(amount);
+  const wholesale = OFFRAMP_WHOLESALE_PERCENT[destinationCurrency.toLowerCase()] ?? 0.25;
+  if (!Number.isFinite(amt) || amt <= 0) return trimDecimal(OFFRAMP_MIN_FEE.toFixed(2));
+  const pctFee = ceil2((amt * (wholesale + PLATFORM_MARGIN_PERCENT)) / 100);
+  // fee 不可超過轉帳本金（理論上不會發生，極小額時 minimum_fee 仍可能逼近本金）。
+  const fee = Math.min(Math.max(pctFee, OFFRAMP_MIN_FEE), amt);
+  return trimDecimal(fee.toFixed(2));
 }
 
 function asJson(value: unknown): Prisma.InputJsonValue {
@@ -471,6 +540,43 @@ export class BridgeService {
   }
 
   /**
+   * 確認 customer 已具備「該入金幣別所需」且 approved 的 endorsement。
+   *
+   * 先向 Bridge 刷新最新狀態（避免本地 endorsements 過時），再判定。
+   * 缺少時丟出結構化 409（code=endorsement_required），讓前端引導用戶
+   * 透過 POST /api/bridge/kyc-link 帶 endorsements 申請（純 API，免 dashboard）。
+   */
+  private static async assertEndorsementForCurrency(
+    userId: string,
+    currency: string,
+  ): Promise<void> {
+    const required = CURRENCY_ENDORSEMENT[currency.toLowerCase()];
+    // base（usd）KYC 通過即具備，無需額外 endorsement
+    if (!required || required === 'base') return;
+
+    // 向 Bridge 拉最新 customer 狀態（同時同步本地 endorsements）
+    const status = await this.getCustomerStatus(userId);
+    const approved = status.endorsements.some(
+      (e) => e.name === required && e.status === 'approved',
+    );
+    if (approved) return;
+
+    throw new BridgeError(
+      409,
+      JSON.stringify({
+        code: 'endorsement_required',
+        endorsement: required,
+        currency: currency.toLowerCase(),
+        message:
+          `${currency.toUpperCase()} virtual accounts require the "${required}" endorsement. ` +
+          `Request it via POST /api/bridge/kyc-link with endorsements: ["${required}"] ` +
+          `and have the user complete the hosted flow (usually just a ToS step if KYC is already approved).`,
+      }),
+      'assertEndorsementForCurrency',
+    );
+  }
+
+  /**
    * 包裝會用到 bridgeCustomerId 的 Bridge 呼叫（transfer / external account）。
    * 若 Bridge 回報 customer 已不存在（404 not_found），清除 stale 參照並要求重新 KYC，
    * 與 kyc-link / customer 查詢採同一套自我修復邏輯，避免使用者卡關。
@@ -510,6 +616,10 @@ export class BridgeService {
     params: CreateVirtualAccountParams,
   ): Promise<VirtualAccountResult> {
     const bridgeCustomerId = await this.requireTransactableCustomer(userId);
+
+    // 入金幣別需要對應的 rail endorsement（gbp→faster_payments 等）；
+    // 缺少時回清楚的 409，而非 Bridge 的神秘 401 not_allowed。
+    await this.assertEndorsementForCurrency(userId, params.sourceCurrency);
 
     const address = params.toAddress ?? (await this.resolveUserWalletAddress(userId));
     if (!address) {
@@ -565,8 +675,8 @@ export class BridgeService {
               currency: params.destinationCurrency,
               address,
             },
-            // 費率由後端依入金幣別套用（fee_config 或 developer_fee_percent）
-            ...buildVirtualAccountFeeBody(params.sourceCurrency),
+            // 費率由後端依入金幣別 + 目的幣套用（fee_config 或 developer_fee_percent）
+            ...buildVirtualAccountFeeBody(params.sourceCurrency, params.destinationCurrency),
           },
         },
       ),
@@ -776,7 +886,6 @@ export class BridgeService {
       destinationRail: string;
       destinationCurrency: string;
       externalAccountId: string;
-      developerFee?: string;
       clientReferenceId?: string;
     },
   ): Promise<TransferResult> {
@@ -791,13 +900,16 @@ export class BridgeService {
       throw new BridgeError(404, 'External account not found for this user.', 'createOffRamp');
     }
 
+    // developer_fee 一律由後端計算（不接受 client 指定），保證 ≥ Bridge 批發成本。
+    const developerFee = computeOffRampDeveloperFee(params.amount, params.destinationCurrency);
+
     const transfer = await this.withStaleCustomerGuard(userId, 'createOffRamp', () =>
       bridgeFetch<BridgeTransferResponse>('/transfers', {
         method: 'POST',
         body: {
           amount: params.amount,
           on_behalf_of: bridgeCustomerId,
-          ...(params.developerFee ? { developer_fee: params.developerFee } : {}),
+          developer_fee: developerFee,
           ...(params.clientReferenceId ? { client_reference_id: params.clientReferenceId } : {}),
           source: {
             payment_rail: params.sourceRail,

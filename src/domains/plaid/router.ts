@@ -68,7 +68,7 @@ router.post(
  *   - transactions: 交易記錄
  *   - investmentAccounts: 投資帳戶列表
  *   - investments: 投資持倉
- *   - _cacheSource: 數據來源提示 ('來自緩存' 或 '強制刷新，來自 Plaid API')
+ *   - _cacheSource: 數據來源提示 ('From cache' / 'Forced refresh from Plaid API' / 'Daily refresh limit reached, showing last synced data')
  * 
  * 錯誤代碼：
  *   - 429: 已達到每日刷新限制 (僅在手動刷新時出現)

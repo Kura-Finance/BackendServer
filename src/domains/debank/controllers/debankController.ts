@@ -5,6 +5,10 @@ import { logError } from '../../logger';
 import type { GetProtocolsQuery } from '../schemas/debankSchemas';
 import type { UnlinkAddressParams } from '../schemas/debankSchemas';
 import { sendError, sendSuccess } from '../../shared/lib/apiResponse';
+import {
+  buildCacheResponseFields,
+  CACHE_PROVIDER,
+} from '../../shared/lib/cacheResponseUtil';
 
 /**
  * 將 DeBank 服務錯誤統一映射為 HTTP 回應。
@@ -64,7 +68,8 @@ function sendDeBankError(
  * 取得使用者在 DeBank 的協議資料（Phase 3 Zero-Access E2EE only）
  * 路由：GET /api/debank/protocols?address=0x...&refresh=true|false
  *
- * 回傳：{ address, payloadKeys[], protocols: encryptedRows[], total }
+ * 回傳：{ address, payloadKeys[], protocols: encryptedRows[], total, _cacheSource, ... }
+ * - _cacheSource: 'From cache' | 'Forced refresh from DeBank API' | 'Daily refresh limit reached, showing last synced data'
  * - 後端不解密；前端用 privateKey unwrap payloadKeys 後解每個 row 的 payloadCiphertext
  */
 export const getUserProtocolPositions = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -82,6 +87,10 @@ export const getUserProtocolPositions = async (req: AuthRequest, res: Response):
       payloadKeys: result.payloadKeys,
       protocols: result.protocols,
       total: result.protocols.length,
+      ...buildCacheResponseFields({
+        forceRefresh,
+        provider: CACHE_PROVIDER.DEBANK,
+      }),
     });
   } catch (error) {
     logError('Get DeBank protocol positions failed', error, {
@@ -103,9 +112,12 @@ export const getUserProtocolPositions = async (req: AuthRequest, res: Response):
           payloadKeys: cached.payloadKeys,
           protocols: cached.protocols,
           total: cached.protocols.length,
-        }, 200, {
-          limitReached: true,
-          message: error instanceof Error ? error.message : undefined,
+          ...buildCacheResponseFields({
+            forceRefresh: true,
+            limitReached: true,
+            message: error instanceof Error ? error.message : undefined,
+            provider: CACHE_PROVIDER.DEBANK,
+          }),
         });
       },
     );
@@ -116,7 +128,7 @@ export const getUserProtocolPositions = async (req: AuthRequest, res: Response):
  * 取得使用者在 DeBank 的 EVM Token 持倉（Phase 3 Zero-Access E2EE only）
  * 路由：GET /api/debank/tokens?address=0x...&refresh=true|false
  *
- * 回傳：{ address, payloadKeys[], tokens: encryptedRows[], total }
+ * 回傳：{ address, payloadKeys[], tokens: encryptedRows[], total, _cacheSource, ... }
  */
 export const getUserTokenPositions = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -134,6 +146,10 @@ export const getUserTokenPositions = async (req: AuthRequest, res: Response): Pr
       payloadKeys: result.payloadKeys,
       tokens: result.tokens,
       total: result.tokens.length,
+      ...buildCacheResponseFields({
+        forceRefresh,
+        provider: CACHE_PROVIDER.DEBANK,
+      }),
     });
   } catch (error) {
     logError('Get DeBank token positions failed', error, {
@@ -155,9 +171,12 @@ export const getUserTokenPositions = async (req: AuthRequest, res: Response): Pr
           payloadKeys: cached.payloadKeys,
           tokens: cached.tokens,
           total: cached.tokens.length,
-        }, 200, {
-          limitReached: true,
-          message: error instanceof Error ? error.message : undefined,
+          ...buildCacheResponseFields({
+            forceRefresh: true,
+            limitReached: true,
+            message: error instanceof Error ? error.message : undefined,
+            provider: CACHE_PROVIDER.DEBANK,
+          }),
         });
       },
     );

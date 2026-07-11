@@ -66,6 +66,8 @@ jobs:
 
           DB_PASSWORD_ENCODED=$(node -e "console.log(encodeURIComponent(process.env.DB_PASSWORD || ''))")
           export DATABASE_URL="postgresql://${{ env.DB_USER }}:${DB_PASSWORD_ENCODED}@127.0.0.1:5432/${{ env.DB_NAME }}?schema=${{ env.DB_SCHEMA }}"
+          # 清除上次失敗留下的 failed migration 記錄（幂等：無 failed 記錄時為 no-op）
+          npx prisma migrate resolve --rolled-back 20260616000000_plaid_cache_item_cascade || true
           npx prisma migrate deploy
 
       # 步驟 8: 構建 Docker 鏡像
@@ -129,12 +131,13 @@ jobs:
             DINARI_API_KEY_ID=${{ secrets.DINARI_API_KEY_ID }}
             DINARI_API_SECRET_KEY=${{ secrets.DINARI_API_SECRET_KEY }}
             DINARI_ENVIRONMENT=sandbox
+            DINARI_CHAIN_ID=eip155:8453
             PRIVY_APP_ID=${{ secrets.PRIVY_APP_ID }}
             PRIVY_APP_SECRET=${{ secrets.PRIVY_APP_SECRET }}
             PRIVY_VERIFICATION_KEY=${{ secrets.PRIVY_VERIFICATION_KEY }}
             WEBAUTHN_RP_ID=api.kura-finance.com
             WEBAUTHN_RP_NAME=Kura
-            WEBAUTHN_ORIGIN=https://api.kura-finance.com,android:apk-key-hash:MePOeO1vVaYsQDTyYfKRQy2-RHSgZxcCC4ifchmuu6A
+            WEBAUTHN_ORIGIN=https://api.kura-finance.com\,android:apk-key-hash:MePOeO1vVaYsQDTyYfKRQy2-RHSgZxcCC4ifchmuu6A
 
       
       # 🔔 GitHub Secrets 配置提示（首次部署時需設置）

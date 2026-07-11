@@ -17,6 +17,7 @@ export interface PlaidAccountPayload {
   plaidLogo?: string; // Plaid 原生返回的 logo (SVG URL)
   apy?: number; // 年化報酬率 (APY) - 儲蓄/支票帳戶
   mask?: string; // 帳號末 4 碼（部分機構不提供時為 undefined）
+  plaidItemId?: string; // 所屬 Plaid Item（aggregation 流程於 fetch 時帶入）
 }
 
 export interface PlaidTransactionPayload {
@@ -40,6 +41,7 @@ export interface PlaidTransactionPayload {
   plaidMerchantLogo?: string; // Plaid 原生返回的商家 logo (如果有)
   merchantCategory?: string; // 商家分類
   isPending?: boolean; // 是否為待處理交易
+  plaidItemId?: string; // 所屬 Plaid Item（aggregation 流程於 fetch 時帶入）
 }
 
 export interface PlaidInvestmentAccountPayload {
@@ -48,6 +50,7 @@ export interface PlaidInvestmentAccountPayload {
   type: InvestmentAccountType;
   logo: string; // 我們生成的 logo
   plaidLogo?: string; // Plaid 原生返回的 logo (如果有)
+  plaidItemId?: string; // 所屬 Plaid Item（fetch 時帶入，供快取建立 cascade relation）
 }
 
 export interface PlaidInvestmentPayload {
@@ -60,6 +63,7 @@ export interface PlaidInvestmentPayload {
   change24h: number;
   type: InvestmentType;
   logo: string;
+  plaidItemId?: string; // 所屬 Plaid Item（fetch 時帶入，供快取建立 cascade relation）
 }
 
 export interface FinanceSnapshot {

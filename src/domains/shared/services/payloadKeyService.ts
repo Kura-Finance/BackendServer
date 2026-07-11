@@ -146,6 +146,75 @@ export class PayloadKeyService {
   }
 
   /**
+   * 清掉「不再被任何加密快取 row 引用」的 EncryptedPayloadKey（孤兒 key）。
+   *
+   * 背景：每輪 sync 都會建新的 SEK / EncryptedPayloadKey。snapshot 模式
+   * （account / investment / debank：delete + insert）的舊 key 在 cache row
+   * 被換掉後立刻變孤兒；長期使用者的 EncryptedPayloadKey 表會無限成長。
+   *
+   * 安全性：
+   *   - 參照集涵蓋所有 9 張會寫 payloadKeyId 的表，referenced 的 key 一律保留，
+   *     避免誤刪仍在用的 key（誤刪會讓對應 row 永久無法解密）。
+   *   - 只刪 createdAt 早於 cutoff（預設 60s）的 key：任何「先建 key、後在另一個
+   *     transaction 寫 cache row」的 writer 都會在數秒內完成，cutoff 確保
+   *     in-flight 的新 key 不會被當成孤兒刪掉（防 race）。
+   *
+   * Best-effort：呼叫端應 try/catch 包起來，GC 失敗不影響主 sync 流程。
+   */
+  static async deleteOrphanedKeys(userId: string, olderThanMs = 60_000): Promise<number> {
+    // payloadKeyId 在大多數 cache 表是 nullable，只收非 null 的；
+    // AssetSnapshot.payloadKeyId 是 required，故用 { userId } 即可。
+    const nullableArgs = (): {
+      where: { userId: string; payloadKeyId: { not: null } };
+      select: { payloadKeyId: true };
+      distinct: ['payloadKeyId'];
+    } => ({
+      where: { userId, payloadKeyId: { not: null } },
+      select: { payloadKeyId: true },
+      distinct: ['payloadKeyId'],
+    });
+
+    const [acct, txn, invAcct, inv, exBal, exAsset, dbToken, dbProto, snap] = await Promise.all([
+      prisma.plaidAccountCache.findMany(nullableArgs()),
+      prisma.plaidTransactionCache.findMany(nullableArgs()),
+      prisma.plaidInvestmentAccountCache.findMany(nullableArgs()),
+      prisma.plaidInvestmentCache.findMany(nullableArgs()),
+      prisma.exchangeBalanceCache.findMany(nullableArgs()),
+      prisma.exchangeAssetCache.findMany(nullableArgs()),
+      prisma.deBankTokenCache.findMany(nullableArgs()),
+      prisma.deBankProtocolCache.findMany(nullableArgs()),
+      prisma.assetSnapshot.findMany({
+        where: { userId },
+        select: { payloadKeyId: true },
+        distinct: ['payloadKeyId'],
+      }),
+    ]);
+
+    const referenced = new Set<string>();
+    for (const rows of [acct, txn, invAcct, inv, exBal, exAsset, dbToken, dbProto, snap]) {
+      for (const r of rows) {
+        if (r.payloadKeyId) referenced.add(r.payloadKeyId);
+      }
+    }
+
+    const cutoff = new Date(Date.now() - olderThanMs);
+    const candidates = await prisma.encryptedPayloadKey.findMany({
+      where: { userId, createdAt: { lt: cutoff } },
+      select: { id: true },
+    });
+
+    const orphanIds = candidates.filter((k) => !referenced.has(k.id)).map((k) => k.id);
+    if (orphanIds.length === 0) return 0;
+
+    const { count } = await prisma.encryptedPayloadKey.deleteMany({
+      where: { userId, id: { in: orphanIds } },
+    });
+
+    logDebug('Deleted orphaned encrypted payload keys', { userId, count });
+    return count;
+  }
+
+  /**
    * 由 payloadKeyId 反查 wrappedSek + scope + algorithm，
    * 給前端讀取流程使用（前端拿到 wrappedSek 後用 privateKey 解開 SEK）。
    */

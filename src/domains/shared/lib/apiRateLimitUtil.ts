@@ -57,6 +57,14 @@ const REFRESH_LIMITS_BY_TIER = {
   'VIP': -1,
 };
 
+/** TrackFi 加密資產歷史（GET /api/assets/history/encrypted）可查詢的最大天數 */
+const ASSET_HISTORY_DAYS_BY_TIER: Record<string, number> = {
+  Basic: 30,
+  Pro: 365,
+  Ultimate: 365,
+  VIP: 365,
+};
+
 /**
  * 獲取用戶的訂閱等級
  */
@@ -85,6 +93,17 @@ export async function getUserTier(userId: string): Promise<string> {
 export function getApiLimitForTier(operationType: ApiOperationType, tier: string): number {
   const limits = API_LIMITS_BY_TIER[operationType];
   return limits[tier as keyof typeof limits] ?? limits['Basic'] ?? 1;
+}
+
+/** TrackFi 歷史查詢天數上限（依訂閱等級；未知 tier 視同 Basic） */
+export function getAssetHistoryDaysLimitForTier(tier: string): number {
+  return ASSET_HISTORY_DAYS_BY_TIER[tier] ?? 30;
+}
+
+/** 將請求的 days 限制在 tier 上限與全域 365 天內 */
+export function clampAssetHistoryDays(requestedDays: number, tier: string): number {
+  const tierLimit = getAssetHistoryDaysLimitForTier(tier);
+  return Math.min(requestedDays, tierLimit, 365);
 }
 
 /**

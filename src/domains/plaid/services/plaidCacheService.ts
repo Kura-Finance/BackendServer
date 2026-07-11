@@ -473,10 +473,12 @@ export class PlaidCacheService {
           PlaidInvestmentService.fetchInvestmentHoldings(userPlaidClient, item, decryptedAccessToken),
         ]);
 
-        accounts.push(...accountData.bankingAccounts);
-        transactions.push(...transactionData.transactions);
+        // Tag每筆 account / transaction 的來源 Plaid Item，讓加密 cache row 能寫入
+        // 正確的 plaidItemId（供前端把 account 與 item join；避免空字串 fallback）。
+        accounts.push(...accountData.bankingAccounts.map((a) => ({ ...a, plaidItemId: item.id })));
+        transactions.push(...transactionData.transactions.map((t) => ({ ...t, plaidItemId: item.id })));
         transactionData.removedTransactionIds.forEach((id) => removedTransactionIds.add(id));
-        investments.push(...investmentData.investments);
+        investments.push(...investmentData.investments.map((inv) => ({ ...inv, plaidItemId: item.id })));
 
         // Push investmentAccounts: holdings-API entries first, accountsGet entries last.
         // The dedup Map keeps the *last* value for each id, so accountsGet data
@@ -484,8 +486,8 @@ export class PlaidCacheService {
         // inside fetchInvestmentHoldings. This also handles the edge case where
         // an account appears in investmentsHoldingsGet but not in accountsGet —
         // it will still be present from the first push.
-        investmentAccounts.push(...investmentData.investmentAccounts);
-        investmentAccounts.push(...accountData.investmentAccounts);
+        investmentAccounts.push(...investmentData.investmentAccounts.map((a) => ({ ...a, plaidItemId: item.id })));
+        investmentAccounts.push(...accountData.investmentAccounts.map((a) => ({ ...a, plaidItemId: item.id })));
 
         // Buffer the cursor advance instead of writing it now: it is only
         // safe to advance the cursor once the corresponding transaction
@@ -613,6 +615,35 @@ export class PlaidCacheService {
         async (tx: Prisma.TransactionClient) => {
         await getOrCreateSyncLog(userId, tx);
 
+        // 快取表的 plaidItemId 已是 FK（onDelete: Cascade）。snapshot 是在交易外
+        // 從 Plaid 抓的，若使用者在「抓取 → 寫入」之間斷線（disconnect / ITEM_REMOVE
+        // webhook / token rotation 等），對應的 PlaidItem 已被刪除，此時若仍以該
+        // plaidItemId 寫入會觸發外鍵違反並讓整個 sync 失敗。
+        // 故在交易內重新讀取仍存在的 Item，過濾掉指向已刪除 Item 的 row（plaidItemId
+        // 為 null 的 row 仍保留，FK 允許 null）。已刪除 Item 的舊 cache 已由 cascade 清除，
+        // 此處丟棄其新資料即為正確語意。
+        const liveItems = await tx.plaidItem.findMany({ where: { userId }, select: { id: true } });
+        const validItemIds = new Set(liveItems.map((i) => i.id));
+        const hasValidItemRef = (pid: string | null | undefined): boolean => pid == null || validItemIds.has(pid);
+
+        const accountsForCache = snapshot.accounts.filter((a) => hasValidItemRef(a.plaidItemId));
+        const transactionsForCache = snapshot.transactions.filter((t) => hasValidItemRef(t.plaidItemId));
+        const investmentAccountsForCache = snapshot.investmentAccounts.filter((a) => hasValidItemRef(a.plaidItemId));
+        const investmentsForCache = snapshot.investments.filter((i) => hasValidItemRef(i.plaidItemId));
+        const cursorUpdatesForValidItems = pendingCursorUpdates.filter((u) => validItemIds.has(u.plaidItemId));
+
+        const droppedCount =
+          (snapshot.accounts.length - accountsForCache.length) +
+          (snapshot.transactions.length - transactionsForCache.length) +
+          (snapshot.investmentAccounts.length - investmentAccountsForCache.length) +
+          (snapshot.investments.length - investmentsForCache.length);
+        if (droppedCount > 0) {
+          appLogger.warn('Dropped Plaid cache rows referencing removed items during sync', {
+            userId,
+            droppedCount,
+          });
+        }
+
         let accountsKey: PayloadKeyHandle;
         let transactionsKey: PayloadKeyHandle;
         let investmentAccountsKey: PayloadKeyHandle;
@@ -648,11 +679,11 @@ export class PlaidCacheService {
         }
 
         // ── 1. 帳戶 ──
-        if (snapshot.accounts.length > 0) {
-          const accountsToCache = snapshot.accounts.map((acc) => {
-            const split = splitAccount(acc, null /* plaidItemId 暫無法追溯 */, 'banking');
+        if (accountsForCache.length > 0) {
+          const accountsToCache = accountsForCache.map((acc) => {
+            const split = splitAccount(acc, acc.plaidItemId ?? null, 'banking');
             return {
-              plaidItemId: split.metadata.plaidItemId ?? '',
+              plaidItemId: split.metadata.plaidItemId ?? null,
               accountId: split.metadata.accountId,
               type: split.metadata.type,
               bucket: split.metadata.bucket,
@@ -666,9 +697,9 @@ export class PlaidCacheService {
         }
 
         // ── 2. 交易 ──
-        if (snapshot.transactions.length > 0) {
-          const transactionsToCache = snapshot.transactions.map((tx2) => {
-            const split = splitTransaction(tx2, null);
+        if (transactionsForCache.length > 0) {
+          const transactionsToCache = transactionsForCache.map((tx2) => {
+            const split = splitTransaction(tx2, tx2.plaidItemId ?? null);
             return {
               accountId: split.metadata.accountId,
               transactionId: split.metadata.transactionId,
@@ -688,10 +719,11 @@ export class PlaidCacheService {
         }
 
         // ── 3. 投資帳戶 ──
-        if (snapshot.investmentAccounts.length > 0) {
-          const investmentAccountsToCache = snapshot.investmentAccounts.map((acc) => {
-            const split = splitInvestmentAccount(acc);
+        if (investmentAccountsForCache.length > 0) {
+          const investmentAccountsToCache = investmentAccountsForCache.map((acc) => {
+            const split = splitInvestmentAccount(acc, acc.plaidItemId ?? null);
             return {
+              plaidItemId: split.metadata.plaidItemId,
               accountId: split.metadata.accountId,
               payloadCiphertext: encryptPayload(investmentAccountsKey.sek, split.sensitive),
               payloadKeyId: investmentAccountsKey.payloadKeyId,
@@ -702,10 +734,11 @@ export class PlaidCacheService {
         }
 
         // ── 4. 投資持倉 ──
-        if (snapshot.investments.length > 0) {
-          const investmentsToCache = snapshot.investments.map((inv) => {
-            const split = splitInvestment(inv);
+        if (investmentsForCache.length > 0) {
+          const investmentsToCache = investmentsForCache.map((inv) => {
+            const split = splitInvestment(inv, inv.plaidItemId ?? null);
             return {
+              plaidItemId: split.metadata.plaidItemId,
               accountId: split.metadata.accountId,
               investmentId: split.metadata.investmentId,
               type: split.metadata.type,
@@ -722,7 +755,7 @@ export class PlaidCacheService {
         // Done last so a failure in any of the cache writes above rolls back
         // the cursor advance too, avoiding permanent gaps in transactionsSync.
         const txAny = tx as unknown as { plaidItem: { update: (args: { where: { id: string }; data: { transactionsCursor: string } }) => Promise<unknown> } };
-        for (const { plaidItemId, nextCursor } of pendingCursorUpdates) {
+        for (const { plaidItemId, nextCursor } of cursorUpdatesForValidItems) {
           await txAny.plaidItem.update({
             where: { id: plaidItemId },
             data: { transactionsCursor: nextCursor },
@@ -758,6 +791,17 @@ export class PlaidCacheService {
         appLogger.warn('Failed to record Plaid asset snapshot (cache already saved)', {
           userId,
           error: assetError instanceof Error ? assetError.message : assetError,
+        });
+      }
+
+      // ── Best-effort GC：清掉本輪 snapshot 模式換下來的孤兒 EncryptedPayloadKey ──
+      // 失敗不影響已寫入的 cache；下一輪 sync 會再嘗試。
+      try {
+        await PayloadKeyService.deleteOrphanedKeys(userId);
+      } catch (gcError) {
+        appLogger.warn('Failed to GC orphaned payload keys (cache already saved)', {
+          userId,
+          error: gcError instanceof Error ? gcError.message : gcError,
         });
       }
     } catch (error) {

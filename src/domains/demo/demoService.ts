@@ -343,9 +343,8 @@ export class DemoService {
     try {
       const enc = (value: number) => encryptPayload(key.sek, { value });
 
-      // 三條 metric：銀行現金、Plaid 投資、交易所現貨。帶緩升趨勢 + 微噪。
+      // 兩條 metric：Plaid 投資、交易所現貨。帶緩升趨勢 + 微噪。
       const metrics: Array<{ metric: string; base: number; growth: number; amp: number }> = [
-        { metric: 'cashFlow', base: 32000, growth: 30, amp: 400 },
         { metric: 'plaidInvestment', base: 15000, growth: 18, amp: 350 },
         { metric: `cryptoSpot:exchange:${DEMO_EXCHANGE_ACCOUNT_ID}`, base: 60000, growth: 55, amp: 1800 },
       ];

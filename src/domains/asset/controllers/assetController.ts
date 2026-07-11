@@ -17,6 +17,7 @@ import { sendError, sendSuccess } from '../../shared/lib/apiResponse';
  * 取得「加密形式」資產歷史
  *
  * 路由：GET /api/assets/history/encrypted?days=30  (與 /api/assets/history 別名等價)
+ * Basic 會員最多 30 天；Pro / Ultimate / VIP 最多 365 天。
  *
  * 後端不解密，回傳：
  *   {
@@ -26,7 +27,7 @@ import { sendError, sendSuccess } from '../../shared/lib/apiResponse';
  *   }
  *
  * 前端用 privateKey unwrap payloadKeys → 解每個 snapshot row 的 payloadCiphertext，
- * 自行組成 4-metric 時間序列（cashFlow / plaidInvestment / cryptoSpot / defiProtocol）。
+ * 自行組成 2-metric 時間序列（plaidInvestment / cryptoSpot）。
  *
  * - metric 字串：可能是 base 或 sub-scoped（{base}:{source}:{id}）
  * - 同 sub-scoped key 同一天取 recordedAt 最大者；同 base 跨 sub-scope 加總
@@ -39,7 +40,7 @@ export const getEncryptedAssetHistory = async (req: AuthRequest, res: Response):
     }
 
     const days = Number(req.query.days) || 30;
-    const result = await AssetService.getEncryptedAssetHistory(req.userId, Math.min(days, 365));
+    const result = await AssetService.getEncryptedAssetHistory(req.userId, days);
     sendSuccess(res, result);
   } catch (error) {
     logError('Get encrypted asset history failed', error, { userId: (req as AuthRequest).userId });

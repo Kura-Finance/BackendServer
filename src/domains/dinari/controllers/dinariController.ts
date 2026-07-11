@@ -3,7 +3,18 @@ import { APIError } from '@dinari/api-sdk';
 import { AuthRequest } from '../../auth/middleware/auth';
 import { logError } from '../../logger';
 import { sendError, sendSuccess } from '../../shared/lib/apiResponse';
+import { formatDinariFieldErrors } from '../lib/dinariWalletUtil';
 import { DinariError, DinariService } from '../services/dinariService';
+
+function dinariErrorLogContext(error: unknown): Record<string, unknown> {
+  if (!(error instanceof APIError)) return {};
+  const body = (error as { error?: unknown }).error;
+  return {
+    dinariStatus: error.status,
+    dinariDetails: body,
+    dinariFieldSummary: formatDinariFieldErrors(body),
+  };
+}
 
 function getAuthenticatedUserId(req: AuthRequest, res: Response): string | null {
   if (!req.userId) {
@@ -22,12 +33,26 @@ function handleDinariError(res: Response, error: unknown, fallbackMessage: strin
   }
   if (error instanceof APIError) {
     const status = error.status && error.status >= 400 && error.status < 500 ? error.status : 502;
+    const dinariError = (error as { error?: unknown }).error;
+    const fieldSummary = formatDinariFieldErrors(dinariError);
+    const message = fieldSummary ? `${error.message}: ${fieldSummary}` : error.message;
     sendError(res, status, {
       code: 'DINARI_API_ERROR',
-      message: error.message,
-      details: (error as { error?: unknown }).error,
+      message,
+      details: dinariError,
     });
     return;
+  }
+  if (error instanceof Error) {
+    const normalized = error.message.toLowerCase();
+    if (
+      normalized.includes('walletaddress') ||
+      normalized.includes('chainid') ||
+      normalized.includes('unsupported chain')
+    ) {
+      sendError(res, 400, { code: 'INVALID_REQUEST', message: error.message });
+      return;
+    }
   }
   const message = error instanceof Error ? error.message : fallbackMessage;
   sendError(res, 500, { code: 'INTERNAL_ERROR', message });
@@ -84,7 +109,12 @@ export const getWalletNonce = async (req: AuthRequest, res: Response): Promise<v
     );
     sendSuccess(res, result);
   } catch (error) {
-    logError('Dinari get wallet nonce failed', error, { userId: req.userId });
+    logError('Dinari get wallet nonce failed', error, {
+      userId: req.userId,
+      walletAddress: req.body?.walletAddress,
+      chainId: req.body?.chainId,
+      ...dinariErrorLogContext(error),
+    });
     handleDinariError(res, error, 'Failed to get wallet nonce');
   }
 };

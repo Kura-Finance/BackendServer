@@ -148,6 +148,7 @@ export function splitTransaction(
 
 export interface InvestmentAccountMetadata {
   accountId: string;
+  plaidItemId: string | null;
 }
 
 export interface InvestmentAccountSensitive {
@@ -164,6 +165,7 @@ export interface InvestmentAccountSplit {
 
 export function splitInvestmentAccount(
   acc: PlaidInvestmentAccountPayload,
+  plaidItemId: string | null,
 ): InvestmentAccountSplit {
   const sensitive: InvestmentAccountSensitive = {
     name: acc.name,
@@ -173,7 +175,7 @@ export function splitInvestmentAccount(
   if (acc.plaidLogo) sensitive.plaidLogo = acc.plaidLogo;
 
   return {
-    metadata: { accountId: acc.id },
+    metadata: { accountId: acc.id, plaidItemId },
     sensitive,
   };
 }
@@ -185,6 +187,7 @@ export function splitInvestmentAccount(
 export interface InvestmentMetadata {
   accountId: string;
   investmentId: string;
+  plaidItemId: string | null;
   type: string;       // stock | crypto | etf | other（分類統計用）
 }
 
@@ -202,7 +205,10 @@ export interface InvestmentSplit {
   sensitive: InvestmentSensitive;
 }
 
-export function splitInvestment(inv: PlaidInvestmentPayload): InvestmentSplit {
+export function splitInvestment(
+  inv: PlaidInvestmentPayload,
+  plaidItemId: string | null,
+): InvestmentSplit {
   const sensitive: InvestmentSensitive = {
     symbol: inv.symbol,
     name: inv.name,
@@ -216,6 +222,7 @@ export function splitInvestment(inv: PlaidInvestmentPayload): InvestmentSplit {
     metadata: {
       accountId: inv.accountId,
       investmentId: inv.id,
+      plaidItemId,
       type: inv.type,
     },
     sensitive,

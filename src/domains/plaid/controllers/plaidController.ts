@@ -7,6 +7,10 @@ import { verifyPlaidWebhook } from '../lib/webhookVerification';
 import { prisma } from '../../shared/lib/prisma';
 import { sendError, sendSuccess } from '../../shared/lib/apiResponse';
 import { KeyPairNotConfiguredError } from '../../shared/services/payloadKeyService';
+import {
+  buildCacheResponseFields,
+  CACHE_PROVIDER,
+} from '../../shared/lib/cacheResponseUtil';
 
 function resolvePlaidLastSyncedAt(cacheStats: {
   lastSynced?: Date | null;
@@ -78,18 +82,49 @@ export const exchangePublicToken = async (req: AuthRequest, res: Response) => {
     const { public_token, institution_name } = req.body;
     await PlaidService.exchangePublicToken(req.userId, public_token, institution_name);
 
+    const itemCount = await prisma.plaidItem.count({ where: { userId: req.userId } });
+    logBusinessEvent('plaid_exchange_token_done', req.userId, {
+      institution: institution_name || 'Unknown',
+      plaidItemCount: itemCount,
+    });
+
     // Phase 3：第一次連接時觸發加密快照同步（前端會用 /encrypted endpoint 取資料）
     try {
       const snapshot = await PlaidService.getFinanceSnapshotOptimized(req.userId, false);
+      logBusinessEvent('plaid_initial_snapshot_after_connect', req.userId, {
+        accounts: snapshot.accounts.length,
+        transactions: snapshot.transactions.length,
+        investmentAccounts: snapshot.investmentAccounts.length,
+        investments: snapshot.investments.length,
+        payloadKeys: snapshot.payloadKeys.length,
+        partial: snapshot.partial,
+        failedItemIds: snapshot.failedItemIds,
+      });
+      if (snapshot.payloadKeys.length === 0 && snapshot.accounts.length === 0) {
+        logDebug('Initial snapshot is empty after connect — check keypair / Plaid item fetch', {
+          userId: req.userId,
+          plaidItemCount: itemCount,
+        });
+      }
       sendSuccess(res, {
         message: 'Bank account linked successfully',
         snapshot,
       });
     } catch (snapshotError: any) {
-      // 即使快照失敗，也不影響連結成功狀態
-      logDebug('Failed to fetch initial snapshot after successful connection', snapshotError?.message || snapshotError);
+      // 連結本身已成功；snapshot 失敗不影響連結狀態，但必須 loud log 出真正原因。
+      const isKeyPairMissing = snapshotError instanceof KeyPairNotConfiguredError;
+      logError('Initial Plaid snapshot after connect failed', snapshotError, {
+        userId: req.userId,
+        plaidItemCount: itemCount,
+        reason: isKeyPairMissing ? 'KEY_PAIR_NOT_CONFIGURED' : snapshotError?.name || 'UNKNOWN',
+        hint: isKeyPairMissing
+          ? 'User must POST /api/auth/keys/setup before encrypted Plaid sync can persist data.'
+          : undefined,
+      });
       sendSuccess(res, {
         message: 'Bank account linked successfully',
+        // 讓前端知道為何沒有 snapshot：需先設定 E2EE keypair 才能加密寫入並顯示資料。
+        keyPairRequired: isKeyPairMissing,
       });
     }
   } catch (error: any) {
@@ -159,7 +194,10 @@ export const getFinanceSnapshotOptimized = async (req: AuthRequest, res: Respons
         res,
         {
           ...snapshot,
-          _cacheSource: isManualRefresh ? 'Forced refresh from Plaid API' : 'From cache',
+          ...buildCacheResponseFields({
+            forceRefresh: isManualRefresh,
+            provider: CACHE_PROVIDER.PLAID,
+          }),
           lastSyncedAt,
         },
         status,
@@ -174,10 +212,13 @@ export const getFinanceSnapshotOptimized = async (req: AuthRequest, res: Respons
           
           sendSuccess(res, {
             ...cachedSnapshot,
-            _cacheSource: 'Daily refresh limit reached, showing last synced data',
+            ...buildCacheResponseFields({
+              forceRefresh: true,
+              limitReached: true,
+              message: error.message,
+              provider: CACHE_PROVIDER.PLAID,
+            }),
             lastSyncedAt: resolvePlaidLastSyncedAt(cacheStats),
-            _limitReached: true,
-            _message: error.message,
           });
           return;
         } catch (cacheError) {
@@ -266,6 +307,25 @@ export const getEncryptedFinanceSnapshot = async (req: AuthRequest, res: Respons
     const snapshot = await PlaidService.getEncryptedFinanceSnapshot(req.userId);
     const cacheStats = await getCacheStats(req.userId);
     const lastSyncedAt = resolvePlaidLastSyncedAt(cacheStats);
+
+    logBusinessEvent('plaid_encrypted_snapshot_served', req.userId, {
+      accounts: snapshot.accounts.length,
+      transactions: snapshot.transactions.length,
+      investmentAccounts: snapshot.investmentAccounts.length,
+      investments: snapshot.investments.length,
+      payloadKeys: snapshot.payloadKeys.length,
+      lastSyncedAt,
+    });
+    if (snapshot.payloadKeys.length === 0) {
+      // 沒有 payloadKeys = 前端無法解密任何 row（通常代表：尚未設定 keypair，
+      // 或設定 keypair 前寫入的舊明文 row 已被過濾）。loud 一點方便排查。
+      logDebug('Encrypted snapshot has no payloadKeys — frontend will show no data', {
+        userId: req.userId,
+        cachedAccounts: cacheStats.accounts,
+        cachedTransactions: cacheStats.transactions,
+        hint: 'Confirm POST /api/auth/keys/setup was called, then re-sync (refresh=true).',
+      });
+    }
 
     sendSuccess(res, {
       ...snapshot,

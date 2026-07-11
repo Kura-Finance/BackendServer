@@ -211,6 +211,12 @@ model PlaidItem {
   createdAt          DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // 斷線時連帶清除底下所有快取（onDelete: Cascade 由各 cache 的 plaidItem relation 設定）
+  accountCaches           PlaidAccountCache[]
+  transactionCaches       PlaidTransactionCache[]
+  investmentAccountCaches PlaidInvestmentAccountCache[]
+  investmentCaches        PlaidInvestmentCache[]
 }
 
 // ==========================================
@@ -354,9 +360,9 @@ model AssetSnapshot {
 // 後端只持有 metadata（plaidItemId / accountId / type / bucket）+ payloadCiphertext + payloadKeyId。
 // 敏感欄位（name / balance / institutionName / logo / plaidLogo / apy / mask）全部整包進 payloadCiphertext。
 model PlaidAccountCache {
-  id          String @id @default(uuid())
+  id          String  @id @default(uuid())
   userId      String
-  plaidItemId String // 所屬的 Plaid Item
+  plaidItemId String? // 所屬的 Plaid Item（斷線時連帶 cascade 清除）
   accountId   String // Plaid 的帳戶 ID
   type        String // 帳戶類型 (checking, saving, credit, investment) — AssetService 算負債用
   bucket      String // 帳戶分類 (banking, investment) — AssetService 分組用
@@ -369,11 +375,13 @@ model PlaidAccountCache {
   updatedAt DateTime @updatedAt
 
   user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plaidItem  PlaidItem?           @relation(fields: [plaidItemId], references: [id], onDelete: Cascade)
   payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
 
   @@unique([userId, accountId])
   @@index([userId])
   @@index([userId, plaidItemId])
+  @@index([plaidItemId])
   @@index([payloadKeyId])
 }
 
@@ -406,6 +414,7 @@ model PlaidTransactionCache {
   cachedAt DateTime @default(now())
 
   user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plaidItem  PlaidItem?           @relation(fields: [plaidItemId], references: [id], onDelete: Cascade)
   payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
 
   @@unique([userId, transactionId])
@@ -413,6 +422,7 @@ model PlaidTransactionCache {
   @@index([userId, month])
   @@index([userId, accountId])
   @@index([userId, plaidItemId])
+  @@index([plaidItemId])
   @@index([userId, isRecurring])
   @@index([userId, isSubscription])
   @@index([payloadKeyId])
@@ -422,9 +432,10 @@ model PlaidTransactionCache {
 // 後端只持有 metadata（accountId）+ payloadCiphertext + payloadKeyId。
 // 敏感欄位（name, institutionName, logo, plaidLogo）整包進 payloadCiphertext。
 model PlaidInvestmentAccountCache {
-  id        String @id @default(uuid())
-  userId    String
-  accountId String // Plaid 投資帳戶 ID
+  id          String  @id @default(uuid())
+  userId      String
+  plaidItemId String? // 所屬的 Plaid Item（斷線時連帶 cascade 清除）
+  accountId   String // Plaid 投資帳戶 ID
 
   // ── Phase 3 E2EE payload ──
   payloadCiphertext String?
@@ -434,10 +445,13 @@ model PlaidInvestmentAccountCache {
   updatedAt DateTime @updatedAt
 
   user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plaidItem  PlaidItem?           @relation(fields: [plaidItemId], references: [id], onDelete: Cascade)
   payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
 
   @@unique([userId, accountId])
   @@index([userId])
+  @@index([userId, plaidItemId])
+  @@index([plaidItemId])
   @@index([payloadKeyId])
 }
 
@@ -445,8 +459,9 @@ model PlaidInvestmentAccountCache {
 // 後端只持有 metadata（accountId / investmentId / type）+ payloadCiphertext + payloadKeyId。
 // 敏感欄位（symbol, name, holdings, currentPrice, change24h, logo）整包進 payloadCiphertext。
 model PlaidInvestmentCache {
-  id           String @id @default(uuid())
+  id           String  @id @default(uuid())
   userId       String
+  plaidItemId  String? // 所屬的 Plaid Item（斷線時連帶 cascade 清除）
   accountId    String // 所屬投資帳戶 ID
   investmentId String // 投資 ID (accountId-securityId)
   type         String // 資產類型 (stock, crypto, etf...) — 分組統計用
@@ -459,11 +474,14 @@ model PlaidInvestmentCache {
   updatedAt DateTime @updatedAt
 
   user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plaidItem  PlaidItem?           @relation(fields: [plaidItemId], references: [id], onDelete: Cascade)
   payloadKey EncryptedPayloadKey? @relation(fields: [payloadKeyId], references: [id], onDelete: SetNull)
 
   @@unique([userId, investmentId])
   @@index([userId])
   @@index([userId, accountId])
+  @@index([userId, plaidItemId])
+  @@index([plaidItemId])
   @@index([payloadKeyId])
 }
 

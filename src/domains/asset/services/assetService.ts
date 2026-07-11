@@ -6,6 +6,7 @@ import {
 } from '../../shared/services/payloadKeyService';
 import { appLogger, logDebug, logError } from '../../logger';
 import { DemoService } from '../../demo/demoService';
+import { clampAssetHistoryDays, getUserTier } from '../../shared/lib/apiRateLimitUtil';
 
 /**
  * 資產服務 - 資產追蹤業務邏輯（Phase 3 Zero-Access E2EE only）
@@ -27,6 +28,19 @@ import { DemoService } from '../../demo/demoService';
 //     前端讀取後按 base 加總、按 sub-scoped key 取 latest 來組日線。
 export type AssetMetricBase = 'cashFlow' | 'plaidInvestment' | 'cryptoSpot' | 'defiProtocol';
 export type AssetMetricKey = string;
+
+/** Metrics included in GET /api/assets/history — net-worth curve only. */
+export function isAssetHistoryMetric(metric: string): boolean {
+  return metric === 'plaidInvestment' || metric === 'cryptoSpot' || metric.startsWith('cryptoSpot:');
+}
+
+const assetHistoryMetricWhere = {
+  OR: [
+    { metric: 'plaidInvestment' },
+    { metric: 'cryptoSpot' },
+    { metric: { startsWith: 'cryptoSpot:' } },
+  ],
+} as const;
 
 /**
  * `Record<metric, value>` — metric 字串可為 base 或 sub-scoped 形式。
@@ -75,7 +89,7 @@ export class AssetService {
       return dates.sort((a, b) => b.getTime() - a.getTime());
     }
     const snapshots = await prisma.assetSnapshot.findMany({
-      where: { userId },
+      where: { userId, ...assetHistoryMetricWhere },
       distinct: ['recordedAt'],
       select: { recordedAt: true },
       orderBy: { recordedAt: 'desc' },
@@ -192,28 +206,34 @@ export class AssetService {
   /**
    * 取得某段時間內的加密 AssetSnapshot rows + 對應的 wrappedSek。
    *
-   * 後端不解密，前端用 privateKey unwrap 後在客戶端組成 4-metric 時間序列。
+   * 後端不解密，前端用 privateKey unwrap 後在客戶端組成 2-metric 時間序列。
+   *
+   * 僅回傳 plaidInvestment + cryptoSpot（含 sub-scoped cryptoSpot:*）；不含 cashFlow / defiProtocol。
    *
    * 前端聚合規則：
-   *   - metric 字串：可能是 base("cashFlow") 或 sub-scoped("cryptoSpot:exchange:acct-123")
+   *   - metric 字串：可能是 base("plaidInvestment") 或 sub-scoped("cryptoSpot:exchange:acct-123")
    *   - 同 sub-scoped key 在同一天若有多筆 row，取 recordedAt 最大者（去掉重複 sync）
-   *   - 同 base、不同 sub-scope 的值要加總（cryptoSpot 跨 exchange + debank、defiProtocol 跨地址）
+   *   - 同 base、不同 sub-scope 的值要加總（cryptoSpot 跨 exchange + debank）
    */
   static async getEncryptedAssetHistory(
     userId: string,
     days: number = 30,
   ): Promise<EncryptedAssetHistoryResponse> {
+    const tier = await getUserTier(userId);
+    const effectiveDays = clampAssetHistoryDays(days, tier);
+
     if (await DemoService.isDemoUser(userId)) {
-      return DemoService.assetHistory(userId, days);
+      return DemoService.assetHistory(userId, effectiveDays);
     }
     const startDate = new Date();
-    startDate.setUTCDate(startDate.getUTCDate() - days + 1);
+    startDate.setUTCDate(startDate.getUTCDate() - effectiveDays + 1);
     startDate.setUTCHours(0, 0, 0, 0);
 
     const rows = await prisma.assetSnapshot.findMany({
       where: {
         userId,
         recordedAt: { gte: startDate },
+        ...assetHistoryMetricWhere,
       },
       select: {
         id: true,

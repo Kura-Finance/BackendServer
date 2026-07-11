@@ -19,7 +19,7 @@ const router = Router();
  */
 
 // 取得「加密形式」資產歷史（canonical path + legacy alias）
-// 查詢參數：?days=30（預設 30 天，最多 365 天）
+// 查詢參數：?days=30（預設 30 天；Basic 最多 30 天，付費方案最多 365 天）
 router.get(
   ['/history/encrypted', '/history'],
   requireAuth,

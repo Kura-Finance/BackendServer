@@ -203,7 +203,7 @@ export async function updateSyncTimestamp(
 export async function upsertAccountsCache(
   userId: string,
   accounts: Array<{
-    plaidItemId: string;
+    plaidItemId: string | null;
     accountId: string;
     type: string;
     bucket: string;
@@ -310,6 +310,7 @@ export async function upsertTransactionsCache(
 export async function upsertInvestmentAccountsCache(
   userId: string,
   investmentAccounts: Array<{
+    plaidItemId: string | null;
     accountId: string;
     payloadCiphertext: string;
     payloadKeyId: string;
@@ -340,6 +341,7 @@ export async function upsertInvestmentAccountsCache(
 export async function upsertInvestmentsCache(
   userId: string,
   investments: Array<{
+    plaidItemId: string | null;
     accountId: string;
     investmentId: string;
     type: string;

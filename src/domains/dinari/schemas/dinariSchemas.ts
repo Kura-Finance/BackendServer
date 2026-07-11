@@ -1,7 +1,18 @@
 import { z } from 'zod';
 
-// 寬鬆地址驗證（EVM）；最終由 Dinari 校驗
-const evmAddress = z.string().trim().min(20, 'invalid wallet address').max(120);
+const ethAddress = z
+  .string()
+  .trim()
+  .regex(/^0x[0-9a-fA-F]{40}$/, 'walletAddress must be a valid EVM address (0x + 40 hex chars)')
+  .transform((value) => value.toLowerCase());
+
+// CAIP-2（eip155:8453）或純數字 chain id（8453）；後端會正規化
+const chainIdInput = z
+  .string()
+  .trim()
+  .min(1)
+  .regex(/^(eip155:\d+|\d+)$/, 'chainId must be CAIP-2 (eip155:8453) or numeric chain id')
+  .optional();
 
 // 正小數字串（金額 / 數量）
 const decimalString = z
@@ -19,13 +30,13 @@ export const ensureEntityBodySchema = z.object({
 // ── Wallet 連接（用戶自管 SCA）────────────────────────────────────────
 
 export const walletNonceBodySchema = z.object({
-  walletAddress: evmAddress,
-  chainId: z.string().trim().min(1).optional(), // CAIP-2，預設用 env
+  walletAddress: ethAddress,
+  chainId: chainIdInput,
 });
 
 export const walletConnectBodySchema = z.object({
-  walletAddress: evmAddress,
-  chainId: z.string().trim().min(1).optional(), // CAIP-2，預設用 env
+  walletAddress: ethAddress,
+  chainId: chainIdInput,
   nonce: z.string().trim().min(1, 'nonce is required'),
   signature: z
     .string()

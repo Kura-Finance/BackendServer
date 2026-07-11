@@ -36,6 +36,8 @@ export interface DinariAccountResult {
 export interface WalletNonceResult {
   nonce: string;
   message: string;
+  chainId: string;
+  walletAddress: string;
 }
 
 // 下單第一步：回給前端讓用戶 SCA 簽章

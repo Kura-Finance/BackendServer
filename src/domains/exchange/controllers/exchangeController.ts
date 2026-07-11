@@ -5,6 +5,10 @@ import { logError } from '../../logger';
 import { KURA_SUPPORTED_EXCHANGES, getExchangeIcon } from '../../shared/lib/symbolsAndExchangesUtil';
 import { checkApiLimit, recordApiOperation } from '../../shared/lib/apiRateLimitUtil';
 import { sendError, sendSuccess } from '../../shared/lib/apiResponse';
+import {
+  buildCacheResponseFields,
+  CACHE_PROVIDER,
+} from '../../shared/lib/cacheResponseUtil';
 
 /**
  * 連結交易所帳戶
@@ -99,6 +103,12 @@ export const getExchangeBalances = async (req: AuthRequest, res: Response) => {
             ...cachedResult.account,
             icon: getExchangeIcon(cachedResult.account.exchange),
           },
+          ...buildCacheResponseFields({
+            forceRefresh: true,
+            limitReached: true,
+            message: limitCheck.message,
+            provider: CACHE_PROVIDER.EXCHANGE,
+          }),
           rateLimitInfo: {
             remaining: 0,
             limit: limitCheck.operationLimit,
@@ -133,6 +143,10 @@ export const getExchangeBalances = async (req: AuthRequest, res: Response) => {
         ...result.account,
         icon: getExchangeIcon(result.account.exchange),
       },
+      ...buildCacheResponseFields({
+        forceRefresh: true,
+        provider: CACHE_PROVIDER.EXCHANGE,
+      }),
       rateLimitInfo: {
         remaining: limitCheck.operationCountRemaining - 1,
         limit: limitCheck.operationLimit,
