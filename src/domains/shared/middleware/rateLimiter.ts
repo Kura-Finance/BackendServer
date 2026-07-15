@@ -16,8 +16,8 @@ const store: RateLimitStore = {};
 
 // 預設配置
 export interface RateLimiterConfig {
-  windowMs?: number; // 時間窗口（毫秒）, 預設 15 分鐘
-  maxRequests?: number; // 時間窗口內最大請求數, 預設 100
+  windowMs?: number; // 時間窗口（毫秒）
+  maxRequests?: number; // 時間窗口內最大請求數
 }
 
 /**
@@ -27,7 +27,7 @@ export interface RateLimiterConfig {
  */
 export function createRateLimiter(config: RateLimiterConfig = {}) {
   const windowMs = config.windowMs || 15 * 60 * 1000; // 預設 15 分鐘
-  const maxRequests = config.maxRequests || 100; // 預設 100 次請求
+  const maxRequests = config.maxRequests || 1000; // 預設 1000 次請求
 
   return (req: Request, res: Response, next: NextFunction) => {
     // Bridge / Stripe / Plaid 等 server-to-server webhook 不限流。
@@ -74,33 +74,36 @@ export function createRateLimiter(config: RateLimiterConfig = {}) {
 
 /**
  * 默認的速率限制中間件
- * 15 分鐘內最多 100 次請求
+ * 15 分鐘內最多 1000 次（Cloud Run / NAT 下多用戶常共 IP）
  */
-export const rateLimiter = createRateLimiter();
+export const rateLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  maxRequests: 1000,
+});
 
 /**
- * 認證相關速率限制（用於註冊、登入、密碼重置等）
- * 15 分鐘內最多 50 次請求 - 允許用戶多次重試
+ * 認證相關速率限制（登入等）
+ * 15 分鐘內最多 200 次
  */
 export const authRateLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000,
-  maxRequests: 50,
+  maxRequests: 200,
 });
 
 /**
- * 嚴格的速率限制（用於 API 端點）
- * 5 分鐘內最多 20 次請求 - 用於防止數據挖掘
+ * 嚴格的速率限制（例如 waitlist）
+ * 5 分鐘內最多 100 次
  */
 export const strictRateLimiter = createRateLimiter({
   windowMs: 5 * 60 * 1000,
-  maxRequests: 20,
+  maxRequests: 100,
 });
 
 /**
- * 寬鬆的速率限制（用於健康檢查等）
- * 1 分鐘內最多 100 次請求
+ * 寬鬆的速率限制（健康檢查等）
+ * 1 分鐘內最多 300 次
  */
 export const lenientRateLimiter = createRateLimiter({
   windowMs: 1 * 60 * 1000,
-  maxRequests: 100,
+  maxRequests: 300,
 });
