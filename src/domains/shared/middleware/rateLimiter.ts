@@ -30,6 +30,13 @@ export function createRateLimiter(config: RateLimiterConfig = {}) {
   const maxRequests = config.maxRequests || 100; // 預設 100 次請求
 
   return (req: Request, res: Response, next: NextFunction) => {
+    // Bridge / Stripe / Plaid 等 server-to-server webhook 不限流。
+    // 否則同一出口 IP 重試佇列會打爆共享 429，導致事件卡住。
+    const pathOnly = (req.originalUrl || req.url || '').split('?')[0];
+    if (pathOnly === '/webhook' || pathOnly.endsWith('/webhook')) {
+      return next();
+    }
+
     // 取得客戶端 IP 位址
     const ip = req.ip || req.socket.remoteAddress || 'unknown';
 
