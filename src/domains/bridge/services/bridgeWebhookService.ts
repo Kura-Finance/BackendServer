@@ -3,7 +3,8 @@
  *
  * Bridge 以 RSA 簽署 webhook：
  *   Header:  X-Webhook-Signature: t=<timestampMs>,v0=<base64Signature>
- *   signed = "{t}.{rawBody}"，對其取 SHA256 後用 endpoint 公鑰（PEM）驗證 RSA 簽章。
+ *   signed = "{t}.{rawBody}"
+ *   digest = SHA256(signed) → 再以 RSA-SHA256 對 digest 驗章（雙重 SHA256；見 Bridge Node/Go 範例）
  *
  * 防重放：拒絕 timestamp 早於 10 分鐘的事件。
  * 公鑰由 Bridge 在建立 webhook endpoint 時提供（PEM），存於 BRIDGE_WEBHOOK_PUBLIC_KEY。
@@ -91,10 +92,12 @@ export function verifyWebhookSignature(
   }
 
   try {
+    // Bridge signs SHA256(SHA256("{t}.{rawBody}")) via RSA-PKCS1v15 — not a single SHA256.
+    // Matches Bridge docs Node sample: createHash → createVerify('RSA-SHA256').update(digest).
     const signedPayload = `${parsed.timestamp}.${rawBody}`;
-    const verifier = crypto.createVerify('SHA256');
-    verifier.update(signedPayload, 'utf8');
-    verifier.end();
+    const digest = crypto.createHash('sha256').update(signedPayload, 'utf8').digest();
+    const verifier = crypto.createVerify('RSA-SHA256');
+    verifier.update(digest);
     const ok = verifier.verify(publicKey, parsed.signature, 'base64');
     return ok ? { valid: true } : { valid: false, reason: 'signature_mismatch' };
   } catch (error) {
