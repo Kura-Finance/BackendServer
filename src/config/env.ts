@@ -166,6 +166,13 @@ export function validateEnvironment(): void {
     );
   }
 
+  // LI.FI analytics（Investor 處理量）；未設 integrator 時 sync 端點會拒絕
+  // 支援逗號分隔多個：LIFI_INTEGRATOR=kura-ios,kura-android,kura-web
+  if (!process.env.LIFI_INTEGRATOR) {
+    console.warn(
+      '⚠️ LIFI_INTEGRATOR not set — LI.FI transfer sync for Investor will be unavailable until configured',
+    );
+  }
 
   // 在生產環境檢查數據庫配置
   if (isProduction) {

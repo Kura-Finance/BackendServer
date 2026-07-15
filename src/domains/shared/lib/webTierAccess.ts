@@ -23,6 +23,8 @@ export const WEB_TIER_EXEMPT_PATHS = new Set([
   '/api/platform-insights/backfill',
   '/api/privy-analytics/sync',
   '/api/privy-analytics/summary',
+  '/api/lifi-analytics/sync',
+  '/api/lifi-analytics/summary',
 ]);
 
 export function tierHasWebAccess(tier: string): boolean {

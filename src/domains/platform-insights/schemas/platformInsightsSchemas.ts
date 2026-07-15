@@ -23,6 +23,7 @@ export const platformRecordsQuerySchema = investorPeriodQuerySchema.extend({
       'bridge_liquidation_out',
       'card',
       'dinari',
+      'lifi',
       'waitlist',
       'privy',
     ])
@@ -42,6 +43,7 @@ export const processEventsQuerySchema = investorPeriodQuerySchema.extend({
       'bridge_liquidation_out',
       'card',
       'dinari',
+      'lifi',
     ])
     .optional(),
   limit: z.coerce.number().int().min(1).max(500).optional(),

@@ -8,6 +8,7 @@ export type PlatformRevenueSource =
   | 'bridge_liquidation_out'
   | 'card'
   | 'dinari'
+  | 'lifi'
   | 'waitlist'
   | 'privy';
 

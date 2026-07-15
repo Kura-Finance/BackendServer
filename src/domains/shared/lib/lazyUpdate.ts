@@ -1,5 +1,6 @@
 const DEFAULT_PRIVY_METRICS_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
 const DEFAULT_PLATFORM_BACKFILL_MIN_INTERVAL_MS = 60 * 60 * 1000; // 1h
+const DEFAULT_LIFI_TRANSFERS_MIN_INTERVAL_MS = 60 * 60 * 1000; // 1h
 
 function parseIntervalMs(envValue: string | undefined, fallback: number): number {
   const parsed = Number(envValue);
@@ -17,6 +18,13 @@ export function getPlatformBackfillMinIntervalMs(): number {
   return parseIntervalMs(
     process.env.PLATFORM_BACKFILL_MIN_INTERVAL_MS,
     DEFAULT_PLATFORM_BACKFILL_MIN_INTERVAL_MS,
+  );
+}
+
+export function getLifiTransfersMinIntervalMs(): number {
+  return parseIntervalMs(
+    process.env.LIFI_TRANSFERS_MIN_INTERVAL_MS,
+    DEFAULT_LIFI_TRANSFERS_MIN_INTERVAL_MS,
   );
 }
 

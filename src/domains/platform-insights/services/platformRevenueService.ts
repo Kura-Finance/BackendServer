@@ -361,6 +361,35 @@ export class PlatformRecordService {
     });
   }
 
+  /** LI.FI DONE transfer → Investor 處理量（不分 Refer）。 */
+  static async recordFromLifiTransfer(params: {
+    userId: string | null;
+    scaAddress: string | null;
+    idempotencyKey: string;
+    externalId: string | null;
+    processAmount: number;
+    platformFee: number | null;
+    occurredAt: Date;
+    metadata?: Record<string, unknown>;
+  }): Promise<void> {
+    await this.record({
+      category: 'revenue',
+      userId: params.userId,
+      source: 'lifi',
+      eventType: 'transfer_done',
+      idempotencyKey: params.idempotencyKey,
+      processAmount: params.processAmount,
+      platformFee: params.platformFee,
+      netAmount: params.platformFee,
+      currency: 'usd',
+      externalId: params.externalId,
+      scaAddress: params.scaAddress,
+      occurredAt: params.occurredAt,
+      referrable: false,
+      ...(params.metadata ? { metadata: params.metadata } : {}),
+    });
+  }
+
   static async recordFromDinariOrder(order: {
     userId: string;
     orderRequestId: string;
@@ -627,6 +656,11 @@ export class PlatformRecordService {
       });
     }
 
+    const { LifiAnalyticsService } = await import(
+      '../../lifi-analytics/services/lifiAnalyticsService'
+    );
+    await LifiAnalyticsService.syncForBackfill();
+
     const dinariOrders = await prisma.dinariOrder.findMany();
     for (const order of dinariOrders) {
       await this.recordFromDinariOrder(order);
@@ -691,6 +725,8 @@ export class PlatformRecordService {
     const revenueEvents = await prisma.platformRecord.findMany({
       where: {
         category: 'revenue',
+        // 排除 LI.FI sync checkpoint（無處理量，不應進 Investor count）
+        eventType: { not: 'lifi_transfers_synced' },
         occurredAt: { gte: period.from, lte: period.to },
       },
       select: {
