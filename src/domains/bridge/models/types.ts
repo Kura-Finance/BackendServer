@@ -38,6 +38,18 @@ export interface CreateKycLinkParams {
 
 // ── Bridge API 原始回應（僅取用到的欄位）──────────────────────────────
 
+export interface BridgeRejectionReason {
+  developer_reason?: string;
+  reason?: string;
+  created_at?: string | null;
+}
+
+/** 回給前端的拒件／暫停原因（僅顧客可看的 reason，不含 developer_reason）。 */
+export interface BridgeRejectionReasonPublic {
+  reason: string;
+  createdAt: string | null;
+}
+
 export interface BridgeKycLinkResponse {
   id: string;
   full_name?: string;
@@ -48,7 +60,7 @@ export interface BridgeKycLinkResponse {
   kyc_status?: string;
   tos_status?: string;
   customer_id?: string | null;
-  rejection_reasons?: unknown[];
+  rejection_reasons?: BridgeRejectionReason[];
 }
 
 export interface BridgeEndorsement {
@@ -65,7 +77,7 @@ export interface BridgeCustomerResponse {
   kyc_status?: string;
   tos_status?: string;
   endorsements?: BridgeEndorsement[];
-  rejection_reasons?: unknown[];
+  rejection_reasons?: BridgeRejectionReason[];
 }
 
 export interface BridgeDepositInstructions {
@@ -336,6 +348,11 @@ export interface CustomerStatusResult {
   canTransact: boolean;
   /** 是否已向 Bridge 設定 customer-named fiat payout（目前僅 USD wire）。 */
   customerNamedPayoutConfigured: boolean;
+  /**
+   * rejected / paused 等狀態的顧客可讀原因（來自 Bridge rejection_reasons.reason）。
+   * 不含 developer_reason。
+   */
+  rejectionReasons: BridgeRejectionReasonPublic[];
 }
 
 export interface TransferResult {

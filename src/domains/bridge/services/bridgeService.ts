@@ -34,6 +34,8 @@ import type {
   BridgeExternalAccountResponse,
   BridgeFeeConfig,
   BridgeKycLinkResponse,
+  BridgeRejectionReason,
+  BridgeRejectionReasonPublic,
   BridgeTransferResponse,
   BridgeVirtualAccountEventResponse,
   BridgeVirtualAccountHistoryResponse,
@@ -368,6 +370,40 @@ function asJson(value: unknown): Prisma.InputJsonValue {
   return value as unknown as Prisma.InputJsonValue;
 }
 
+/** 正規化 Bridge rejection_reasons；無效項目略過。 */
+function normalizeRejectionReasons(raw: unknown): BridgeRejectionReason[] {
+  if (!Array.isArray(raw)) return [];
+  const out: BridgeRejectionReason[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const row = item as Record<string, unknown>;
+    const reason = typeof row.reason === 'string' ? row.reason.trim() : '';
+    const developerReason =
+      typeof row.developer_reason === 'string' ? row.developer_reason.trim() : undefined;
+    if (!reason && !developerReason) continue;
+    out.push({
+      ...(developerReason ? { developer_reason: developerReason } : {}),
+      ...(reason ? { reason } : {}),
+      created_at: typeof row.created_at === 'string' ? row.created_at : null,
+    });
+  }
+  return out;
+}
+
+/** 僅顧客可看的 reason（不含 developer_reason）。 */
+function toPublicRejectionReasons(raw: unknown): BridgeRejectionReasonPublic[] {
+  return normalizeRejectionReasons(raw)
+    .map((r) => {
+      const reason = r.reason?.trim();
+      if (!reason) return null;
+      return {
+        reason,
+        createdAt: r.created_at ?? null,
+      };
+    })
+    .filter((r): r is BridgeRejectionReasonPublic => r !== null);
+}
+
 function depositPayerFromRecord(source: Prisma.JsonValue | null): DepositPayerInfo {
   return (
     parseDepositPayerSource(source as Record<string, unknown> | null | undefined) ??
@@ -688,6 +724,7 @@ export class BridgeService {
         kycStatus: 'not_started',
         tosStatus: 'pending',
         endorsements: Prisma.JsonNull,
+        rejectionReasons: Prisma.JsonNull,
         customerNamedPayoutAt: null,
       },
     });
@@ -756,6 +793,9 @@ export class BridgeService {
         ...(link.tos_link ? { tosLink: link.tos_link } : {}),
         ...(link.kyc_status ? { kycStatus: link.kyc_status } : {}),
         ...(link.tos_status ? { tosStatus: link.tos_status } : {}),
+        ...(link.rejection_reasons !== undefined
+          ? { rejectionReasons: asJson(normalizeRejectionReasons(link.rejection_reasons)) }
+          : {}),
       },
     });
 
@@ -878,6 +918,7 @@ export class BridgeService {
         endorsements: [],
         canTransact: false,
         customerNamedPayoutConfigured: false,
+        rejectionReasons: toPublicRejectionReasons(reloaded?.rejectionReasons),
       };
     }
 
@@ -903,12 +944,16 @@ export class BridgeService {
         endorsements: [],
         canTransact: false,
         customerNamedPayoutConfigured: false,
+        rejectionReasons: [],
       };
     }
 
     const endorsements = customer.endorsements ?? [];
     const kycStatus = customer.kyc_status ?? record.kycStatus;
     const tosStatus = customer.tos_status ?? record.tosStatus;
+    const rejectionReasons = APPROVED_KYC_STATUSES.has(kycStatus)
+      ? []
+      : normalizeRejectionReasons(customer.rejection_reasons);
 
     await prisma.bridgeCustomer.update({
       where: { userId },
@@ -916,6 +961,7 @@ export class BridgeService {
         kycStatus,
         tosStatus,
         endorsements: asJson(endorsements),
+        rejectionReasons: asJson(rejectionReasons),
       },
     });
 
@@ -936,6 +982,7 @@ export class BridgeService {
       endorsements,
       canTransact: canTransact(kycStatus, endorsements),
       customerNamedPayoutConfigured: !!payoutRecord?.customerNamedPayoutAt,
+      rejectionReasons: toPublicRejectionReasons(rejectionReasons),
     };
   }
 
@@ -2384,6 +2431,9 @@ export class BridgeService {
         ...(kycStatus ? { kycStatus } : {}),
         ...(customer.tos_status ? { tosStatus: customer.tos_status } : {}),
         ...(customer.endorsements ? { endorsements: asJson(customer.endorsements) } : {}),
+        ...(customer.rejection_reasons !== undefined
+          ? { rejectionReasons: asJson(normalizeRejectionReasons(customer.rejection_reasons)) }
+          : {}),
       },
     });
 
@@ -2473,6 +2523,9 @@ export class BridgeService {
         ...(link.customer_id ? { bridgeCustomerId: link.customer_id } : {}),
         ...(kycStatus ? { kycStatus } : {}),
         ...(link.tos_status ? { tosStatus: link.tos_status } : {}),
+        ...(link.rejection_reasons !== undefined
+          ? { rejectionReasons: asJson(normalizeRejectionReasons(link.rejection_reasons)) }
+          : {}),
       },
     });
 

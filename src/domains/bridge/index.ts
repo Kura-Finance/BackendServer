@@ -52,6 +52,7 @@ export type {
   LiquidationAddressResult,
   DepositDeveloperFee,
   CustomerStatusResult,
+  BridgeRejectionReasonPublic,
   TransferResult,
   VirtualAccountResult,
   DepositResult,

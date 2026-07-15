@@ -662,6 +662,8 @@ model BridgeCustomer {
   tosStatus String  @default("pending") // pending | approved
 
   endorsements Json? // Bridge 回傳的 endorsements 陣列（base / sepa / spei ...）
+  // Bridge rejection_reasons 完整 payload（含 developer_reason）；API 僅回傳客戶可看的 reason
+  rejectionReasons Json?
   customerNamedPayoutAt DateTime? // 已向 Bridge 設定 customer-named fiat payout
 
   createdAt DateTime @default(now())

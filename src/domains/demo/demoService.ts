@@ -719,6 +719,7 @@ export class DemoService {
       endorsements,
       canTransact: true,
       customerNamedPayoutConfigured: true,
+      rejectionReasons: [],
     };
   }
 
