@@ -730,4 +730,48 @@ export class DinariService {
       updatedAt: record.updatedAt.toISOString(),
     };
   }
+
+  /**
+   * 帳號刪除時停用所有 Dinari account（best-effort；失敗不阻擋 DB 刪除）。
+   * Dinari 無 entity delete API，僅能 deactivate account。
+   */
+  static async deactivateAccountsForUser(userId: string): Promise<void> {
+    if (!process.env.DINARI_API_KEY_ID || !process.env.DINARI_API_SECRET_KEY) {
+      logDebug('[DinariService] Skipping Dinari account deactivation — API keys not configured', { userId });
+      return;
+    }
+
+    const accounts = await prisma.dinariAccount.findMany({
+      where: { userId },
+      select: { accountId: true },
+    });
+
+    if (accounts.length === 0) {
+      return;
+    }
+
+    const client = getClient();
+
+    for (const account of accounts) {
+      try {
+        await client.v2.accounts.deactivate(account.accountId);
+        appLogger.info('[DinariService] Deactivated Dinari account during account deletion', {
+          userId,
+          accountId: account.accountId,
+        });
+      } catch (error) {
+        if (error instanceof APIError && error.status === 404) {
+          logDebug('[DinariService] Dinari account already removed', {
+            userId,
+            accountId: account.accountId,
+          });
+          continue;
+        }
+        logError('[DinariService] Failed to deactivate Dinari account during account deletion', error as Error, {
+          userId,
+          accountId: account.accountId,
+        });
+      }
+    }
+  }
 }

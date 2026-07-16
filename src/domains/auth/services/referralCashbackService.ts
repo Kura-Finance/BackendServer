@@ -1,9 +1,27 @@
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { prisma } from '../../shared/lib/prisma';
-import { logError } from '../../logger';
+import { EmailService } from '../../email';
+import { appLogger, logError } from '../../logger';
 
 const DEFAULT_REFERRAL_CASHBACK_RATE = 0.1;
 const DEFAULT_REFERRAL_CASHBACK_HOLD_DAYS = 14;
+const PLACEHOLDER_EMAIL_SUFFIX = '@placeholder.kura-finance.internal';
+
+export interface RequestCashbackWithdrawalParams {
+  userId: string;
+  amount: number;
+  destinationAddress: string;
+}
+
+export interface CashbackWithdrawalResult {
+  id: string;
+  amount: number;
+  currency: string;
+  destinationAddress: string;
+  status: string;
+  cashbackBalance: number;
+  createdAt: Date;
+}
 
 export interface AwardReferralCashbackParams {
   inviterUserId: string;
@@ -251,5 +269,92 @@ export class ReferralCashbackService {
         });
       }
     });
+  }
+
+  /**
+   * 申請提領可用 cashback：原子扣減餘額、建立申請紀錄，並 email 通知 Support。
+   */
+  static async requestWithdrawal(
+    params: RequestCashbackWithdrawalParams,
+  ): Promise<CashbackWithdrawalResult> {
+    const amount = Math.round(params.amount * 100) / 100;
+    if (!Number.isFinite(amount) || amount < 0.01) {
+      throw new Error('Withdrawal amount must be at least 0.01');
+    }
+
+    const destinationAddress = params.destinationAddress.trim().toLowerCase();
+    if (!/^0x[a-f0-9]{40}$/.test(destinationAddress)) {
+      throw new Error('Invalid destination address');
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const updated = await tx.user.updateMany({
+        where: {
+          id: params.userId,
+          cashbackBalance: { gte: amount },
+        },
+        data: {
+          cashbackBalance: { decrement: amount },
+        },
+      });
+
+      if (updated.count === 0) {
+        throw new Error('Insufficient cashback balance');
+      }
+
+      const user = await tx.user.findUniqueOrThrow({
+        where: { id: params.userId },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          cashbackBalance: true,
+        },
+      });
+
+      const withdrawal = await tx.referralCashbackWithdrawal.create({
+        data: {
+          userId: params.userId,
+          amount,
+          currency: 'usd',
+          destinationAddress,
+          status: 'pending',
+        },
+      });
+
+      return { user, withdrawal };
+    });
+
+    const email =
+      result.user.email && !result.user.email.endsWith(PLACEHOLDER_EMAIL_SUFFIX)
+        ? result.user.email
+        : null;
+
+    const emailed = await EmailService.sendCashbackWithdrawalNotice({
+      withdrawalId: result.withdrawal.id,
+      userId: result.user.id,
+      email,
+      displayName: result.user.name,
+      amount: result.withdrawal.amount,
+      currency: result.withdrawal.currency,
+      destinationAddress: result.withdrawal.destinationAddress,
+    });
+
+    if (!emailed) {
+      appLogger.warn('[ReferralCashbackService] Support email failed after withdrawal created', {
+        withdrawalId: result.withdrawal.id,
+        userId: params.userId,
+      });
+    }
+
+    return {
+      id: result.withdrawal.id,
+      amount: result.withdrawal.amount,
+      currency: result.withdrawal.currency,
+      destinationAddress: result.withdrawal.destinationAddress,
+      status: result.withdrawal.status,
+      cashbackBalance: Math.round(result.user.cashbackBalance * 100) / 100,
+      createdAt: result.withdrawal.createdAt,
+    };
   }
 }

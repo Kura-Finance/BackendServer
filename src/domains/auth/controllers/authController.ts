@@ -9,7 +9,7 @@ import { sendError, sendSuccess } from '../../shared/lib/apiResponse';
  * 認證控制器 - 請求與回應處理
  *
  * 登入流程改由 Privy 驅動（見 privyController），此控制器只負責登入後的
- * 個人資料、登出、邀請碼、返現紀錄與帳號刪除。
+ * 個人資料、登出、邀請碼、返現紀錄／提領與帳號刪除。
  */
 
 function getAuthenticatedUserId(req: AuthRequest, res: Response): string | null {
@@ -207,6 +207,45 @@ export const getMyCashbackHistory = async (req: AuthRequest, res: Response): Pro
     sendError(res, statusCode, {
       code: isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR',
       message: 'Internal server error',
+    });
+  }
+};
+
+export const withdrawCashback = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = getAuthenticatedUserId(req, res);
+    if (!userId) {
+      return;
+    }
+
+    const { amount, destinationAddress } = req.body as {
+      amount: number;
+      destinationAddress: string;
+    };
+
+    const { ReferralCashbackService } = await import('../services/referralCashbackService');
+    const result = await ReferralCashbackService.requestWithdrawal({
+      userId,
+      amount,
+      destinationAddress,
+    });
+
+    sendSuccess(res, {
+      message: 'Cashback withdrawal requested',
+      withdrawal: result,
+    });
+  } catch (error) {
+    logError('Withdraw cashback failed', error, { userId: req.userId });
+    const message = error instanceof Error ? error.message : 'Failed to withdraw cashback';
+    const normalized = message.toLowerCase();
+    const isValidationError =
+      normalized.includes('amount') ||
+      normalized.includes('address') ||
+      normalized.includes('insufficient');
+    const statusCode = isValidationError ? 400 : 500;
+    sendError(res, statusCode, {
+      code: isValidationError ? 'VALIDATION_ERROR' : 'INTERNAL_ERROR',
+      message,
     });
   }
 };

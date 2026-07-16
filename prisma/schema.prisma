@@ -84,6 +84,7 @@ model User {
   stripeSubscriptions     StripeSubscription[]
   inviterCashbacks        ReferralCashback[]       @relation("ReferralCashbackInviter")
   referredCashbacks       ReferralCashback[]       @relation("ReferralCashbackReferred")
+  cashbackWithdrawals     ReferralCashbackWithdrawal[]
 
   referredBy    User?  @relation("UserReferrals", fields: [referredByUserId], references: [id], onDelete: SetNull)
   referredUsers User[] @relation("UserReferrals")
@@ -633,6 +634,26 @@ model ReferralCashback {
   @@index([status, availableAt])
   @@index([stripeChargeId])
   @@index([source, createdAt])
+}
+
+// Referral cashback 提現申請（人工出金；申請時扣餘額並通知 Support）
+model ReferralCashbackWithdrawal {
+  id               String    @id @default(uuid())
+  userId           String
+  amount           Float
+  currency         String    @default("usd")
+  destinationAddress String
+  status           String    @default("pending") // pending | completed | rejected
+  completedAt      DateTime?
+  rejectedAt       DateTime?
+  rejectReason     String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
 }
 
 // ==========================================

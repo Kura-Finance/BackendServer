@@ -7,6 +7,7 @@ import {
   updateDisplayName,
   applyReferralCode,
   getMyCashbackHistory,
+  withdrawCashback,
   deleteAccount,
 } from './controllers/authController';
 import { login } from './controllers/privyController';
@@ -34,6 +35,7 @@ import {
   updateProfileBodySchema,
   applyReferralCodeBodySchema,
   cashbackHistoryQuerySchema,
+  withdrawCashbackBodySchema,
   keyPairBodySchema,
   passkeyRegisterBodySchema,
   passkeyAuthenticateBodySchema,
@@ -74,6 +76,7 @@ router.post('/passkey/authenticate', requireAuth, validateRequest({ body: passke
 // 使用者資料（需要認證）
 router.get('/me', requireAuth, me);
 router.get('/me/cashback-history', requireAuth, validateRequest({ query: cashbackHistoryQuerySchema }), getMyCashbackHistory); // 返現明細（pending/available/reversed）
+router.post('/me/cashback-withdraw', requireAuth, validateRequest({ body: withdrawCashbackBodySchema }), withdrawCashback); // 提領可用返現（通知 Support）
 router.patch('/me', requireAuth, validateRequest({ body: updateProfileBodySchema }), updateProfile);                              // 修改個人資料
 router.post('/me/referral-code', requireAuth, validateRequest({ body: applyReferralCodeBodySchema }), applyReferralCode);       // 補填邀請碼（僅可一次）
 router.patch('/me/avatar', requireAuth, validateRequest({ body: updateAvatarBodySchema }), updateAvatar);                      // 修改頭像

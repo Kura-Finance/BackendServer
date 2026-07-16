@@ -2503,6 +2503,44 @@ export class BridgeService {
     );
   }
 
+  /**
+   * 帳號刪除時刪除 Bridge customer（best-effort；失敗不阻擋 DB 刪除）。
+   */
+  static async deleteCustomerForUser(userId: string): Promise<void> {
+    if (!process.env.BRIDGE_API_KEY?.trim()) {
+      logDebug('[BridgeService] Skipping Bridge customer delete — BRIDGE_API_KEY not configured', { userId });
+      return;
+    }
+
+    const customer = await prisma.bridgeCustomer.findUnique({
+      where: { userId },
+      select: { bridgeCustomerId: true },
+    });
+
+    if (!customer?.bridgeCustomerId) {
+      return;
+    }
+
+    const bridgeCustomerId = customer.bridgeCustomerId;
+
+    try {
+      await bridgeFetch(`/customers/${bridgeCustomerId}`, { method: 'DELETE' });
+      appLogger.info('[BridgeService] Deleted Bridge customer during account deletion', {
+        userId,
+        bridgeCustomerId,
+      });
+    } catch (error) {
+      if (error instanceof BridgeError && error.statusCode === 404) {
+        logDebug('[BridgeService] Bridge customer already deleted', { userId, bridgeCustomerId });
+        return;
+      }
+      logError('[BridgeService] Failed to delete Bridge customer during account deletion', error as Error, {
+        userId,
+        bridgeCustomerId,
+      });
+    }
+  }
+
   /** KYC link 狀態變化（webhook 用），用 link id 對應。 */
   static async syncKycLinkFromWebhook(link: BridgeKycLinkResponse): Promise<void> {
     if (!link.id) return;

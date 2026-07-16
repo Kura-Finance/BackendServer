@@ -1,5 +1,7 @@
 import { PlaidAccountService } from '../../plaid/services/plaidAccountService';
 import { StripeService } from '../../stripe/services/stripeService';
+import { BridgeService } from '../../bridge/services/bridgeService';
+import { DinariService } from '../../dinari/services/dinariService';
 import { deletePrivyUser } from './privyService';
 
 /**
@@ -10,6 +12,8 @@ export class AccountDeletionService {
     await Promise.all([
       this.revokeAllPlaidItems(userId),
       StripeService.cancelActiveSubscriptionsForUser(userId),
+      BridgeService.deleteCustomerForUser(userId),
+      DinariService.deactivateAccountsForUser(userId),
     ]);
     await deletePrivyUser(privyUserId);
   }

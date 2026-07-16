@@ -5,6 +5,7 @@ export {
   updateDisplayName,
   applyReferralCode,
   getMyCashbackHistory,
+  withdrawCashback,
   logout,
   deleteAccount,
 } from './controllers/authController';

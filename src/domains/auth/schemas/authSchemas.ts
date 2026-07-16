@@ -55,6 +55,15 @@ export const cashbackHistoryQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
 });
 
+export const withdrawCashbackBodySchema = z.object({
+  amount: z.coerce.number().finite().min(0.01, 'amount must be at least 0.01'),
+  destinationAddress: z
+    .string()
+    .trim()
+    .regex(/^0x[a-fA-F0-9]{40}$/, 'destinationAddress must be a valid EVM address')
+    .transform((v) => v.toLowerCase()),
+});
+
 export const updateDisplayNameBodySchema = z.object({
   displayName: z.string().trim().min(1, 'displayName is required').max(50, 'displayName max length is 50'),
 });
