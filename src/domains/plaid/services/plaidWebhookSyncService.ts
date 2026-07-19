@@ -316,6 +316,20 @@ export class PlaidWebhookSyncService {
           investmentCount,
         });
 
+        // Webhook 只更新 holdings cache，不會寫 AssetSnapshot。
+        // 清掉 investmentsSyncedAt，讓下次 encrypted/optimized 讀取刷新並補歷史點。
+        try {
+          await prisma.plaidSyncLog.updateMany({
+            where: { userId },
+            data: { investmentsSyncedAt: null },
+          });
+        } catch (expireError) {
+          appLogger.warn('Failed to expire investments cache after webhook inv sync', {
+            userId,
+            error: expireError instanceof Error ? expireError.message : expireError,
+          });
+        }
+
         try {
           await PayloadKeyService.deleteOrphanedKeys(userId);
         } catch (gcError) {

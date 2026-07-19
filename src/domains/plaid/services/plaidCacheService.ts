@@ -248,6 +248,40 @@ export class PlaidCacheService {
   }
 
   /**
+   * 若已有加密投資快取卻從來沒寫過 plaidInvestment AssetSnapshot，
+   * 把 investmentsSyncedAt 清掉，迫使下一次 optimized 讀取走 Plaid 刷新並寫入歷史。
+   * （修復 mobile 只打 cache-only encrypted endpoint 導致 Broker「No performance data yet」）
+   */
+  static async ensureInvestmentHistorySeeded(userId: string): Promise<void> {
+    const investmentCount = await prisma.plaidInvestmentCache.count({
+      where: {
+        userId,
+        NOT: [{ payloadCiphertext: null }, { payloadKeyId: null }],
+      },
+    });
+    if (investmentCount === 0) return;
+
+    const existingHistory = await prisma.assetSnapshot.findFirst({
+      where: {
+        userId,
+        OR: [{ metric: 'plaidInvestment' }, { metric: { startsWith: 'plaidInvestment:' } }],
+      },
+      select: { id: true },
+    });
+    if (existingHistory) return;
+
+    await prisma.plaidSyncLog.updateMany({
+      where: { userId },
+      data: { investmentsSyncedAt: null },
+    });
+
+    logDebug('Expired investments cache to seed missing plaidInvestment asset history', {
+      userId,
+      investmentCount,
+    });
+  }
+
+  /**
    * 從緩存取得「加密形式」財務快照（Phase 3 Zero-Access E2EE）
    *
    * 與 `getSnapshotFromCache` 不同：

@@ -48,13 +48,18 @@ export class PlaidService {
   }
 
   /**
-   * 僅讀快取（不觸發 Plaid API）：回傳目前 cache 中的加密形式 snapshot。
+   * 加密財務快照讀取：快取未過期直接回傳；過期則從 Plaid 刷新並寫入 AssetSnapshot 歷史。
+   *
+   * Mobile 只打 `/finance-snapshot/encrypted`。若此路徑永遠只讀 cache、從不觸發
+   * `saveFinanceSnapshotToCache`，Broker 頁的資產歷史會一直空白，顯示
+   * 「No performance data yet」（webhook 更新 holdings 也不會寫 AssetSnapshot）。
    */
   static async getEncryptedFinanceSnapshot(userId: string): Promise<EncryptedFinanceSnapshot> {
     if (await DemoService.isDemoUser(userId)) {
       return DemoService.plaidSnapshot(userId);
     }
-    return PlaidCacheService.getEncryptedSnapshotFromCache(userId);
+    await PlaidCacheService.ensureInvestmentHistorySeeded(userId);
+    return PlaidCacheService.getFinanceSnapshotOptimized(userId, false);
   }
 
   // ===== Webhook 同步 =====
