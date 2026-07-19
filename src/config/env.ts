@@ -160,9 +160,9 @@ export function validateEnvironment(): void {
   if (!process.env.DINARI_PAYMENT_TOKEN_ADDRESS) {
     console.warn('⚠️ DINARI_PAYMENT_TOKEN_ADDRESS not set — Dinari order placement will be rejected until configured');
   }
-  if (!process.env.DINARI_WHITELIST_EMAILS) {
+  if (!process.env.DINARI_WHITELIST_EMAILS && !process.env.DINARI_WHITELIST_DOMAINS) {
     console.warn(
-      '⚠️ DINARI_WHITELIST_EMAILS not set — only @privy.io / @theprism.ltd / DEMO_USER_EMAILS can access Dinari Entity/KYC',
+      '⚠️ DINARI_WHITELIST_EMAILS / DINARI_WHITELIST_DOMAINS not set — only DEMO_USER_EMAILS can access Dinari Entity/KYC',
     );
   }
 

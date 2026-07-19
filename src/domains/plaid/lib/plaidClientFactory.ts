@@ -1,14 +1,16 @@
 import { Configuration, PlaidApi, PlaidEnvironments } from 'plaid';
 
 /**
- * 根據用戶 ID 決定使用 Sandbox 或 Production 環境
- * test@kura-finance.com 用戶（ID: 82f0cfbb-0d93-4802-adba-52e395ccac6e）使用 Sandbox
- * 其他用戶使用 Production
+ * 根據用戶 ID 決定使用 Sandbox 或 Production 環境。
+ * 設定 `PLAID_SANDBOX_USER_IDS`（逗號分隔 UUID）的用戶走 Sandbox；其餘走 Production。
+ * 未設定時全部使用 Production。
  */
 export function getPlaidEnvironmentByUserId(userId: string): 'sandbox' | 'production' {
-  // 測試用戶 ID
-  const testUserIds = ['82f0cfbb-0d93-4802-adba-52e395ccac6e'];
-  return testUserIds.includes(userId) ? 'sandbox' : 'production';
+  const sandboxUserIds = (process.env.PLAID_SANDBOX_USER_IDS ?? '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean);
+  return sandboxUserIds.includes(userId) ? 'sandbox' : 'production';
 }
 
 /**

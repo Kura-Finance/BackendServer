@@ -1,9 +1,6 @@
 import { prisma } from '../../shared/lib/prisma';
 import { DemoService } from '../../demo/demoService';
 
-/** 內建允許的 email 網域（不含 @）。 */
-const DINARI_WHITELIST_DOMAINS_BUILTIN = ['theprism.ltd'] as const;
-
 function parseEnvList(raw: string | undefined): string[] {
   return (raw ?? '')
     .split(',')
@@ -15,11 +12,18 @@ function dinariWhitelistEmails(): Set<string> {
   return new Set(parseEnvList(process.env.DINARI_WHITELIST_EMAILS).filter((entry) => !entry.startsWith('@')));
 }
 
+/**
+ * Allowed email domains (no leading @).
+ * Sources: `DINARI_WHITELIST_DOMAINS` (comma-separated) and `@domain` entries in `DINARI_WHITELIST_EMAILS`.
+ */
 function dinariWhitelistDomains(): Set<string> {
-  const fromEnv = parseEnvList(process.env.DINARI_WHITELIST_EMAILS)
+  const fromDomainsEnv = parseEnvList(process.env.DINARI_WHITELIST_DOMAINS).map((d) =>
+    d.startsWith('@') ? d.slice(1) : d,
+  );
+  const fromEmailsEnv = parseEnvList(process.env.DINARI_WHITELIST_EMAILS)
     .filter((entry) => entry.startsWith('@'))
     .map((entry) => entry.slice(1));
-  return new Set([...DINARI_WHITELIST_DOMAINS_BUILTIN, ...fromEnv]);
+  return new Set([...fromDomainsEnv, ...fromEmailsEnv]);
 }
 
 function emailMatchesWhitelistDomain(email: string): boolean {

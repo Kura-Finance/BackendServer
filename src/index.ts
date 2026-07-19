@@ -123,31 +123,53 @@ app.use('/api', webTierGate);
 // 4. Well-known endpoints (Universal Links / Passkey / Associated Domains)
 // ========================================
 
-// iOS: Apple App Site Association
-// Served at https://api.kura-finance.com/.well-known/apple-app-site-association
-// Required for Universal Links AND Passkeys (WebAuthn) on iOS.
-// Team ID: K7FVP5GGP9  |  Bundle ID: com.kurafinance.app
+const DEFAULT_APPLE_APP_ID = 'K7FVP5GGP9.com.kurafinance.app';
+const DEFAULT_ANDROID_PACKAGE_NAME = 'com.kurafinance.app';
+const DEFAULT_ANDROID_SHA256_CERT_FINGERPRINTS = [
+  '3E:2E:17:95:8B:7C:6C:88:D6:6F:0F:A4:30:48:F1:7B:3C:E0:4F:A0:C5:D7:9D:32:06:80:77:FE:49:78:66:33',
+  '31:E3:CE:78:ED:6F:55:A6:2C:40:34:F2:61:F2:91:43:2D:BE:44:74:A0:67:17:02:0B:88:9F:72:19:AE:BB:A0',
+  '2B:AE:23:03:BE:ED:C6:A2:87:18:B5:89:7A:59:C9:43:A7:BB:56:8F:B2:50:CB:9F:FF:81:12:36:CA:EB:8B:F3',
+  'FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C',
+];
+
+function appleAppId(): string {
+  return process.env.APPLE_APP_ID?.trim() || DEFAULT_APPLE_APP_ID;
+}
+
+function androidPackageName(): string {
+  return process.env.ANDROID_PACKAGE_NAME?.trim() || DEFAULT_ANDROID_PACKAGE_NAME;
+}
+
+function androidSha256CertFingerprints(): string[] {
+  const fromEnv = process.env.ANDROID_SHA256_CERT_FINGERPRINTS?.split(',')
+    .map((fp) => fp.trim())
+    .filter(Boolean);
+  return fromEnv?.length ? fromEnv : DEFAULT_ANDROID_SHA256_CERT_FINGERPRINTS;
+}
+
+// iOS: Apple App Site Association — required for Universal Links and Passkeys.
+// Override with APPLE_APP_ID (format: TeamID.bundleId).
 app.get('/.well-known/apple-app-site-association', (_req: Request, res: Response) => {
+  const appID = appleAppId();
   res.setHeader('Content-Type', 'application/json');
   res.json({
     applinks: {
       apps: [],
       details: [
         {
-          appID: 'K7FVP5GGP9.com.kurafinance.app',
+          appID,
           paths: ['*'],
         },
       ],
     },
     webcredentials: {
-      apps: ['K7FVP5GGP9.com.kurafinance.app'],
+      apps: [appID],
     },
   });
 });
 
-// Android: Digital Asset Links
-// Served at https://api.kura-finance.com/.well-known/assetlinks.json
-// Required for Android Passkeys (WebAuthn).
+// Android: Digital Asset Links — required for Android Passkeys.
+// Override with ANDROID_PACKAGE_NAME and ANDROID_SHA256_CERT_FINGERPRINTS (comma-separated).
 app.get('/.well-known/assetlinks.json', (_req: Request, res: Response) => {
   res.setHeader('Content-Type', 'application/json');
   res.json([
@@ -155,13 +177,8 @@ app.get('/.well-known/assetlinks.json', (_req: Request, res: Response) => {
       relation: ['delegate_permission/common.handle_all_urls', 'delegate_permission/common.get_login_creds'],
       target: {
         namespace: 'android_app',
-        package_name: 'com.kurafinance.app',
-        sha256_cert_fingerprints: [
-          '3E:2E:17:95:8B:7C:6C:88:D6:6F:0F:A4:30:48:F1:7B:3C:E0:4F:A0:C5:D7:9D:32:06:80:77:FE:49:78:66:33',
-          '31:E3:CE:78:ED:6F:55:A6:2C:40:34:F2:61:F2:91:43:2D:BE:44:74:A0:67:17:02:0B:88:9F:72:19:AE:BB:A0',
-          '2B:AE:23:03:BE:ED:C6:A2:87:18:B5:89:7A:59:C9:43:A7:BB:56:8F:B2:50:CB:9F:FF:81:12:36:CA:EB:8B:F3',
-          'FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C',
-        ],
+        package_name: androidPackageName(),
+        sha256_cert_fingerprints: androidSha256CertFingerprints(),
       },
     },
   ]);

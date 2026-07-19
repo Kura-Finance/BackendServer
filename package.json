@@ -1,7 +1,8 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "description": "",
+  "private": true,
+  "description": "Kura backend API (Kura Finance LLC)",
   "main": "index.js",
   "scripts": {
     "predev": "prisma generate",
@@ -11,8 +12,8 @@
     "start": "node dist/index.js"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "Kura Finance LLC",
+  "license": "UNLICENSED",
   "type": "commonjs",
   "dependencies": {
     "@dinari/api-sdk": "^0.14.0",

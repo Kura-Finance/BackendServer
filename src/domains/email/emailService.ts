@@ -56,7 +56,7 @@ export class EmailService {
       const resend = this.initializeResend();
       const fromEmail = process.env.RESEND_FROM_EMAIL;
       const appName = process.env.APP_NAME || 'Kura';
-      const adminEmail = 'admin@kura-finance.com';
+      const adminEmail = process.env.ADMIN_EMAIL || 'admin@kura-finance.com';
 
       if (!fromEmail) {
         throw new Error('Missing required environment variable: RESEND_FROM_EMAIL');
@@ -146,7 +146,7 @@ export class EmailService {
       const resend = this.initializeResend();
       const fromEmail = process.env.RESEND_FROM_EMAIL;
       const appName = process.env.APP_NAME || 'Kura';
-      const supportEmail = 'Support@kura-finance.com';
+      const supportEmail = process.env.SUPPORT_EMAIL || 'Support@kura-finance.com';
 
       if (!fromEmail) {
         throw new Error('Missing required environment variable: RESEND_FROM_EMAIL');

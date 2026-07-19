@@ -135,11 +135,15 @@ jobs:
             WEBAUTHN_RP_NAME=Kura
             WEBAUTHN_ORIGIN=https://api.kura-finance.com\,android:apk-key-hash:MePOeO1vVaYsQDTyYfKRQy2-RHSgZxcCC4ifchmuu6A
 
-      
-      # GitHub Secrets 配置提示（首次部署時需設置）
+      # Optional env (add to env_vars above when set — see docs/ENVIRONMENT.md):
+      # ADMIN_EMAIL, SUPPORT_EMAIL, PLAID_SANDBOX_USER_IDS,
+      # DINARI_WHITELIST_DOMAINS, DINARI_WHITELIST_EMAILS,
+      # APPLE_APP_ID, ANDROID_PACKAGE_NAME, ANDROID_SHA256_CERT_FINGERPRINTS
+      # Secrets tips (first deploy):
       # ALLOWED_ORIGINS: "https://app.kura-finance.com,https://www.kura-finance.com,https://kura-finance.com"
       # PLAID_REDIRECT_URI: "https://app.kura-finance.com/dashboard"
       # APP_URL: "https://app.kura-finance.com"
+      # BRIDGE_WEBHOOK_PUBLIC_KEY: PEM from Bridge dashboard (use \n for newlines in secret)
 
       # 步驟 11: 驗證部署
       - name: Verify Cloud Run deployment
