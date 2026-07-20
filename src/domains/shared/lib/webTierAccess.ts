@@ -1,5 +1,5 @@
-/** Web 平台允許使用的訂閱等級（Pro / Ultimate 功能；VIP 一併放行） */
-export const WEB_ALLOWED_TIERS = new Set(['Pro', 'Ultimate', 'VIP']);
+/** Web 平台允許使用的訂閱等級（Pro / Ultimate） */
+export const WEB_ALLOWED_TIERS = new Set(['Pro', 'Ultimate']);
 
 /**
  * Basic 用戶在 Web 仍可存取的路徑（soft gate：可登入、查 profile、付費升級）

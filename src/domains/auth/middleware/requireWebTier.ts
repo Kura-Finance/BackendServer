@@ -9,7 +9,7 @@ import {
 import { AuthRequest, resolveRequestAuth } from './auth';
 
 /**
- * Soft gate：Web 客戶端僅 Pro / Ultimate / VIP 可使用完整 API。
+ * Soft gate：Web 客戶端僅 Pro / Ultimate 可使用完整 API。
  * Basic 用戶可登入並存取白名單路徑（profile、Stripe 付費），其餘回 403。
  */
 export async function webTierGate(

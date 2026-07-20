@@ -8,41 +8,35 @@ export type ApiOperationType = 'exchange_connect' | 'exchange_balance' | 'plaid_
 
 /**
  * 每個等級允許的每日 API 操作限制
- * 
- * 根據 2026 年商業規劃：
- * - Kura Basic (免費版): 無限帳戶綁定，1手動同步額度
+ *
+ * - Kura Basic (免費版): 無限帳戶綁定，1 次/日手動同步
  * - Kura Pro (進階版): 無限帳戶綁定，5 次/日手動同步
  * - Kura Ultimate (旗艦版): 無限帳戶綁定，20 次/日高頻同步
- * - Kura VIP (專屬版): 無限所有操作，可綁定專屬節點
  */
 const API_LIMITS_BY_TIER: Record<ApiOperationType, Record<string, number>> = {
   // 帳戶綁定限制 (無上限綁定傳統銀行、信用卡、Web3 錢包地址)
   'exchange_connect': {
-    'Basic': -1,          // 基礎用戶: 無限制
-    'Pro': -1,            // Pro 用戶: 無限制
-    'Ultimate': -1,       // Ultimate 用戶: 無限制
-    'VIP': -1,            // VIP 用戶: 無限制
+    'Basic': -1,
+    'Pro': -1,
+    'Ultimate': -1,
   },
   // 手動同步/查詢餘額限制 (API 調用計數)
   'exchange_balance': {
-    'Basic': 1,           // 基礎用戶: 每日 1 次手動強制同步
-    'Pro': 5,             // Pro 用戶: 每日 5 次手動強制同步
-    'Ultimate': 20,       // Ultimate 用戶: 每日 20 次高頻手動同步
-    'VIP': -1,            // VIP 用戶: 無限制
+    'Basic': 1,
+    'Pro': 5,
+    'Ultimate': 20,
   },
   // Plaid 手動刷新限制 (銀行帳戶同步)
   'plaid_refresh': {
-    'Basic': 1,           // 基礎用戶: 每日 1 次手動刷新
-    'Pro': 5,             // Pro 用戶: 每日 5 次手動刷新
-    'Ultimate': 20,       // Ultimate 用戶: 每日 20 次手動刷新
-    'VIP': -1,            // VIP 用戶: 無限制
+    'Basic': 1,
+    'Pro': 5,
+    'Ultimate': 20,
   },
   // DeBank 手動刷新限制（協議資料同步）
   'debank_refresh': {
-    'Basic': 1,           // 基礎用戶: 每日 1 次手動刷新
-    'Pro': 5,             // Pro 用戶: 每日 5 次手動刷新
-    'Ultimate': 20,       // Ultimate 用戶: 每日 20 次手動刷新
-    'VIP': -1,            // VIP 用戶: 無限制
+    'Basic': 1,
+    'Pro': 5,
+    'Ultimate': 20,
   },
 };
 
@@ -54,7 +48,6 @@ const REFRESH_LIMITS_BY_TIER = {
   'Basic': 1,
   'Pro': 5,
   'Ultimate': 20,
-  'VIP': -1,
 };
 
 /** TrackFi 加密資產歷史（GET /api/assets/history/encrypted）可查詢的最大天數 */
@@ -62,8 +55,14 @@ const ASSET_HISTORY_DAYS_BY_TIER: Record<string, number> = {
   Basic: 30,
   Pro: 365,
   Ultimate: 365,
-  VIP: 365,
 };
+
+/** Normalize stored tier strings (legacy VIP → Ultimate). */
+export function normalizeTier(tier: string | null | undefined): string {
+  if (!tier) return 'Basic';
+  if (tier === 'VIP') return 'Ultimate';
+  return tier;
+}
 
 /**
  * 獲取用戶的訂閱等級
@@ -79,7 +78,7 @@ export async function getUserTier(userId: string): Promise<string> {
 
     logDatabaseOperation('SELECT', 'users', Date.now() - dbStartTime, true);
 
-    return user?.tier || 'Basic';
+    return normalizeTier(user?.tier);
   } catch (error) {
     logDatabaseOperation('SELECT', 'users', Date.now() - dbStartTime, false);
     logDebug(`Failed to fetch user tier, defaulting to Basic`, { userId, error });
@@ -172,7 +171,7 @@ export async function checkApiLimit(
   const tier = await getUserTier(userId);
   const operationLimit = getApiLimitForTier(operationType, tier);
 
-  // VIP 用戶不受限制
+  // -1 = unlimited (e.g. exchange_connect)
   if (operationLimit === -1) {
     return {
       canOperate: true,
@@ -323,7 +322,7 @@ export async function updateUserTier(
   const dbStartTime = Date.now();
   
   // 驗證新等級是否有效
-  const validTiers = ['Basic', 'Pro', 'Ultimate', 'VIP'];
+  const validTiers = ['Basic', 'Pro', 'Ultimate'];
   if (!validTiers.includes(newTier)) {
     throw new Error(
       `Invalid tier: ${newTier}. Valid tiers are: ${validTiers.join(', ')}`

@@ -25,7 +25,7 @@ export interface UserProfile {
   avatarUrl: string;
   membershipLabel: string;
   tier: string;
-  /** Pro / Ultimate / VIP 為 true；Web Basic 用戶登入後應導向付費頁 */
+  /** Pro / Ultimate 為 true；Web Basic 用戶登入後應導向付費頁 */
   webAccessAllowed: boolean;
   referCode?: string;
   referredByCode?: string | null;

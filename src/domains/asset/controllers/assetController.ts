@@ -17,7 +17,7 @@ import { sendError, sendSuccess } from '../../shared/lib/apiResponse';
  * 取得「加密形式」資產歷史
  *
  * 路由：GET /api/assets/history/encrypted?days=30  (與 /api/assets/history 別名等價)
- * Basic 會員最多 30 天；Pro / Ultimate / VIP 最多 365 天。
+ * Basic 會員最多 30 天；Pro / Ultimate 最多 365 天。
  *
  * 後端不解密，回傳：
  *   {

@@ -68,10 +68,11 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 |----------|----------|-------|
 | `STRIPE_SECRET_KEY` | Prod | |
 | `STRIPE_WEBHOOK_SECRET` | Prod | |
-| `STRIPE_PRICE_PRO_MONTHLY` | Recommended | Price IDs |
-| `STRIPE_PRICE_PRO_YEARLY` | Recommended | |
-| `STRIPE_PRICE_ULTIMATE_MONTHLY` | Recommended | |
-| `STRIPE_PRICE_ULTIMATE_YEARLY` | Recommended | |
+| `STRIPE_PRICE_PRO_MONTHLY` | Recommended | Mapped to Pro by `getTierByPriceId` |
+| `STRIPE_PRICE_PRO_YEARLY` | Recommended | Mapped to Pro |
+| `STRIPE_PRICE_ULTIMATE_MONTHLY` | Recommended | Mapped to Ultimate |
+| `STRIPE_PRICE_ULTIMATE_YEARLY` | Recommended | Mapped to Ultimate |
+| `STRIPE_PRICE_PRO` / `STRIPE_PRICE_ULTIMATE` | Optional | Legacy aliases (same mapping) |
 
 ## DeBank / Logo
 

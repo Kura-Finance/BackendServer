@@ -1,4 +1,4 @@
-export type TierName = 'Basic' | 'Pro' | 'Ultimate' | 'VIP';
+export type TierName = 'Basic' | 'Pro' | 'Ultimate';
 
 export type CheckoutSessionResult = {
   sessionId: string;

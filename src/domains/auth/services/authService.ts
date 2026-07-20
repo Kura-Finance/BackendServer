@@ -6,6 +6,7 @@ import { getJwtSecret } from '../../../config/env';
 import { logAuthEvent, logError, logDatabaseOperation, logBusinessEvent, logDebug } from '../../logger';
 import { UserProfile, UpdateProfilePayload, PlaidCacheInfo } from '../models/types';
 import { tierHasWebAccess } from '../../shared/lib/webTierAccess';
+import { normalizeTier } from '../../shared/lib/apiRateLimitUtil';
 import { getCacheStats } from '../../plaid/lib/plaidCacheUtil';
 import type { PrivyIdentity } from './privyService';
 import {
@@ -307,7 +308,7 @@ export class AuthService {
       ? (user.name || 'User')
       : (effectiveEmail.split('@')[0] || 'User');
 
-    const tier = user.tier || 'Basic';
+    const tier = normalizeTier(user.tier);
 
     return {
       id: user.id,

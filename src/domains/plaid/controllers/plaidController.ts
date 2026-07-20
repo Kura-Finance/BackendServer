@@ -177,7 +177,7 @@ export const disconnectPlaidItem = async (req: AuthRequest, res: Response) => {
  * - API 層面只返回數據庫內容，Server 通過 Webhooks 自動更新數據庫
  * - 用戶可通過 ?refresh=true 參數強制更新，但受每日次數限制（基於訂閱等級）
  * - 達到限制時返回緩存數據
- * - Basic: 1次/天, Pro: 5次/天, Ultimate: 20次/天, VIP: 無限
+ * - Basic: 1次/天, Pro: 5次/天, Ultimate: 20次/天
  */
 export const getFinanceSnapshotOptimized = async (req: AuthRequest, res: Response) => {
   try {

@@ -68,10 +68,11 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 |------|------|------|
 | `STRIPE_SECRET_KEY` | 正式 | |
 | `STRIPE_WEBHOOK_SECRET` | 正式 | |
-| `STRIPE_PRICE_PRO_MONTHLY` | 建議 | Price ID |
-| `STRIPE_PRICE_PRO_YEARLY` | 建議 | |
-| `STRIPE_PRICE_ULTIMATE_MONTHLY` | 建議 | |
-| `STRIPE_PRICE_ULTIMATE_YEARLY` | 建議 | |
+| `STRIPE_PRICE_PRO_MONTHLY` | 建議 | 對應 Pro（`getTierByPriceId`） |
+| `STRIPE_PRICE_PRO_YEARLY` | 建議 | 對應 Pro |
+| `STRIPE_PRICE_ULTIMATE_MONTHLY` | 建議 | 對應 Ultimate |
+| `STRIPE_PRICE_ULTIMATE_YEARLY` | 建議 | 對應 Ultimate |
+| `STRIPE_PRICE_PRO`／`STRIPE_PRICE_ULTIMATE` | 可選 | 舊別名（相同對應） |
 
 ## DeBank／Logo
 

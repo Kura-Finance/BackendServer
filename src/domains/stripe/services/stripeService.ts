@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { prisma } from '../../shared/lib/prisma';
 import { logDebug, logError } from '../../logger';
-import { updateUserTier } from '../../shared/lib/apiRateLimitUtil';
+import { normalizeTier, updateUserTier } from '../../shared/lib/apiRateLimitUtil';
 import { ReferralCashbackService } from '../../auth/services/referralCashbackService';
 import type {
   BillingPortalSessionResult,
@@ -47,9 +47,22 @@ export class StripeService {
     if (!priceId) return null;
 
     const priceToTierMap = new Map<string, TierName>();
-    if (process.env.STRIPE_PRICE_PRO) priceToTierMap.set(process.env.STRIPE_PRICE_PRO, 'Pro');
-    if (process.env.STRIPE_PRICE_ULTIMATE) priceToTierMap.set(process.env.STRIPE_PRICE_ULTIMATE, 'Ultimate');
-    if (process.env.STRIPE_PRICE_VIP) priceToTierMap.set(process.env.STRIPE_PRICE_VIP, 'VIP');
+
+    const register = (tier: TierName, ...envKeys: string[]) => {
+      for (const key of envKeys) {
+        const value = process.env[key]?.trim();
+        if (value) priceToTierMap.set(value, tier);
+      }
+    };
+
+    // Deploy uses *_MONTHLY / *_YEARLY; keep bare STRIPE_PRICE_* for backwards compatibility.
+    register('Pro', 'STRIPE_PRICE_PRO', 'STRIPE_PRICE_PRO_MONTHLY', 'STRIPE_PRICE_PRO_YEARLY');
+    register(
+      'Ultimate',
+      'STRIPE_PRICE_ULTIMATE',
+      'STRIPE_PRICE_ULTIMATE_MONTHLY',
+      'STRIPE_PRICE_ULTIMATE_YEARLY',
+    );
 
     return priceToTierMap.get(priceId) ?? null;
   }
@@ -180,7 +193,7 @@ export class StripeService {
       : false;
 
     return {
-      tier: user?.tier || 'Basic',
+      tier: normalizeTier(user?.tier),
       hasActiveSubscription,
       subscriptionStatus: latestSubscription?.status ?? null,
       stripeSubscriptionId: latestSubscription?.stripeSubscriptionId ?? null,
