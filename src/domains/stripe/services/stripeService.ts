@@ -177,6 +177,12 @@ export class StripeService {
   }
 
   static async getBillingStatus(userId: string): Promise<BillingStatusResult> {
+    // Pull latest state from Stripe so "I already upgraded" works even when
+    // webhook delivery was a no-op or the same event id was resent (idempotent skip).
+    await this.syncSubscriptionsForUser(userId).catch((error) => {
+      logError('Failed to sync Stripe subscriptions for billing status', error, { userId });
+    });
+
     const [user, latestSubscription] = await Promise.all([
       prisma.user.findUnique({
         where: { id: userId },
@@ -201,6 +207,41 @@ export class StripeService {
       currentPeriodEnd: latestSubscription?.currentPeriodEnd?.toISOString() ?? null,
       cancelAtPeriodEnd: latestSubscription?.cancelAtPeriodEnd ?? false,
     };
+  }
+
+  /** Re-fetch this user's subscriptions from Stripe and apply tier. */
+  private static async syncSubscriptionsForUser(userId: string): Promise<void> {
+    const stripe = this.getStripeClient();
+    const [user, localSubs] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: { stripeCustomerId: true },
+      }),
+      prisma.stripeSubscription.findMany({
+        where: { userId },
+        select: { stripeSubscriptionId: true },
+      }),
+    ]);
+
+    const seen = new Set<string>();
+
+    for (const local of localSubs) {
+      const subscription = await stripe.subscriptions.retrieve(local.stripeSubscriptionId);
+      seen.add(subscription.id);
+      await this.syncSubscription(subscription);
+    }
+
+    if (user?.stripeCustomerId) {
+      const listed = await stripe.subscriptions.list({
+        customer: user.stripeCustomerId,
+        status: 'all',
+        limit: 10,
+      });
+      for (const subscription of listed.data) {
+        if (seen.has(subscription.id)) continue;
+        await this.syncSubscription(subscription);
+      }
+    }
   }
 
   /** Cancel active Stripe subscriptions before account deletion (best-effort). */
@@ -386,7 +427,12 @@ export class StripeService {
       },
     });
 
-    await this.applyTierBySubscription(userId, subscription.status, stripePriceId);
+    await this.applyTierBySubscription(
+      userId,
+      subscription.status,
+      stripePriceId,
+      subscription.metadata,
+    );
     return userId;
   }
 
@@ -443,21 +489,42 @@ export class StripeService {
     return user?.id ?? null;
   }
 
+  private static getTierFromMetadata(
+    metadata?: Stripe.Metadata | null,
+  ): TierName | null {
+    const raw = metadata?.selectedTier?.trim();
+    if (raw === 'Pro' || raw === 'Ultimate') return raw;
+    return null;
+  }
+
   private static async applyTierBySubscription(
     userId: string,
     status: Stripe.Subscription.Status,
     stripePriceId: string | null,
+    metadata?: Stripe.Metadata | null,
   ): Promise<void> {
     if (!ACTIVE_SUBSCRIPTION_STATUSES.has(status)) {
       await updateUserTier(userId, 'Basic');
       return;
     }
 
-    const mappedTier = this.getTierByPriceId(stripePriceId);
+    const mappedTier =
+      this.getTierByPriceId(stripePriceId) ?? this.getTierFromMetadata(metadata);
     if (!mappedTier) {
-      logDebug('Stripe subscription priceId is not mapped to tier', {
+      logError('Stripe subscription priceId is not mapped to tier', new Error('Unmapped price'), {
         userId,
         stripePriceId,
+        selectedTier: metadata?.selectedTier ?? null,
+        configuredPro: [
+          process.env.STRIPE_PRICE_PRO,
+          process.env.STRIPE_PRICE_PRO_MONTHLY,
+          process.env.STRIPE_PRICE_PRO_YEARLY,
+        ].filter(Boolean),
+        configuredUltimate: [
+          process.env.STRIPE_PRICE_ULTIMATE,
+          process.env.STRIPE_PRICE_ULTIMATE_MONTHLY,
+          process.env.STRIPE_PRICE_ULTIMATE_YEARLY,
+        ].filter(Boolean),
       });
       return;
     }
