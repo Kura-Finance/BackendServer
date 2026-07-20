@@ -27,6 +27,7 @@ import { appLogger, logBusinessEvent } from '../../logger';
 
 const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 分鐘
 
+/** Shared RP ID for web + mobile (api.kura-finance.com). Web uses Related Origin Requests. */
 function getRpId(): string {
   const rpId = process.env.WEBAUTHN_RP_ID;
   if (!rpId) throw new Error('WEBAUTHN_RP_ID is not configured');

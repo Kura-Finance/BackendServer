@@ -93,9 +93,10 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 | 變數 | 必填 | 說明 |
 |------|------|------|
-| `WEBAUTHN_RP_ID` | Passkey 用 | 例如 `api.kura-finance.com` |
+| `WEBAUTHN_RP_ID` | Passkey 用 | Web + mobile 共用：`api.kura-finance.com` |
 | `WEBAUTHN_RP_NAME` | Passkey 用 | 例如 `Kura` |
-| `WEBAUTHN_ORIGIN` | Passkey 用 | 逗號分隔；可含 `android:apk-key-hash:...` |
+| `WEBAUTHN_ORIGIN` | Passkey 用 | 逗號分隔；須含 `https://app.kura-finance.com`，可含 `android:apk-key-hash:...` |
+| `WEBAUTHN_RELATED_ORIGINS` | Web ROR 用 | 允許使用 RP ID 的 origin 清單（`/.well-known/webauthn`；預設 `https://app.kura-finance.com`） |
 
 ## Bridge
 

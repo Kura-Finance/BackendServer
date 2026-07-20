@@ -168,6 +168,24 @@ app.get('/.well-known/apple-app-site-association', (_req: Request, res: Response
   });
 });
 
+/**
+ * WebAuthn Related Origin Requests — lets https://app.kura-finance.com use
+ * RP ID api.kura-finance.com (same passkeys as the mobile app).
+ * @see https://passkeys.dev/docs/advanced/related-origins/
+ */
+app.get('/.well-known/webauthn', (_req: Request, res: Response) => {
+  const related =
+    process.env.WEBAUTHN_RELATED_ORIGINS ||
+    'https://app.kura-finance.com';
+  const origins = related
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  res.status(200).json({ origins });
+});
+
 // Android: Digital Asset Links — required for Android Passkeys.
 // Override with ANDROID_PACKAGE_NAME and ANDROID_SHA256_CERT_FINGERPRINTS (comma-separated).
 app.get('/.well-known/assetlinks.json', (_req: Request, res: Response) => {

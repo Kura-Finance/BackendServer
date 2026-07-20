@@ -133,7 +133,8 @@ jobs:
             LIFI_API_KEY=${{ secrets.LIFI_API_KEY }}
             WEBAUTHN_RP_ID=api.kura-finance.com
             WEBAUTHN_RP_NAME=Kura
-            WEBAUTHN_ORIGIN=https://api.kura-finance.com\,android:apk-key-hash:MePOeO1vVaYsQDTyYfKRQy2-RHSgZxcCC4ifchmuu6A
+            WEBAUTHN_ORIGIN=https://app.kura-finance.com\,https://api.kura-finance.com\,android:apk-key-hash:MePOeO1vVaYsQDTyYfKRQy2-RHSgZxcCC4ifchmuu6A
+            WEBAUTHN_RELATED_ORIGINS=https://app.kura-finance.com
 
       # Optional env (add to env_vars above when set — see docs/ENVIRONMENT.md):
       # ADMIN_EMAIL, SUPPORT_EMAIL, PLAID_SANDBOX_USER_IDS,

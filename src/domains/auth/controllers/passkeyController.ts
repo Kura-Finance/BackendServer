@@ -8,6 +8,7 @@
  * POST /api/auth/passkey/authenticate            → 驗證 assertion → { encryptedDek }
  *
  * 全部需登入（Privy JWT）；passkey 是登入後解鎖 E2EE 資料層的第二步。
+ * Web + mobile 共用 WEBAUTHN_RP_ID=api.kura-finance.com（Related Origin Requests）。
  */
 
 import { Response } from 'express';

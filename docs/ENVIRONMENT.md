@@ -93,9 +93,10 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 | Variable | Required | Notes |
 |----------|----------|-------|
-| `WEBAUTHN_RP_ID` | For passkeys | e.g. `api.kura-finance.com` |
+| `WEBAUTHN_RP_ID` | For passkeys | Shared web + mobile RP ID: `api.kura-finance.com` |
 | `WEBAUTHN_RP_NAME` | For passkeys | e.g. `Kura` |
-| `WEBAUTHN_ORIGIN` | For passkeys | Comma-separated; may include `android:apk-key-hash:...` |
+| `WEBAUTHN_ORIGIN` | For passkeys | Comma-separated; must include `https://app.kura-finance.com` and may include `android:apk-key-hash:...` |
+| `WEBAUTHN_RELATED_ORIGINS` | For web ROR | Origins allowed to use `WEBAUTHN_RP_ID` via `/.well-known/webauthn` (default `https://app.kura-finance.com`) |
 
 ## Bridge
 
