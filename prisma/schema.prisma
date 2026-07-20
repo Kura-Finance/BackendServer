@@ -112,6 +112,10 @@ model User {
   // 關聯：平台投資人報表
   platformRecords PlatformRecord[]
 
+  // 關聯：Treasury Safes（org multi-sig，獨立於 personal SCA）
+  activeTreasuryId String?
+  treasuries       Treasury[]
+
   @@index([referredByUserId])
   @@index([scaAddress])
 }
@@ -1000,3 +1004,23 @@ model PlatformRecord {
   @@index([eventType])
   @@index([product])
 }
+
+// ==========================================
+// Treasury Safes (org multi-sig workspace)
+// ==========================================
+model Treasury {
+  id        String   @id
+  userId    String
+  name      String
+  address   String
+  source    String // created | bound
+  saltNonce String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, address])
+  @@index([userId])
+}
+
