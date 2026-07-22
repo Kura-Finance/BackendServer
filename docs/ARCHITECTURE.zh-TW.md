@@ -17,6 +17,7 @@ src/
     exchange/           # CEX 餘額／交易（CCXT）
     debank/             # 鏈上錢包部位
     wallet/             # 錢包／加密 payload 輔助
+    treasury/           # 組織 Treasury Safe（Pro／Ultimate 硬閘）
     bridge/             # 法幣出入金、KYC、webhook
     dinari/             # 代幣化股票（dShares）
     stripe/             # 計費 + webhook
@@ -42,7 +43,7 @@ prisma/
 4. JSON body parser、cookie、HTTP 日誌。
 5. `/api/auth` 與 `/api/*` 速率限制。
 6. Web 方案閘道（`webTierGate`）：Basic 可登入與升級；多數 Web API 需 Pro／Ultimate。
-7. 各網域路由掛載於 `/api/...`。
+7. 各網域路由掛載於 `/api/...`（例如 `/api/treasuries` 另以 `requirePaidTier` 限制所有 client）。
 
 ## 認證模型
 
@@ -69,7 +70,8 @@ flowchart LR
 | CCXT | 中心化交易所連接 | `exchange` |
 | Bridge | 出入金、KYC、虛擬帳戶 | `bridge` |
 | Dinari | 代幣化股票 | `dinari` |
-| Stripe | Pro／Ultimate 計費 | `stripe` |
+| Stripe | Pro／Ultimate 計費；`billing-status` 向 Stripe 重同步 | `stripe` |
+| Treasury | 組織多簽 Safe（僅 Pro／Ultimate） | `treasury` |
 | Resend | 交易郵件 | `email` |
 | LI.FI | 跨鏈轉帳分析 | `lifi-analytics` |
 | Logo.dev | 資產圖示（token） | shared utils |

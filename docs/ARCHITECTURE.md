@@ -17,6 +17,7 @@ src/
     exchange/           # CEX balances/trades (CCXT)
     debank/             # Crypto wallet positions
     wallet/             # Wallet / encrypted payload helpers
+    treasury/           # Org Treasury Safes (Pro/Ultimate hard gate)
     bridge/             # Fiat on/off-ramp, KYC, webhooks
     dinari/             # Tokenized equities (dShares)
     stripe/             # Billing + webhooks
@@ -42,7 +43,7 @@ prisma/
 4. JSON body parser, cookies, HTTP logging.
 5. Rate limiters on `/api/auth` and `/api/*`.
 6. Web tier gate (`webTierGate`): Basic users may authenticate and upgrade; many web APIs require Pro / Ultimate.
-7. Domain routers under `/api/...`.
+7. Domain routers under `/api/...` (e.g. `/api/treasuries` uses `requirePaidTier` for all client types).
 
 ## Auth model
 
@@ -69,7 +70,8 @@ flowchart LR
 | CCXT | Centralized exchange connectors | `exchange` |
 | Bridge | On/off-ramp, KYC, virtual accounts | `bridge` |
 | Dinari | Tokenized stocks | `dinari` |
-| Stripe | Pro / Ultimate billing | `stripe` |
+| Stripe | Pro / Ultimate billing; `billing-status` re-syncs from Stripe | `stripe` |
+| Treasury | Org multi-sig Safes (Pro/Ultimate only) | `treasury` |
 | Resend | Transactional email | `email` |
 | LI.FI | Cross-chain transfer analytics | `lifi-analytics` |
 | Logo.dev | Asset logos (token) | shared utils |

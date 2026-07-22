@@ -5,7 +5,15 @@ on:
     branches:
       - main
       - develop
-
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'LICENSE'
+      - 'LICENSE.zh-TW.md'
+      - '.gitignore'
+      - '.gcloudignore'
+      - '.cursor/**'
+      - '.vscode/**'
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   REGION: us-central1

@@ -12,8 +12,9 @@
 
 - [ ] 確認 SPA 將本儲存庫著作權讓與買方（或依協商授予專屬授權）。
 - [ ] 確認作者（`rick-kura-dev`／`chaindevrick` 等）之雇傭／承攬 IP 歸屬文件齊備。
-- [ ] 審閱 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)；相依授權多為寬鬆條款（未發現已知 copyleft 阻礙）。
+- [ ] 審閱 [legal/THIRD_PARTY_NOTICES.zh-TW.md](legal/THIRD_PARTY_NOTICES.zh-TW.md)；相依授權多為寬鬆條款（未發現已知 copyleft 阻礙）。
 - [ ] 備註：與 history rewrite 相關之本地 backup 分支僅供盡職調查，勿視為釋出產物。
+- [ ] 以 [data-room/README.zh-TW.md](data-room/README.zh-TW.md) 作為買家索引（不含密鑰）。
 
 ## 2. 原始碼與 CI
 

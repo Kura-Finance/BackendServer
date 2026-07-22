@@ -12,8 +12,9 @@ Use this checklist during asset purchase diligence and day-of cutover. Legal ass
 
 - [ ] Confirm SPA assigns copyright in this repository to buyer (or grants exclusive license as negotiated).
 - [ ] Confirm contractor/employee IP assignment for authors (`rick-kura-dev` / `chaindevrick` and any others).
-- [ ] Review [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md); dependency licenses are permissive (no known copyleft blockers).
+- [ ] Review [legal/THIRD_PARTY_NOTICES.md](legal/THIRD_PARTY_NOTICES.md); dependency licenses are permissive (no known copyleft blockers).
 - [ ] Note: local backup branches related to history rewrite may exist for diligence only—do not treat them as release artifacts.
+- [ ] Share [data-room/README.md](data-room/README.md) as the buyer-facing index (no secrets).
 
 ## 2. Source & CI
 
