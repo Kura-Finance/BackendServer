@@ -7,6 +7,7 @@ import { appLogger } from '../../logger';
 import { ReferralCashbackService } from '../../auth/services/referralCashbackService';
 import type { InvestorSummary, RecordPlatformRecordInput } from '../models/types';
 import { REFERRABLE_REVENUE_SOURCES } from '../models/types';
+import { fetchEarnManagedAssets } from '../lib/morphoEarn';
 import {
   buildLazySkip,
   getPlatformBackfillMinIntervalMs,
@@ -794,11 +795,18 @@ export class PlatformRecordService {
       byTier[tier] = (byTier[tier] ?? 0) + 1;
     }
 
-    const latestPrivyMetrics = await prisma.platformRecord.findFirst({
-      where: { category: 'active_users', eventType: 'privy_metrics_snapshot' },
-      orderBy: { occurredAt: 'desc' },
-      select: { occurredAt: true, metadata: true },
-    });
+    const [latestPrivyMetrics, earn] = await Promise.all([
+      prisma.platformRecord.findFirst({
+        where: { category: 'active_users', eventType: 'privy_metrics_snapshot' },
+        orderBy: { occurredAt: 'desc' },
+        select: { occurredAt: true, metadata: true },
+      }),
+      fetchEarnManagedAssets(),
+    ]);
+
+    if (earn.error) {
+      appLogger.warn('Investor Earn AUM fetch failed', { error: earn.error });
+    }
 
     const privyMetadata =
       latestPrivyMetrics?.metadata && typeof latestPrivyMetrics.metadata === 'object'
@@ -834,6 +842,14 @@ export class PlatformRecordService {
             ? privyMetadata.periodTo
             : period.to.toISOString(),
         lastSyncedAt: latestPrivyMetrics?.occurredAt.toISOString() ?? null,
+      },
+      earn: {
+        chainId: earn.chainId,
+        totalAssetsUsd: earn.totalAssetsUsd,
+        vaultCount: earn.vaultCount,
+        vaults: earn.vaults,
+        fetchedAt: earn.fetchedAt,
+        ...(earn.error ? { error: earn.error } : {}),
       },
     };
   }

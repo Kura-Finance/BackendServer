@@ -25,7 +25,7 @@ Response shape (typical): `{ success, data }` or `{ success: false, error: { cod
 | `/api/dinari` | Yes | Tokenized stocks (whitelist for Entity/KYC) |
 | `/api/notifications` | Yes | Notifications |
 | `/api/waitlist` | Partial | Public signup endpoints |
-| `/api/platform-insights` | Yes | Investor / platform analytics |
+| `/api/platform-insights` | Public GETs | Investor summary includes live Morpho Earn FeeWrapper AUM (`earn.totalAssetsUsd`) |
 | `/api/privy-analytics` | Yes | Privy analytics |
 | `/api/lifi-analytics` | Yes | LI.FI integrator volume |
 

@@ -25,7 +25,7 @@
 | `/api/dinari` | 是 | 代幣化股票（Entity／KYC 白名單） |
 | `/api/notifications` | 是 | 通知 |
 | `/api/waitlist` | 部分 | 公開報名 |
-| `/api/platform-insights` | 是 | 平台分析 |
+| `/api/platform-insights` | 公開 GET | Investor summary 含 Morpho Earn FeeWrapper AUM（`earn.totalAssetsUsd`） |
 | `/api/privy-analytics` | 是 | Privy 分析 |
 | `/api/lifi-analytics` | 是 | LI.FI 量能 |
 

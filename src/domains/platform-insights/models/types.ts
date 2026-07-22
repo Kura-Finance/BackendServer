@@ -86,6 +86,21 @@ export interface InvestorSummary {
     periodTo: string;
     lastSyncedAt: string | null;
   };
+  /** Morpho Earn FeeWrapper AUM on Base (live from Morpho GraphQL). */
+  earn: {
+    chainId: number;
+    totalAssetsUsd: number;
+    vaultCount: number;
+    vaults: Array<{
+      innerVaultAddress: string;
+      feeWrapperAddress: string;
+      name: string | null;
+      symbol: string | null;
+      totalAssetsUsd: number;
+    }>;
+    fetchedAt: string;
+    error?: string;
+  };
 }
 
 /** GET /api/platform-insights/records、/process-events 單筆紀錄 */
