@@ -25,7 +25,7 @@ Response shape (typical): `{ success, data }` or `{ success: false, error: { cod
 | `/api/dinari` | Yes | Tokenized stocks (whitelist for Entity/KYC) |
 | `/api/notifications` | Yes | Notifications |
 | `/api/waitlist` | Partial | Public signup endpoints |
-| `/api/platform-insights` | Public GETs | Investor summary includes live Morpho Earn FeeWrapper AUM (`earn.totalAssetsUsd`) |
+| `/api/platform-insights` | Public GETs | Investor summary: `platformRevenue` is the single source of truth (Bridge/Swap 0.25%, Dinari 0%, Earn 10% perf fee, Card reserved); also live Morpho Earn AUM (`earn`) |
 | `/api/privy-analytics` | Yes | Privy analytics |
 | `/api/lifi-analytics` | Yes | LI.FI integrator volume |
 
@@ -54,3 +54,18 @@ Response shape (typical): `{ success, data }` or `{ success: false, error: { cod
 | DELETE | `/api/treasuries/:id` | Remove |
 
 See domain code under `src/domains/treasury/`.
+
+## Platform insights (Investor)
+
+`GET /api/platform-insights/summary` returns `data.platformRevenue` as the **only** Platform revenue figure the frontend should display. Do not re-estimate fees client-side.
+
+| Product | Rate | Notes |
+|---------|------|-------|
+| Bridge (Crypto <> Fiat) | 0.25% of process | Kura margin only |
+| Swap (LI.FI) | 0.25% of process | Integrator fee accounting |
+| Dinari (US Stocks) | 0% for now | Process volume still tracked |
+| Earn | 10% performance fee on yield | Recognized revenue `$0` until harvest events; AUM in `earn` / `byProduct.earn.aumUsd` |
+| Card | Reserved | Always present in `byProduct.card` |
+| Subscriptions | Paid amount | Stripe AR |
+
+Prefer `platformRevenue.totalUsd` / `byProduct` over legacy `process.totalNetUsd` (kept as a mirror).

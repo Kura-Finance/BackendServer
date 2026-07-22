@@ -9,6 +9,7 @@ export type PlatformRevenueSource =
   | 'card'
   | 'dinari'
   | 'lifi'
+  | 'earn'
   | 'waitlist'
   | 'privy';
 
@@ -67,10 +68,63 @@ export interface InvestorProcessSummary {
   bySource: Record<string, InvestorProcessBySource>;
 }
 
+export type PlatformRevenueProductKey =
+  | 'bridge'
+  | 'swap'
+  | 'dinari'
+  | 'earn'
+  | 'card'
+  | 'subscriptions';
+
+export interface PlatformRevenueProductLine {
+  key: PlatformRevenueProductKey;
+  label: string;
+  /** Processing / volume basis (USD). Earn uses AUM here as context only. */
+  processUsd: number;
+  /** Kura platform revenue for this product (USD). */
+  revenueUsd: number;
+  /** Fee rate in basis points; null = N/A / reserved / not volume-based. */
+  rateBps: number | null;
+  count: number;
+  status: 'active' | 'zero_fee' | 'reserved';
+}
+
+/**
+ * Canonical Investor Platform revenue — single source of truth.
+ * Frontend must display `totalUsd` / `byProduct` and must not re-estimate fees.
+ */
+export interface PlatformRevenueSummary {
+  totalUsd: number;
+  policy: {
+    bridgeRateBps: number;
+    swapRateBps: number;
+    dinariRateBps: number;
+    earnPerformanceFeeBps: number;
+    cardRateBps: number | null;
+  };
+  byProduct: {
+    bridge: PlatformRevenueProductLine;
+    swap: PlatformRevenueProductLine;
+    dinari: PlatformRevenueProductLine;
+    earn: PlatformRevenueProductLine & {
+      aumUsd: number;
+      performanceFeeBps: number;
+    };
+    /** Reserved for future Card product — always present, usually $0. */
+    card: PlatformRevenueProductLine;
+    subscriptions: PlatformRevenueProductLine;
+  };
+}
+
 /** GET /api/platform-insights/summary 回應資料 */
 export interface InvestorSummary {
   period: { from: string; to: string };
   process: InvestorProcessSummary;
+  /**
+   * Single source of truth for "Platform revenue".
+   * Prefer this over process.totalNetUsd for Investor UI.
+   */
+  platformRevenue: PlatformRevenueSummary;
   waitlist: {
     totalSignups: number;
     byProduct: Record<string, number>;
@@ -98,6 +152,10 @@ export interface InvestorSummary {
       symbol: string | null;
       totalAssetsUsd: number;
     }>;
+    /** Performance fee rate on FeeWrappers (bps). */
+    performanceFeeBps: number;
+    /** Accrued / recognized Earn platform revenue in period (USD). */
+    revenueUsd: number;
     fetchedAt: string;
     error?: string;
   };

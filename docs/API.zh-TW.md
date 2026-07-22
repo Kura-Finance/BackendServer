@@ -25,7 +25,7 @@
 | `/api/dinari` | 是 | 代幣化股票（Entity／KYC 白名單） |
 | `/api/notifications` | 是 | 通知 |
 | `/api/waitlist` | 部分 | 公開報名 |
-| `/api/platform-insights` | 公開 GET | Investor summary 含 Morpho Earn FeeWrapper AUM（`earn.totalAssetsUsd`） |
+| `/api/platform-insights` | 公開 GET | Investor summary：`platformRevenue` 為唯一真實來源（Bridge/Swap 0.25%、Dinari 暫 0%、Earn 10% performance fee、Card 預留）；另含 Morpho Earn AUM（`earn`） |
 | `/api/privy-analytics` | 是 | Privy 分析 |
 | `/api/lifi-analytics` | 是 | LI.FI 量能 |
 
@@ -54,3 +54,18 @@
 | DELETE | `/api/treasuries/:id` | 刪除 |
 
 實作：`src/domains/treasury/`。
+
+## Platform insights（Investor）
+
+`GET /api/platform-insights/summary` 的 `data.platformRevenue` 是 **唯一** 前端應顯示的 Platform revenue。前端不得自行推估手續費。
+
+| 產品 | 費率 | 說明 |
+|------|------|------|
+| Bridge（Crypto <> Fiat） | process × 0.25% | 僅 Kura margin |
+| Swap（LI.FI） | process × 0.25% | Integrator 會計 |
+| Dinari（US Stocks） | 暫 0% | 仍追蹤 process volume |
+| Earn | 收益 10% performance fee | 尚未追蹤 harvest 前認列營收為 `$0`；AUM 在 `earn` / `byProduct.earn.aumUsd` |
+| Card | 預留 | `byProduct.card` 一律存在 |
+| Subscriptions | 實收金額 | Stripe AR |
+
+請優先使用 `platformRevenue.totalUsd` / `byProduct`；`process.totalNetUsd` 僅為相容鏡像。

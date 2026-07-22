@@ -5,9 +5,31 @@ import type { BridgeDrainResponse } from '../../bridge/models/types';
 import { prisma } from '../../shared/lib/prisma';
 import { appLogger } from '../../logger';
 import { ReferralCashbackService } from '../../auth/services/referralCashbackService';
-import type { InvestorSummary, RecordPlatformRecordInput } from '../models/types';
+import type {
+  InvestorSummary,
+  PlatformRevenueProductLine,
+  PlatformRevenueSummary,
+  RecordPlatformRecordInput,
+} from '../models/types';
 import { REFERRABLE_REVENUE_SOURCES } from '../models/types';
 import { fetchEarnManagedAssets } from '../lib/morphoEarn';
+import {
+  BRIDGE_PLATFORM_FEE_BPS,
+  BRIDGE_PLATFORM_FEE_RATE,
+  CARD_PLATFORM_FEE_BPS,
+  DINARI_PLATFORM_FEE_BPS,
+  DINARI_PLATFORM_FEE_RATE,
+  EARN_PERFORMANCE_FEE_BPS,
+  SWAP_PLATFORM_FEE_BPS,
+  SWAP_PLATFORM_FEE_RATE,
+  isBridgeRevenueSource,
+  isCardRevenueSource,
+  isDinariRevenueSource,
+  isStripeRevenueSource,
+  isSwapRevenueSource,
+  platformFeeFromProcess,
+  roundUsd,
+} from '../lib/revenuePolicy';
 import {
   buildLazySkip,
   getPlatformBackfillMinIntervalMs,
@@ -21,27 +43,51 @@ function parseDecimal(value: string | null | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function roundUsd(value: number): number {
-  return Math.round(value * 100) / 100;
-}
-
 function defaultPeriod(from?: string, to?: string): { from: Date; to: Date } {
   const toDate = to ? new Date(to) : new Date();
   const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 90 * 24 * 60 * 60 * 1000);
   return { from: fromDate, to: toDate };
 }
 
-function feeFromPercent(amount: number | null, feePercent: string | null | undefined): number | null {
-  if (amount == null || !feePercent) return null;
-  const pct = Number(feePercent);
-  if (!Number.isFinite(pct)) return null;
-  return roundUsd((amount * pct) / 100);
-}
-
 function extractStripeChargeId(invoice: Stripe.Invoice): string | null {
   const invoiceCharge = (invoice as { charge?: string | { id?: string } | null }).charge;
   if (!invoiceCharge) return null;
   return typeof invoiceCharge === 'string' ? invoiceCharge : invoiceCharge.id ?? null;
+}
+
+/** Investor accounting fee for a revenue event (policy rates, not Bridge wholesale). */
+function investorFeeForEvent(source: string, processAmount: number | null | undefined): number {
+  if (isBridgeRevenueSource(source)) {
+    return platformFeeFromProcess(processAmount, BRIDGE_PLATFORM_FEE_RATE);
+  }
+  if (isSwapRevenueSource(source)) {
+    return platformFeeFromProcess(processAmount, SWAP_PLATFORM_FEE_RATE);
+  }
+  if (isDinariRevenueSource(source) || isCardRevenueSource(source)) {
+    return 0;
+  }
+  if (isStripeRevenueSource(source)) {
+    // Subscriptions: full paid amount is platform AR.
+    return processAmount != null && Number.isFinite(processAmount) ? roundUsd(processAmount) : 0;
+  }
+  return 0;
+}
+
+function emptyProductLine(
+  key: PlatformRevenueProductLine['key'],
+  label: string,
+  rateBps: number | null,
+  status: PlatformRevenueProductLine['status'],
+): PlatformRevenueProductLine {
+  return {
+    key,
+    label,
+    processUsd: 0,
+    revenueUsd: 0,
+    rateBps,
+    count: 0,
+    status,
+  };
 }
 
 /** Dinari on-chain / order-request 成交態（大小寫不敏感）。 */
@@ -232,9 +278,8 @@ export class PlatformRecordService {
     if (params.eventType !== 'payment_processed') return;
 
     const processAmount = parseDecimal(params.amount);
-    const platformFee = parseDecimal(params.developerFeeAmount);
-    // Process = Kura 處理量（法幣入金）；Net = Kura 營收（developer fee）
-    const net = platformFee;
+    // Investor / Refer: Kura margin only (0.25% of process), not Bridge wholesale+margin.
+    const platformFee = platformFeeFromProcess(processAmount, BRIDGE_PLATFORM_FEE_RATE);
 
     const user = await prisma.user.findUnique({
       where: { id: params.userId },
@@ -249,7 +294,7 @@ export class PlatformRecordService {
       idempotencyKey: `bridge:va:${params.bridgeEventId}`,
       processAmount,
       platformFee,
-      netAmount: net,
+      netAmount: platformFee,
       currency: params.currency ?? 'usd',
       externalId: params.bridgeEventId,
       depositId: params.depositId ?? null,
@@ -257,7 +302,9 @@ export class PlatformRecordService {
       occurredAt: params.occurredAt ?? new Date(),
       metadata: {
         bridgeVirtualAccountId: params.bridgeVirtualAccountId,
+        developerFeeAmount: params.developerFeeAmount ?? null,
         ...(params.subtotalAmount ? { subtotalAmount: params.subtotalAmount } : {}),
+        platformFeeRateBps: BRIDGE_PLATFORM_FEE_BPS,
       },
     });
   }
@@ -286,8 +333,8 @@ export class PlatformRecordService {
     const source =
       la.direction === 'in' ? 'bridge_liquidation_in' : 'bridge_liquidation_out';
     const processAmount = parseDecimal(drain.amount);
-    const feePercent = la.developerFeePercent ?? null;
-    const platformFee = feeFromPercent(processAmount, feePercent);
+    const chargedDeveloperFeePercent = la.developerFeePercent ?? null;
+    const platformFee = platformFeeFromProcess(processAmount, BRIDGE_PLATFORM_FEE_RATE);
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -313,6 +360,8 @@ export class PlatformRecordService {
         destinationTxHash: drain.destination_tx_hash ?? null,
         destination: drain.destination ?? null,
         direction: la.direction,
+        chargedDeveloperFeePercent,
+        platformFeeRateBps: BRIDGE_PLATFORM_FEE_BPS,
         route:
           la.direction === 'in'
             ? {
@@ -335,7 +384,7 @@ export class PlatformRecordService {
     if (!transfer || transfer.state !== 'payment_processed') return;
 
     const processAmount = parseDecimal(transfer.amount);
-    const platformFee = parseDecimal(transfer.developerFee);
+    const platformFee = platformFeeFromProcess(processAmount, BRIDGE_PLATFORM_FEE_RATE);
     const user = await prisma.user.findUnique({
       where: { id: transfer.userId },
       select: { scaAddress: true },
@@ -358,11 +407,13 @@ export class PlatformRecordService {
         direction: transfer.direction,
         sourceRail: transfer.sourceRail,
         destinationRail: transfer.destinationRail,
+        developerFee: transfer.developerFee,
+        platformFeeRateBps: BRIDGE_PLATFORM_FEE_BPS,
       },
     });
   }
 
-  /** LI.FI DONE transfer → Investor 處理量（不分 Refer）。 */
+  /** LI.FI DONE transfer → Investor 處理量；平台營收固定 process × 0.25%。 */
   static async recordFromLifiTransfer(params: {
     userId: string | null;
     scaAddress: string | null;
@@ -373,6 +424,7 @@ export class PlatformRecordService {
     occurredAt: Date;
     metadata?: Record<string, unknown>;
   }): Promise<void> {
+    const platformFee = platformFeeFromProcess(params.processAmount, SWAP_PLATFORM_FEE_RATE);
     await this.record({
       category: 'revenue',
       userId: params.userId,
@@ -380,14 +432,18 @@ export class PlatformRecordService {
       eventType: 'transfer_done',
       idempotencyKey: params.idempotencyKey,
       processAmount: params.processAmount,
-      platformFee: params.platformFee,
-      netAmount: params.platformFee,
+      platformFee,
+      netAmount: platformFee,
       currency: 'usd',
       externalId: params.externalId,
       scaAddress: params.scaAddress,
       occurredAt: params.occurredAt,
       referrable: false,
-      ...(params.metadata ? { metadata: params.metadata } : {}),
+      metadata: {
+        ...(params.metadata ?? {}),
+        reportedIntegratorFeeUsd: params.platformFee,
+        platformFeeRateBps: SWAP_PLATFORM_FEE_BPS,
+      },
     });
   }
 
@@ -429,8 +485,9 @@ export class PlatformRecordService {
       eventType: 'order_filled',
       idempotencyKey: `dinari:order:${order.orderRequestId}:filled`,
       processAmount,
-      platformFee: 0,
-      netAmount: processAmount,
+      // Dinari temporarily $0 platform fee (volume still tracked as processAmount).
+      platformFee: platformFeeFromProcess(processAmount, DINARI_PLATFORM_FEE_RATE),
+      netAmount: platformFeeFromProcess(processAmount, DINARI_PLATFORM_FEE_RATE),
       currency: 'usd',
       externalId,
       scaAddress: user?.scaAddress ?? null,
@@ -445,6 +502,7 @@ export class PlatformRecordService {
         paymentTokenQuantity: order.paymentTokenQuantity,
         assetTokenQuantity: order.assetTokenQuantity,
         limitPrice: order.limitPrice,
+        platformFeeRateBps: DINARI_PLATFORM_FEE_BPS,
       },
     });
   }
@@ -598,6 +656,19 @@ export class PlatformRecordService {
   }
 
   static async backfillFromExistingData(): Promise<{ created: number; skipped: number }> {
+    // Repair historical Dinari rows that stored fill notional as net revenue.
+    await prisma.platformRecord.updateMany({
+      where: {
+        category: 'revenue',
+        source: 'dinari',
+        eventType: 'order_filled',
+      },
+      data: {
+        platformFee: 0,
+        netAmount: 0,
+      },
+    });
+
     const before = await prisma.platformRecord.count();
 
     const vaEvents = await prisma.bridgeVirtualAccountEvent.findMany({
@@ -740,16 +811,18 @@ export class PlatformRecordService {
 
     const bySource: InvestorSummary['process']['bySource'] = {};
     let totalProcessUsd = 0;
-    let totalPlatformFeeUsd = 0;
-    let totalNetUsd = 0;
+
+    const bridge = emptyProductLine('bridge', 'Crypto <> Fiat', BRIDGE_PLATFORM_FEE_BPS, 'active');
+    const swap = emptyProductLine('swap', 'Swap', SWAP_PLATFORM_FEE_BPS, 'active');
+    const dinari = emptyProductLine('dinari', 'US Stocks', DINARI_PLATFORM_FEE_BPS, 'zero_fee');
+    const card = emptyProductLine('card', 'Card', CARD_PLATFORM_FEE_BPS, 'reserved');
+    const subscriptions = emptyProductLine('subscriptions', 'Subscriptions', null, 'active');
 
     for (const event of revenueEvents) {
       const processAmount = event.processAmount ?? 0;
-      const fee = event.platformFee ?? 0;
-      const net = event.netAmount ?? event.platformFee ?? 0;
+      // Recompute Investor fee from policy so historical wholesale fees cannot inflate revenue.
+      const fee = investorFeeForEvent(event.source, processAmount);
       totalProcessUsd += processAmount;
-      totalPlatformFeeUsd += fee;
-      totalNetUsd += net;
 
       let bucket = bySource[event.source];
       if (!bucket) {
@@ -758,8 +831,31 @@ export class PlatformRecordService {
       }
       bucket.processUsd += processAmount;
       bucket.platformFeeUsd += fee;
-      bucket.netUsd += net;
+      bucket.netUsd += fee;
       bucket.count += 1;
+
+      if (isBridgeRevenueSource(event.source)) {
+        bridge.processUsd += processAmount;
+        bridge.revenueUsd += fee;
+        bridge.count += 1;
+      } else if (isSwapRevenueSource(event.source)) {
+        swap.processUsd += processAmount;
+        swap.revenueUsd += fee;
+        swap.count += 1;
+      } else if (isDinariRevenueSource(event.source)) {
+        dinari.processUsd += processAmount;
+        dinari.revenueUsd += fee;
+        dinari.count += 1;
+      } else if (isCardRevenueSource(event.source)) {
+        card.processUsd += processAmount;
+        card.revenueUsd += fee;
+        card.count += 1;
+        card.status = fee > 0 || processAmount > 0 ? 'active' : 'reserved';
+      } else if (isStripeRevenueSource(event.source)) {
+        subscriptions.processUsd += processAmount;
+        subscriptions.revenueUsd += fee;
+        subscriptions.count += 1;
+      }
     }
 
     for (const key of Object.keys(bySource)) {
@@ -769,6 +865,17 @@ export class PlatformRecordService {
       row.platformFeeUsd = roundUsd(row.platformFeeUsd);
       row.netUsd = roundUsd(row.netUsd);
     }
+
+    bridge.processUsd = roundUsd(bridge.processUsd);
+    bridge.revenueUsd = roundUsd(bridge.revenueUsd);
+    swap.processUsd = roundUsd(swap.processUsd);
+    swap.revenueUsd = roundUsd(swap.revenueUsd);
+    dinari.processUsd = roundUsd(dinari.processUsd);
+    dinari.revenueUsd = roundUsd(dinari.revenueUsd);
+    card.processUsd = roundUsd(card.processUsd);
+    card.revenueUsd = roundUsd(card.revenueUsd);
+    subscriptions.processUsd = roundUsd(subscriptions.processUsd);
+    subscriptions.revenueUsd = roundUsd(subscriptions.revenueUsd);
 
     const waitlistRows = await prisma.platformRecord.findMany({
       where: {
@@ -795,7 +902,7 @@ export class PlatformRecordService {
       byTier[tier] = (byTier[tier] ?? 0) + 1;
     }
 
-    const [latestPrivyMetrics, earn] = await Promise.all([
+    const [latestPrivyMetrics, earnAssets] = await Promise.all([
       prisma.platformRecord.findFirst({
         where: { category: 'active_users', eventType: 'privy_metrics_snapshot' },
         orderBy: { occurredAt: 'desc' },
@@ -804,9 +911,49 @@ export class PlatformRecordService {
       fetchEarnManagedAssets(),
     ]);
 
-    if (earn.error) {
-      appLogger.warn('Investor Earn AUM fetch failed', { error: earn.error });
+    if (earnAssets.error) {
+      appLogger.warn('Investor Earn AUM fetch failed', { error: earnAssets.error });
     }
+
+    // Earn performance fee (10%) is on yield, not AUM. Until harvest events are tracked,
+    // recognized Earn platform revenue for the period is $0 (rate + AUM still exposed).
+    const earnRevenueUsd = 0;
+    const earnLine: PlatformRevenueSummary['byProduct']['earn'] = {
+      ...emptyProductLine('earn', 'Kura Earn', EARN_PERFORMANCE_FEE_BPS, 'active'),
+      processUsd: roundUsd(earnAssets.totalAssetsUsd),
+      revenueUsd: earnRevenueUsd,
+      aumUsd: roundUsd(earnAssets.totalAssetsUsd),
+      performanceFeeBps: EARN_PERFORMANCE_FEE_BPS,
+      count: earnAssets.vaultCount,
+    };
+
+    const platformRevenueTotal = roundUsd(
+      bridge.revenueUsd
+        + swap.revenueUsd
+        + dinari.revenueUsd
+        + earnLine.revenueUsd
+        + card.revenueUsd
+        + subscriptions.revenueUsd,
+    );
+
+    const platformRevenue: PlatformRevenueSummary = {
+      totalUsd: platformRevenueTotal,
+      policy: {
+        bridgeRateBps: BRIDGE_PLATFORM_FEE_BPS,
+        swapRateBps: SWAP_PLATFORM_FEE_BPS,
+        dinariRateBps: DINARI_PLATFORM_FEE_BPS,
+        earnPerformanceFeeBps: EARN_PERFORMANCE_FEE_BPS,
+        cardRateBps: CARD_PLATFORM_FEE_BPS,
+      },
+      byProduct: {
+        bridge,
+        swap,
+        dinari,
+        earn: earnLine,
+        card,
+        subscriptions,
+      },
+    };
 
     const privyMetadata =
       latestPrivyMetrics?.metadata && typeof latestPrivyMetrics.metadata === 'object'
@@ -817,11 +964,13 @@ export class PlatformRecordService {
       period: { from: period.from.toISOString(), to: period.to.toISOString() },
       process: {
         totalProcessUsd: roundUsd(totalProcessUsd),
-        totalPlatformFeeUsd: roundUsd(totalPlatformFeeUsd),
-        totalNetUsd: roundUsd(totalNetUsd),
+        // Legacy mirrors — frontend should prefer platformRevenue.totalUsd
+        totalPlatformFeeUsd: platformRevenueTotal,
+        totalNetUsd: platformRevenueTotal,
         eventCount: revenueEvents.length,
         bySource,
       },
+      platformRevenue,
       waitlist: {
         totalSignups: waitlistRows.length,
         byProduct,
@@ -844,15 +993,18 @@ export class PlatformRecordService {
         lastSyncedAt: latestPrivyMetrics?.occurredAt.toISOString() ?? null,
       },
       earn: {
-        chainId: earn.chainId,
-        totalAssetsUsd: earn.totalAssetsUsd,
-        vaultCount: earn.vaultCount,
-        vaults: earn.vaults,
-        fetchedAt: earn.fetchedAt,
-        ...(earn.error ? { error: earn.error } : {}),
+        chainId: earnAssets.chainId,
+        totalAssetsUsd: earnAssets.totalAssetsUsd,
+        vaultCount: earnAssets.vaultCount,
+        vaults: earnAssets.vaults,
+        performanceFeeBps: EARN_PERFORMANCE_FEE_BPS,
+        revenueUsd: earnRevenueUsd,
+        fetchedAt: earnAssets.fetchedAt,
+        ...(earnAssets.error ? { error: earnAssets.error } : {}),
       },
     };
   }
+
 }
 
 /** @deprecated use PlatformRecordService */

@@ -7,7 +7,10 @@ export type {
   PlatformRecordCategory,
   PlatformRecordResponse,
   PlatformRecordsListResponse,
+  PlatformRevenueProductKey,
+  PlatformRevenueProductLine,
   PlatformRevenueSource,
+  PlatformRevenueSummary,
   ProcessEventsListResponse,
   RecordPlatformRecordInput,
   RecordPlatformRevenueInput,
@@ -18,4 +21,15 @@ export {
   fetchEarnManagedAssets,
 } from './lib/morphoEarn';
 export type { EarnManagedAssetsSummary, EarnVaultAssets, MorphoFeeWrapperMap } from './lib/morphoEarn';
+export {
+  BRIDGE_PLATFORM_FEE_BPS,
+  BRIDGE_PLATFORM_FEE_RATE,
+  CARD_PLATFORM_FEE_BPS,
+  DINARI_PLATFORM_FEE_BPS,
+  DINARI_PLATFORM_FEE_RATE,
+  EARN_PERFORMANCE_FEE_BPS,
+  SWAP_PLATFORM_FEE_BPS,
+  SWAP_PLATFORM_FEE_RATE,
+  platformFeeFromProcess,
+} from './lib/revenuePolicy';
 export { isDinariOrderFilled, isDinariOrderCancelled } from './services/platformRevenueService';
