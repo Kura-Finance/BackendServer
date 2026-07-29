@@ -41,7 +41,8 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 | `APP_NAME` | 否 | 預設 `Kura` |
 | `APP_URL` | 否 | 前端基底 URL |
 | `APP_UPGRADE_URL` | 否 | 定價／升級連結 |
-| `ADMIN_EMAIL` | 否 | 預設 `admin@kura-finance.com` |
+| `ADMIN_EMAIL` | 否 | 預設 `admin@kura-finance.com`（營運信箱 + admin 白名單後備） |
+| `ADMIN_EMAILS` | 否 | 逗號分隔 admin 白名單（`/api/admin`）；未設則用 `ADMIN_EMAIL` |
 | `SUPPORT_EMAIL` | 否 | 預設 `Support@kura-finance.com` |
 
 ## 郵件（Resend）
@@ -105,6 +106,9 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 | `BRIDGE_API_KEY` | 正式 | |
 | `BRIDGE_WEBHOOK_PUBLIC_KEY` | webhook 用 | PEM；密鑰庫可用 `\n` 表示換行 |
 | `BRIDGE_FEE_CONFIG_ENABLED` | 否 | 功能開關 |
+| `BRIDGE_WALLET_ID` | fiat return 用 | Bridge Wallet，作為 return 資金來源 |
+| `BRIDGE_WALLET_CURRENCY` | 否 | 預設 `usdb` |
+| `BRIDGE_FUNDS_REQUESTS_SYNC_MIN_INTERVAL_MS` | 否 | 預設 `300000`（5 分鐘）懶同步間隔 |
 
 ## Dinari
 

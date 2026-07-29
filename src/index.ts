@@ -18,6 +18,7 @@ import { waitlistRouter } from './domains/waitlist';
 import { platformInsightsRouter } from './domains/platform-insights';
 import { privyAnalyticsRouter } from './domains/privy-analytics';
 import { lifiAnalyticsRouter } from './domains/lifi-analytics';
+import { adminRouter } from './domains/admin';
 import {
   appLogger,
   httpLogger,
@@ -233,6 +234,7 @@ app.use('/api/waitlist', waitlistRouter);
 app.use('/api/platform-insights', platformInsightsRouter);
 app.use('/api/privy-analytics', privyAnalyticsRouter);
 app.use('/api/lifi-analytics', lifiAnalyticsRouter);
+app.use('/api/admin', adminRouter);
 
 // ========================================
 // 6. 錯誤處理中間件

@@ -41,7 +41,8 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 | `APP_NAME` | No | Default `Kura` |
 | `APP_URL` | No | Frontend base URL |
 | `APP_UPGRADE_URL` | No | Pricing / upgrade link |
-| `ADMIN_EMAIL` | No | Default `admin@kura-finance.com` |
+| `ADMIN_EMAIL` | No | Default `admin@kura-finance.com` (ops email + admin allowlist fallback) |
+| `ADMIN_EMAILS` | No | Comma-separated admin allowlist for `/api/admin`; if unset, uses `ADMIN_EMAIL` |
 | `SUPPORT_EMAIL` | No | Default `Support@kura-finance.com` |
 
 ## Email (Resend)
@@ -105,6 +106,9 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 | `BRIDGE_API_KEY` | Prod | |
 | `BRIDGE_WEBHOOK_PUBLIC_KEY` | For webhooks | PEM; use `\n` for newlines in secrets stores |
 | `BRIDGE_FEE_CONFIG_ENABLED` | No | Feature flag |
+| `BRIDGE_WALLET_ID` | For fiat deposit returns | Bridge Wallet used as return funding source |
+| `BRIDGE_WALLET_CURRENCY` | No | Default `usdb` |
+| `BRIDGE_FUNDS_REQUESTS_SYNC_MIN_INTERVAL_MS` | No | Default `300000` (5m) lazy poll interval |
 
 ## Dinari
 

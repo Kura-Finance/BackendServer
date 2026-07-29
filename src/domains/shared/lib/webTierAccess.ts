@@ -27,6 +27,9 @@ export const WEB_TIER_EXEMPT_PATHS = new Set([
   '/api/lifi-analytics/summary',
 ]);
 
+/** Prefixes exempt from web tier gate (admin APIs gated by requireAdmin instead). */
+export const WEB_TIER_EXEMPT_PREFIXES = ['/api/admin'] as const;
+
 export function tierHasWebAccess(tier: string): boolean {
   return WEB_ALLOWED_TIERS.has(tier);
 }
@@ -36,5 +39,8 @@ export function getRequestApiPath(baseUrl: string, path: string): string {
 }
 
 export function isWebTierExemptPath(fullPath: string): boolean {
-  return WEB_TIER_EXEMPT_PATHS.has(fullPath);
+  if (WEB_TIER_EXEMPT_PATHS.has(fullPath)) return true;
+  return WEB_TIER_EXEMPT_PREFIXES.some(
+    (prefix) => fullPath === prefix || fullPath.startsWith(`${prefix}/`),
+  );
 }

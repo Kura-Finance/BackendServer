@@ -103,6 +103,7 @@ model User {
   bridgeVirtualAccounts  BridgeVirtualAccount[]
   bridgeVaEvents         BridgeVirtualAccountEvent[]
   bridgeLiquidationAddresses BridgeLiquidationAddress[]
+  bridgeFundsRequests    BridgeFundsRequest[]
 
   // 關聯：Dinari Tokenized Stocks（dShares）
   dinariEntity   DinariEntity?
@@ -891,6 +892,41 @@ model BridgeWebhookEvent {
   createdAt     DateTime @default(now())
 
   @@index([eventType])
+}
+
+// Bridge Funds Request（銀行 recall / fraud recall）
+// 來源：GET /v0/funds_requests（無 webhook，需 poll）
+// status: open | return_initiated | returned | failed | ignored
+model BridgeFundsRequest {
+  id                    String  @id @default(uuid())
+  bridgeFundsRequestId  String  @unique
+  depositId             String
+  bridgeCustomerId      String?
+  userId                String?
+
+  fraud    Boolean @default(false)
+  amount   String?
+  currency String?
+
+  noticeCreatedAt  DateTime?
+  depositCreatedAt DateTime?
+  raw              Json
+
+  status            String  @default("open")
+  returnTransferId  String?
+  returnError       String?
+  lastSyncedAt      DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([depositId])
+  @@index([fraud])
+  @@index([status])
+  @@index([userId])
+  @@index([noticeCreatedAt])
+  @@index([lastSyncedAt])
 }
 
 // ============================================================

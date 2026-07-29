@@ -707,3 +707,71 @@ export interface DepositResult {
   senderDescription: string | null;
   events: DepositEvent[]; // 完整事件明細（時間升序）
 }
+
+// ── Funds Requests（bank / fraud recalls）────────────────────────────
+
+export interface BridgeFundsRequestResponse {
+  id: string;
+  deposit_id: string;
+  customer_id?: string;
+  amount?: string;
+  currency?: string;
+  payment_rail?: string;
+  fraud?: boolean;
+  notice_date?: string; // YYYY-MM-DD
+  deposit_created_at?: string;
+  created_at?: string;
+  imad?: string;
+  trace_number?: string;
+  bank_transaction_id?: string;
+  [key: string]: unknown;
+}
+
+export interface BridgeFundsRequestListResponse {
+  count?: number;
+  data?: BridgeFundsRequestResponse[];
+}
+
+export type BridgeFundsRequestStatus =
+  | 'open'
+  | 'return_initiated'
+  | 'returned'
+  | 'failed'
+  | 'ignored';
+
+export interface FundsRequestListItem {
+  id: string;
+  bridgeFundsRequestId: string;
+  depositId: string;
+  bridgeCustomerId: string | null;
+  userId: string | null;
+  fraud: boolean;
+  amount: string | null;
+  currency: string | null;
+  paymentRail: string | null;
+  noticeCreatedAt: string | null;
+  depositCreatedAt: string | null;
+  status: BridgeFundsRequestStatus;
+  returnTransferId: string | null;
+  returnError: string | null;
+  paymentProcessed: boolean;
+  lastSyncedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FundsRequestsSyncExecuted {
+  skipped: false;
+  upserted: number;
+  totalFromBridge: number;
+  lastSyncedAt: string;
+}
+
+export interface FiatDepositReturnResult {
+  id: string;
+  bridgeFundsRequestId: string;
+  depositId: string;
+  status: BridgeFundsRequestStatus;
+  returnTransferId: string;
+  transferState: string | null;
+}

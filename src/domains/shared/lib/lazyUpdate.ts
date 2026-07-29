@@ -1,6 +1,7 @@
 const DEFAULT_PRIVY_METRICS_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
 const DEFAULT_PLATFORM_BACKFILL_MIN_INTERVAL_MS = 60 * 60 * 1000; // 1h
 const DEFAULT_LIFI_TRANSFERS_MIN_INTERVAL_MS = 60 * 60 * 1000; // 1h
+const DEFAULT_BRIDGE_FUNDS_REQUESTS_SYNC_MIN_INTERVAL_MS = 5 * 60 * 1000; // 5m
 
 function parseIntervalMs(envValue: string | undefined, fallback: number): number {
   const parsed = Number(envValue);
@@ -25,6 +26,13 @@ export function getLifiTransfersMinIntervalMs(): number {
   return parseIntervalMs(
     process.env.LIFI_TRANSFERS_MIN_INTERVAL_MS,
     DEFAULT_LIFI_TRANSFERS_MIN_INTERVAL_MS,
+  );
+}
+
+export function getBridgeFundsRequestsSyncMinIntervalMs(): number {
+  return parseIntervalMs(
+    process.env.BRIDGE_FUNDS_REQUESTS_SYNC_MIN_INTERVAL_MS,
+    DEFAULT_BRIDGE_FUNDS_REQUESTS_SYNC_MIN_INTERVAL_MS,
   );
 }
 

@@ -60,6 +60,11 @@ export type {
   DepositPayerInfo,
   ExternalAccountResult,
   PayoutOption,
+  BridgeFundsRequestResponse,
+  BridgeFundsRequestStatus,
+  FundsRequestListItem,
+  FundsRequestsSyncExecuted,
+  FiatDepositReturnResult,
 } from './models/types';
 export {
   CUSTOMER_NAMED_PAYOUT_CONFIGURATION,

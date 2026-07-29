@@ -28,12 +28,14 @@
 | `/api/platform-insights` | 公開 GET | Investor summary：`platformRevenue` 為唯一真實來源（Bridge/Swap 0.25%、Dinari 暫 0%、Earn 10% performance fee、Card 預留）；另含 Morpho Earn AUM（`earn`） |
 | `/api/privy-analytics` | 是 | Privy 分析 |
 | `/api/lifi-analytics` | 是 | LI.FI 量能 |
+| `/api/admin` | 登入 + **admin** | `requireAuth` + `requireAdmin`（`ADMIN_EMAILS`／`ADMIN_EMAIL`）；web tier 豁免 |
 
 ## 存取閘道
 
 1. **`requireAuth`** — 多數 `/api/*`
-2. **`webTierGate`** — Web：Basic 僅白名單；其餘需 Pro／Ultimate
+2. **`webTierGate`** — Web：Basic 僅白名單（含 `/api/admin`）；其餘需 Pro／Ultimate
 3. **`requirePaidTier`** — `/api/treasuries` 對**所有** client：僅 Pro／Ultimate；Basic → `403 SUBSCRIPTION_REQUIRED`
+4. **`requireAdmin`** — `/api/admin/*`：登入使用者 email 須在 `ADMIN_EMAILS`（或 `ADMIN_EMAIL`）；否則 `403 ADMIN_REQUIRED`
 
 ## Webhook（raw body）
 
@@ -69,3 +71,15 @@
 | Subscriptions | 實收金額 | Stripe AR |
 
 請優先使用 `platformRevenue.totalUsd` / `byProduct`；`process.totalNetUsd` 僅為相容鏡像。
+
+## Admin — Bridge Funds Requests／Returns
+
+認證：session + admin email 白名單。Return **手動**發起（sync 不會自動退款）。資金來源：Bridge Wallet（`BRIDGE_WALLET_ID`）。
+
+| 方法 | 路徑 | 用途 |
+|------|------|------|
+| POST | `/api/admin/bridge/funds-requests/sync?force=` | Poll Bridge `GET /funds_requests`，upsert 本地（懶更新） |
+| GET | `/api/admin/bridge/funds-requests?fraud=&status=&limit=&offset=` | 本地 recall 列表（含 `paymentProcessed`） |
+| POST | `/api/admin/bridge/funds-requests/:id/return` | 以 Bridge Wallet 建立 `fiat_deposit_return` |
+
+VA webhook `refunded` 會把對應 funds request 標成 `returned`。
