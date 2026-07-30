@@ -1,3 +1,6 @@
+/**
+ * Treasury domain model types.
+ */
 export type TreasurySource = 'created' | 'bound';
 
 export interface TreasuryDto {

@@ -1,3 +1,7 @@
+/**
+ * Bridge HTTP controllers (KYC, on/off-ramp, external accounts, webhook).
+ */
+
 import { Request, Response } from 'express';
 import { AuthRequest } from '../../auth/middleware/auth';
 import { logError } from '../../logger';
@@ -17,7 +21,7 @@ function getAuthenticatedUserId(req: AuthRequest, res: Response): string | null 
   return req.userId;
 }
 
-/** 將 BridgeError 對應到 HTTP 狀態與訊息。 */
+/** Map BridgeError to HTTP status and response body. */
 function handleBridgeError(res: Response, error: unknown, fallbackMessage: string): void {
   if (error instanceof BridgeError) {
     const structured = error.structuredBody;
@@ -33,7 +37,7 @@ function handleBridgeError(res: Response, error: unknown, fallbackMessage: strin
       return;
     }
 
-    // 4xx 直接透傳，5xx 收斂為 502（上游錯誤）
+    // Pass through 4xx; collapse 5xx to 502 (upstream)
     const status = error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 502;
     const message = structured?.message ?? error.bridgeBody ?? fallbackMessage;
     sendError(res, status, {
@@ -62,7 +66,7 @@ export const createKycLink = async (req: AuthRequest, res: Response): Promise<vo
   }
 };
 
-/** 既有 customer 申請額外 rail endorsement（BRL→pix、COP→cop 等）的 hosted flow。 */
+/** Hosted flow for an existing customer to request an extra rail endorsement (e.g. BRL→pix). */
 export const createEndorsementLink = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = getAuthenticatedUserId(req, res);
@@ -98,9 +102,9 @@ export const getCustomerStatus = async (req: AuthRequest, res: Response): Promis
   }
 };
 
-// ── On-ramp（入金）：Virtual Accounts ────────────────────────────────
+// ── On-ramp (fiat → crypto): Virtual Accounts ───────────────────────
 
-/** 取得或建立使用者的入金 Virtual Account，回傳專屬法幣入金銀行資訊。 */
+/** Get or create the user's deposit Virtual Account; returns fiat deposit bank details. */
 export const createOnRamp = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = getAuthenticatedUserId(req, res);
@@ -114,7 +118,7 @@ export const createOnRamp = async (req: AuthRequest, res: Response): Promise<voi
   }
 };
 
-/** 列出使用者的入金 Virtual Accounts。 */
+/** List the user's deposit Virtual Accounts. */
 export const listVirtualAccounts = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = getAuthenticatedUserId(req, res);
@@ -129,9 +133,9 @@ export const listVirtualAccounts = async (req: AuthRequest, res: Response): Prom
 };
 
 /**
- * 列出入金紀錄（供前端輪詢）。
- * - GET /onramp/:virtualAccountId/deposits → 指定 VA 的入金
- * - GET /deposits → 使用者所有入金
+ * List deposit history (for client polling).
+ * - GET /onramp/:virtualAccountId/deposits → deposits for one VA
+ * - GET /deposits → all deposits for the user
  */
 export const listDeposits = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -150,7 +154,7 @@ export const listDeposits = async (req: AuthRequest, res: Response): Promise<voi
   }
 };
 
-// ── Off-ramp（出金）───────────────────────────────────────────────────
+// ── Off-ramp ────────────────────────────────────────────────────────
 
 export const listPayoutOptions = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -204,7 +208,7 @@ export const listPayoutDrains = async (req: AuthRequest, res: Response): Promise
   }
 };
 
-/** 取得或建立永久 Tron USDT 入金地址（Liquidation Address → Base USDC SCA）。 */
+/** Get or create a permanent Tron USDT deposit address (LA → Base USDC SCA). */
 export const getOrCreateCryptoDepositAddress = async (
   req: AuthRequest,
   res: Response,
@@ -315,7 +319,7 @@ export const handleBridgeWebhook = async (req: Request, res: Response): Promise<
   );
 
   if (!verification.valid) {
-    // 回 400 讓 Bridge 重送（含 timestamp 容忍與設定問題）
+    // 400 so Bridge retries (timestamp skew / config issues)
     sendError(res, 400, {
       code: 'INVALID_WEBHOOK_SIGNATURE',
       message: `Webhook signature verification failed: ${verification.reason}`,
@@ -329,7 +333,7 @@ export const handleBridgeWebhook = async (req: Request, res: Response): Promise<
     res.status(200).json({ received: true });
   } catch (error) {
     logError('Bridge webhook processing failed', error);
-    // 處理失敗回 500 讓 Bridge 重送
+    // 500 so Bridge retries on processing failure
     res.status(500).json({ error: 'Webhook processing failed' });
   }
 };

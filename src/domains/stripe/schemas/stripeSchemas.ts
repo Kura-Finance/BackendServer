@@ -1,3 +1,5 @@
+/** Zod schemas for Stripe checkout and billing portal requests. */
+
 import { z } from 'zod';
 
 export const createCheckoutSessionBodySchema = z.object({

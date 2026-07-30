@@ -1,3 +1,8 @@
+/**
+ * Min-interval helpers for lazy / background sync jobs
+ * (Privy metrics, platform backfill, LiFi, Bridge).
+ */
+
 const DEFAULT_PRIVY_METRICS_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
 const DEFAULT_PLATFORM_BACKFILL_MIN_INTERVAL_MS = 60 * 60 * 1000; // 1h
 const DEFAULT_LIFI_TRANSFERS_MIN_INTERVAL_MS = 60 * 60 * 1000; // 1h

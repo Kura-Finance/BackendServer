@@ -1,10 +1,12 @@
-// 路由
+/** Dinari (tokenized stocks / dShares) domain exports. */
+
+// Router
 export { default as dinariRouter } from './router';
 
-// 服務
+// Service
 export { DinariService, DinariError } from './services/dinariService';
 
-// 型別
+// Types
 export type {
   DinariOrderSide,
   DinariOrderType,

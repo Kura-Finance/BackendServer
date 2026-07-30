@@ -1,3 +1,5 @@
+/** Zod schemas for DeBank protocol/token queries and unlink params. */
+
 import { z } from 'zod';
 
 export const getProtocolsQuerySchema = z.object({

@@ -1,11 +1,16 @@
+/**
+ * Auth middleware — JWT from Cookie (web) or Bearer (mobile).
+ */
+
 import { Request, Response, NextFunction } from 'express';
 import * as jwt from 'jsonwebtoken';
 import { appLogger } from '../../logger';
 import { getJwtSecret } from '../../../config/env';
 
+/** Express request augmented with auth fields after successful token parse. */
 export interface AuthRequest extends Request {
   userId?: string;
-  clientType?: 'web' | 'mobile'; // web 使用 Cookie 認證，mobile 使用 JWT
+  clientType?: 'web' | 'mobile'; // web: Cookie auth; mobile: JWT
 }
 
 function resolveClientType(
@@ -30,8 +35,8 @@ function resolveClientType(
 }
 
 /**
- * 從 Cookie 或 Authorization 解析 JWT，寫入 req.userId / req.clientType。
- * @returns 是否成功解析有效 token
+ * Parse JWT from Cookie or Authorization; set req.userId / req.clientType.
+ * @returns whether a valid token was parsed
  */
 export function resolveRequestAuth(req: AuthRequest): boolean {
   if (req.userId) {
@@ -64,9 +69,9 @@ export function resolveRequestAuth(req: AuthRequest): boolean {
 }
 
 /**
- * 認證中間件 - 支援兩種認證方式:
- * 1. 網頁端：Cookie 中的 authToken (HttpOnly)
- * 2. 行動端：Authorization 標頭中的 Bearer Token
+ * Auth middleware — two modes:
+ * 1. Web: authToken Cookie (HttpOnly)
+ * 2. Mobile: Authorization Bearer token
  */
 export const requireAuth = (req: AuthRequest, res: Response, next: NextFunction): void => {
   if (req.userId) {

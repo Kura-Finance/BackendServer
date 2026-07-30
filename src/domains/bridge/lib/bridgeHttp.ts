@@ -72,7 +72,7 @@ export async function bridgeFetch<T>(path: string, options: BridgeFetchOptions =
     Accept: 'application/json',
   };
 
-  // 僅 POST 需要 Idempotency-Key（GET/PUT/PATCH/DELETE 不可帶）
+  // Idempotency-Key is POST-only (GET/PUT/PATCH/DELETE must not send it)
   if (method === 'POST') {
     headers['Idempotency-Key'] = options.idempotencyKey ?? crypto.randomUUID();
   }

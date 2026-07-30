@@ -1,3 +1,7 @@
+/**
+ * Sync LI.FI DONE transfers into PlatformRecord and aggregate Investor summaries.
+ */
+
 import { randomUUID } from 'crypto';
 import { prisma } from '../../shared/lib/prisma';
 import {
@@ -30,7 +34,7 @@ function parseUsd(value: string | null | undefined): number | null {
   return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
 }
 
-/** integrator / included:false 費用加總為 platformFee。 */
+/** Sum integrator / included:false feeCosts as platformFee (USD). */
 export function extractIntegratorFeeUsd(transfer: LifiTransferStatus): number | null {
   const fees = transfer.feeCosts;
   if (!fees?.length) return null;
@@ -244,7 +248,7 @@ export class LifiAnalyticsService {
     };
   }
 
-  /** 供 platform-insights backfill 呼叫（失敗不阻擋其他來源）。 */
+  /** Used by platform-insights backfill; failures must not block other sources. */
   static async syncForBackfill(): Promise<number> {
     try {
       const result = await this.syncTransfers();

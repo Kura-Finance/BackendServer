@@ -1,3 +1,12 @@
+/**
+ * Auth routes.
+ *
+ * Login is Privy-driven:
+ * - Client finishes Privy SDK login → access token (+ identity token)
+ * - POST /login verifies and issues our JWT
+ * - Web: HttpOnly Cookie; mobile: token in response body (X-Client-Type)
+ */
+
 import { Router } from 'express';
 import {
   logout,
@@ -43,44 +52,35 @@ import {
 
 const router = Router();
 
-/**
- * 認證路由
- *
- * 登入由 Privy 驅動：
- * - 前端用 Privy SDK 完成登入 → 取得 access token（+ identity token）
- * - POST /login 驗證後核發自有 JWT
- * - 網頁端：HttpOnly Cookie；行動端：回應 token 欄位（X-Client-Type 標頭區分）
- */
-
-// ── Privy 登入（首次登入即註冊）──────────────────────────────────────
+// ── Privy login (first login registers) ─────────────────────────────
 router.post('/login', validateRequest({ body: privyLoginBodySchema }), login);
 
-// 登出與帳號維護
+// Logout & account maintenance
 router.post('/logout', requireAuth, logout);
 
-// ── Phase 3 E2EE Key Pair（Zero Access Encryption）──────────────────
-// 使用者登入後生成 X25519 keypair，用 Passkey 推導的 KEK wrap privateKey 後上傳；
-// 後端用 publicKey 包裝每次 sync 的 SEK，永遠無法解開使用者業務資料。
+// ── Phase 3 E2EE key pair (zero-access encryption) ──────────────────
+// After login, client generates X25519 keypair, wraps privateKey with Passkey-derived KEK, uploads;
+// backend wraps each sync SEK with publicKey and can never decrypt user business data.
 router.post('/keys/setup', requireAuth, validateRequest({ body: keyPairBodySchema }), setupKeyPair);    // { publicKey, encryptedPrivateKey, kekSalt? }
 router.get('/keys/me', requireAuth, getMyKeyPair);                                                       // → { publicKey, encryptedPrivateKey, kekSalt, algorithm, createdAt }
-router.post('/keys/rotate', requireAuth, validateRequest({ body: keyPairBodySchema }), rotateKeyPair);  // ⚠️ 會讓既有 wrappedSek 失效
-router.post('/keys/reset', requireAuth, resetE2EE);                                                      // 換裝置/換 passkey：清掉 passkey + keypair + 加密快取，回到未設定狀態
+router.post('/keys/rotate', requireAuth, validateRequest({ body: keyPairBodySchema }), rotateKeyPair);  // Warning: invalidates existing wrappedSek
+router.post('/keys/reset', requireAuth, resetE2EE);                                                      // New device/passkey: clear passkey + keypair + encrypted caches → unconfigured
 
-// ── Passkey / WebAuthn（登入後解鎖 E2EE 資料層）───────────────────────
+// ── Passkey / WebAuthn (unlock E2EE after login) ────────────────────
 router.get('/passkey/status', requireAuth, passkeyStatus);                                                          // → { registered }
 router.get('/passkey/register-challenge', requireAuth, passkeyRegisterChallenge);                                   // → WebAuthn registration options
 router.post('/passkey/register', requireAuth, validateRequest({ body: passkeyRegisterBodySchema }), passkeyRegister); // { response, encryptedDek }
 router.get('/passkey/authenticate-challenge', requireAuth, passkeyAuthenticateChallenge);                           // → WebAuthn authentication options
 router.post('/passkey/authenticate', requireAuth, validateRequest({ body: passkeyAuthenticateBodySchema }), passkeyAuthenticate); // { response } → { encryptedDek }
 
-// 使用者資料（需要認證）
+// User profile (auth required)
 router.get('/me', requireAuth, me);
-router.get('/me/cashback-history', requireAuth, validateRequest({ query: cashbackHistoryQuerySchema }), getMyCashbackHistory); // 返現明細（pending/available/reversed）
-router.post('/me/cashback-withdraw', requireAuth, validateRequest({ body: withdrawCashbackBodySchema }), withdrawCashback); // 提領可用返現（通知 Support）
-router.patch('/me', requireAuth, validateRequest({ body: updateProfileBodySchema }), updateProfile);                              // 修改個人資料
-router.post('/me/referral-code', requireAuth, validateRequest({ body: applyReferralCodeBodySchema }), applyReferralCode);       // 補填邀請碼（僅可一次）
-router.patch('/me/avatar', requireAuth, validateRequest({ body: updateAvatarBodySchema }), updateAvatar);                      // 修改頭像
-router.patch('/me/display-name', requireAuth, validateRequest({ body: updateDisplayNameBodySchema }), updateDisplayName);      // 修改顯示名稱
+router.get('/me/cashback-history', requireAuth, validateRequest({ query: cashbackHistoryQuerySchema }), getMyCashbackHistory); // Cashback history (pending/available/reversed)
+router.post('/me/cashback-withdraw', requireAuth, validateRequest({ body: withdrawCashbackBodySchema }), withdrawCashback); // Withdraw available cashback (notify Support)
+router.patch('/me', requireAuth, validateRequest({ body: updateProfileBodySchema }), updateProfile);                              // Update profile
+router.post('/me/referral-code', requireAuth, validateRequest({ body: applyReferralCodeBodySchema }), applyReferralCode);       // Apply invite code (once)
+router.patch('/me/avatar', requireAuth, validateRequest({ body: updateAvatarBodySchema }), updateAvatar);                      // Update avatar
+router.patch('/me/display-name', requireAuth, validateRequest({ body: updateDisplayNameBodySchema }), updateDisplayName);      // Update display name
 router.delete('/me', requireAuth, deleteAccount);
 
 export default router;

@@ -1,8 +1,12 @@
+/**
+ * Wallet HTTP handlers for EOA / SCA address read and update.
+ */
 import { Request, Response } from 'express';
 import { WalletService } from '../services/walletService';
 import { sendSuccess, sendError } from '../../shared/lib/apiResponse';
 import { logError } from '../../logger';
 
+/** GET /api/wallet — return walletAddress and scaAddress. */
 export const getWallet = async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = (req as Request & { userId: string }).userId;
@@ -14,6 +18,7 @@ export const getWallet = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
+/** PUT /api/wallet/sca — update ERC-4337 Smart Contract Account address. */
 export const updateSca = async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = (req as Request & { userId: string }).userId;
@@ -26,6 +31,7 @@ export const updateSca = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
+/** PUT /api/wallet/eoa — update Privy embedded EOA address. */
 export const updateEoa = async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = (req as Request & { userId: string }).userId;

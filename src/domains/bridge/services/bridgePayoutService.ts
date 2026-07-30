@@ -1,3 +1,7 @@
+/**
+ * Off-ramp payout liquidation addresses and drain history.
+ */
+
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../shared/lib/prisma';
 import { appLogger } from '../../logger';

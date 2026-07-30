@@ -1,3 +1,5 @@
+/** Notification HTTP controllers for send, list, read, delete, and preferences. */
+
 import { Request, Response } from 'express';
 import { NotificationService } from '../services/notificationService';
 import { logError, logDebug } from '../../logger';
@@ -9,8 +11,7 @@ interface AuthRequest extends Request {
 }
 
 /**
- * 發送通知
- * 路由：POST /api/notifications/send
+ * POST /api/notifications/send — send a notification.
  */
 export const sendNotification = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -52,8 +53,7 @@ export const sendNotification = async (req: AuthRequest, res: Response): Promise
 };
 
 /**
- * 取得使用者通知列表
- * 路由：GET /api/notifications
+ * GET /api/notifications — list user notifications.
  */
 export const getNotifications = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -107,8 +107,7 @@ export const getNotifications = async (req: AuthRequest, res: Response): Promise
 };
 
 /**
- * 標記通知為已讀
- * 路由：PATCH /api/notifications/:id/read
+ * PATCH /api/notifications/:id/read — mark as read.
  */
 export const markAsRead = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -136,8 +135,7 @@ export const markAsRead = async (req: AuthRequest, res: Response): Promise<void>
 };
 
 /**
- * 刪除通知
- * 路由：DELETE /api/notifications/:id
+ * DELETE /api/notifications/:id — delete a notification.
  */
 export const deleteNotification = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -165,8 +163,7 @@ export const deleteNotification = async (req: AuthRequest, res: Response): Promi
 };
 
 /**
- * 取得通知偏好設定
- * 路由：GET /api/notifications/preferences
+ * GET /api/notifications/preferences — notification preferences.
  */
 export const getPreferences = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -190,8 +187,7 @@ export const getPreferences = async (req: AuthRequest, res: Response): Promise<v
 };
 
 /**
- * 更新通知偏好設定
- * 路由：PATCH /api/notifications/preferences
+ * PATCH /api/notifications/preferences — update preferences.
  */
 export const updatePreferences = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -220,8 +216,7 @@ export const updatePreferences = async (req: AuthRequest, res: Response): Promis
 };
 
 /**
- * 批次標記通知為已讀
- * 路由：PATCH /api/notifications/batch/read
+ * PATCH /api/notifications/batch/read — mark many as read.
  */
 export const markMultipleAsRead = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -258,8 +253,7 @@ export const markMultipleAsRead = async (req: AuthRequest, res: Response): Promi
 };
 
 /**
- * 清空所有通知
- * 路由：DELETE /api/notifications/all
+ * DELETE /api/notifications/all — clear all notifications.
  */
 export const clearAllNotifications = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -269,7 +263,7 @@ export const clearAllNotifications = async (req: AuthRequest, res: Response): Pr
       return;
     }
 
-    // TODO: 實作批次刪除（deleteMany）以清空所有通知
+    // TODO: implement batch delete (deleteMany) to clear all notifications
     AuditLogger.logNotificationEvent('NOTIFICATION_DELETED', userId);
 
     sendSuccess(res, {

@@ -1,3 +1,5 @@
+/** DeBank service — OpenAPI fetch/cache with Phase 3 Zero-Access E2EE snapshots. */
+
 import { prisma } from '../../shared/lib/prisma';
 import {
   DeBankProtocolPosition,
@@ -20,7 +22,7 @@ import {
 } from '../../shared/services/payloadKeyService';
 
 /**
- * Phase 3 Zero-Access E2EE：加密形式 DeBank 協議 / Token 快照。
+ * Phase 3 Zero-Access E2EE: encrypted DeBank protocol / token snapshot shapes.
  */
 export interface EncryptedDeBankProtocolSnapshot {
   address: string;
@@ -47,8 +49,7 @@ export interface EncryptedDeBankTokenSnapshot {
 }
 
 /**
- * DeBank 服務
- * 用於向 DeBank OpenAPI 取得使用者協議資料
+ * DeBank service — fetch and cache user protocol / token data via DeBank OpenAPI.
  */
 export class DeBankService {
   private static readonly DEFAULT_BASE_URL = 'https://pro-openapi.debank.com/v1';
@@ -96,10 +97,9 @@ export class DeBankService {
   }
 
   /**
-   * 嘗試為 DeBank sync 建立 SEK。
+   * Create an SEK for a DeBank sync.
    *
-   * Phase 3 Zero-Access only：使用者沒 keypair → 拋（caller 整個 sync flow 會 fail-fast，
-   * 因為 PR 5 已移除 legacy plaintext 寫入路徑）。
+   * Phase 3 Zero-Access only: no keypair → throw (caller fail-fasts; PR 5 removed plaintext writes).
    */
   private static async createPayloadKey(
     userId: string,
@@ -123,7 +123,7 @@ export class DeBankService {
   }
 
   /**
-   * 從 portfolio_item_list 計算單一 protocol 的 net USD value（DeFi 部位淨值）。
+   * Net USD value for one protocol from portfolio_item_list.
    */
   private static computeProtocolNetUsdValue(protocol: DeBankProtocolPosition): number {
     const items = Array.isArray(protocol.portfolio_item_list)
@@ -139,7 +139,7 @@ export class DeBankService {
   }
 
   /**
-   * 單顆 token 的 USD 值，優先用 upstream 提供，沒給就用 amount * price。
+   * USD value for one token; prefer upstream, else amount * price.
    */
   private static computeTokenUsdValue(token: DeBankTokenPosition): number {
     const usdValue = Number(token.usd_value);
@@ -150,11 +150,11 @@ export class DeBankService {
   }
 
   /**
-   * 取得指定地址的 DeBank protocol 快照（Phase 3 Zero-Access E2EE only）。
+   * Get DeBank protocol snapshot for an address (Phase 3 Zero-Access E2EE only).
    *
-   * 流程：
-   *   - forceRefresh=true 或快取過期：呼叫 DeBank API 取得明文 → 加密寫快取 → 回讀加密形式
-   *   - 否則：直接回讀加密形式（後端不解密任何 payload）
+   * Flow:
+   *   - forceRefresh or stale cache: DeBank API (plaintext) → encrypt cache → reload encrypted
+   *   - else: reload encrypted form only (backend never decrypts payloads)
    */
   static async getUserProtocolPositions(
     userId: string,
@@ -178,7 +178,7 @@ export class DeBankService {
       }
     }
 
-    // 沒強制刷新時，只要快取仍新鮮就直接回讀加密形式
+    // Without force refresh, serve encrypted cache while fresh
     if (!forceRefresh) {
       const staleAfter = new Date(Date.now() - ttlSeconds * 1000);
       const freshRow = await prisma.deBankCache.findFirst({
@@ -196,7 +196,7 @@ export class DeBankService {
       }
     }
 
-    // 走 DeBank API 抓明文
+    // Fetch plaintext from DeBank API
     const accessKey = this.getAccessKey();
     const baseUrl = this.getBaseUrl();
     const url = `${baseUrl}/user/all_complex_protocol_list?id=${encodeURIComponent(normalizedAddress)}`;
@@ -221,9 +221,9 @@ export class DeBankService {
 
     const protocols = data as DeBankProtocolPosition[];
 
-    // Phase 3：必須有 keypair。SEK 與 cache 寫入包進同一個 transaction，
-    // EncryptedPayloadKey row 與引用它的 cache row 一起 commit / rollback，
-    // 避免「key 已建但 createMany 失敗」留下孤兒、以及 GC 在兩者之間誤刪的 race。
+    // Phase 3: keypair required. SEK + cache writes share one transaction so
+    // EncryptedPayloadKey and referencing cache rows commit/rollback together
+    // (avoids orphan keys and GC races between insert steps).
     const sekHandles: PayloadKeyHandle[] = [];
     try {
       await prisma.$transaction(async (tx) => {
@@ -263,7 +263,7 @@ export class DeBankService {
         });
       });
 
-      // 趁明文還在記憶體 → 加密寫 AssetSnapshot 的 defiProtocol sub-scoped metric
+      // While plaintext is in memory → encrypt AssetSnapshot defiProtocol sub-scoped metric
       const totalDefiValue = protocols.reduce(
         (sum, p) => sum + this.computeProtocolNetUsdValue(p),
         0,
@@ -280,7 +280,7 @@ export class DeBankService {
         });
       }
 
-      // Best-effort GC：清掉這次 delete + insert 換下來的孤兒 EncryptedPayloadKey。
+      // Best-effort GC: remove EncryptedPayloadKey orphans from this delete+insert swap.
       try {
         await PayloadKeyService.deleteOrphanedKeys(userId);
       } catch (gcError) {
@@ -297,7 +297,7 @@ export class DeBankService {
       try {
         await recordApiOperation(userId, 'debank_refresh');
       } catch {
-        // 不阻塞主流程
+        // Do not block the main flow
       }
     }
 
@@ -305,7 +305,7 @@ export class DeBankService {
   }
 
   /**
-   * 取得指定地址的 DeBank token 快照（Phase 3 Zero-Access E2EE only）。
+   * Get DeBank token snapshot for an address (Phase 3 Zero-Access E2EE only).
    */
   static async getUserTokenPositions(
     userId: string,
@@ -442,7 +442,7 @@ export class DeBankService {
       try {
         await recordApiOperation(userId, 'debank_refresh');
       } catch {
-        // 不阻塞主流程
+        // Do not block the main flow
       }
     }
 
@@ -450,10 +450,10 @@ export class DeBankService {
   }
 
   /**
-   * Phase 3 Zero-Access E2EE：取得指定地址的 protocol 加密快照。
+   * Phase 3 Zero-Access E2EE: load encrypted protocol snapshot for an address.
    *
-   * 後端只 select metadata + payloadCiphertext + payloadKeyId；
-   * 前端用 privateKey unwrap payloadKeys 後解 row。
+   * Selects metadata + payloadCiphertext + payloadKeyId only;
+   * client unwraps payloadKeys then decrypts rows.
    */
   static async getEncryptedProtocolPositions(
     userId: string,
@@ -500,7 +500,7 @@ export class DeBankService {
   }
 
   /**
-   * Phase 3 Zero-Access E2EE：取得指定地址的 EVM token 加密快照。
+   * Phase 3 Zero-Access E2EE: load encrypted EVM token snapshot for an address.
    */
   static async getEncryptedTokenPositions(
     userId: string,

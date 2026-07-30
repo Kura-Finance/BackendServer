@@ -1,37 +1,29 @@
+/**
+ * Developer fee math: ensure user fees cover Bridge wholesale cost + margin.
+ *
+ * Fees are always set server-side (never from the client) so they cannot be zeroed.
+ * Bridge wholesale (2026): on-ramp VA 0.50%, off-ramp 0.25%, FX all-in ~0.50–0.55%,
+ * USDT +0.10%, plus fixed fees ($2/VA/mo, $2 KYC, …). Fixed fees cannot be fully
+ * recovered via percent alone; fee_config can set minimum_fee, developer_fee_percent cannot.
+ */
+
 import type { BridgeFeeConfig } from '../models/types';
 import { PAYOUT_LIQUIDATION_SOURCE } from '../models/types';
 import { BridgeError } from './bridgeHttp';
 
-// ── 費率設計：保證不虧本 ────────────────────────────────────────────────
-//
-// 核心原則：向用戶收的 developer fee 必須 ≥ Bridge 向「平台」收的批發成本，
-// 否則每筆都在貼錢。費率一律由後端決定（不接受 client 指定），避免被改成 0。
-//
-// Bridge 向平台收的批發成本（2026 報價）：
-//   - On-ramp（VA）：0.50% of volume
-//   - Off-ramp（transfer）：0.25% of volume
-//   - FX all-in：USD<>EUR 0.50%、USD<>MXN 0.50%、USD<>BRL 0.55%
-//   - USDT 支援：+0.10%
-//   - 固定費：$2 / VA / month active、$2 KYC、$10 KYB、$0.25 / wallet / month
-//   - 第三方費（ACH / wire / gas）：pass-through
-//
-// 註：百分比固定費（$2/VA、$2 KYC 等）無法用百分比 fee 完全回收，小額入金仍會被
-// 固定費吃掉 margin。fee_config 路徑會帶 minimum_fee 設下限；developer_fee_percent
-// 路徑無法設下限（Bridge 限制），固定費由整體 margin 吸收。
-
-// 平台 margin（疊加在 Bridge 批發成本之上，base 100：'0.25' = 0.25%）。
+// Platform margin on top of Bridge wholesale (base 100: 0.25 = 0.25%).
 const PLATFORM_MARGIN_PERCENT = 0.25;
 
-// USDT 目的幣的額外批發成本，直通給用戶（不另加 margin）。
+// Extra wholesale for USDT destination; passed through (no extra margin).
 const USDT_SURCHARGE_PERCENT = 0.1;
 
-// 每筆 off-ramp 最低 fee（USD 計），避免極小額轉帳的 fee 被四捨五入吃掉。
+// Per off-ramp floor (USD) so tiny transfers are not rounded to zero fee.
 const OFFRAMP_MIN_FEE = 0.5;
 
-// Crypto liquidation address 批發成本（base 100，保守估計跨鏈 + 換匯）。
+// Crypto liquidation address wholesale (base 100; conservative cross-chain + FX).
 const CRYPTO_LIQUIDATION_WHOLESALE_PERCENT = 0.25;
 
-// Bridge 向平台收的 on-ramp 批發成本（含 FX，base 100）。
+// Bridge on-ramp wholesale to platform (incl. FX, base 100).
 const ONRAMP_WHOLESALE_PERCENT: Record<string, number> = {
   usd: 0.5, // onramp 0.50%
   gbp: 0.5, // onramp 0.50%
@@ -41,14 +33,14 @@ const ONRAMP_WHOLESALE_PERCENT: Record<string, number> = {
   cop: 0.5, // USD<>COP FX all-in
 };
 
-// Bridge 向平台收的 off-ramp 批發成本（依目的法幣，含 FX，base 100）。
+// Bridge off-ramp wholesale by destination fiat (incl. FX, base 100).
 const OFFRAMP_WHOLESALE_PERCENT: Record<string, number> = {
   usd: 0.25, // offramp 0.25%
   gbp: 0.25, // offramp 0.25%
   eur: 0.5, // USD<>EUR FX all-in
   mxn: 0.5, // USD<>MXN FX all-in
   brl: 0.55, // USD<>BRL FX all-in
-  cop: 0.5, // 未報價，保守 buffer
+  cop: 0.5, // unquoted; conservative buffer
 };
 
 const OFFRAMP_RAIL_CURRENCY: Record<string, string> = {
@@ -74,17 +66,17 @@ export function assertOffRampRailCurrency(destinationRail: string, destinationCu
   );
 }
 
-/** 向上取兩位小數，確保收的 fee 不低於成本（不虧本）。 */
+/** Ceil to 2 decimals so collected fee is never below cost. */
 function ceil2(n: number): number {
   return Math.ceil(n * 100) / 100;
 }
 
-/** decimal string 去除尾端多餘 0（"0.500" → "0.5"，"1.000" → "1"）。 */
+/** Trim trailing zeros from a decimal string ("0.500" → "0.5"). */
 function trimDecimal(s: string): string {
   return s.includes('.') ? s.replace(/0+$/, '').replace(/\.$/, '') : s;
 }
 
-/** 入金費率 = 批發成本 + margin（+ USDT surcharge），向上取兩位小數。 */
+/** On-ramp fee % = wholesale + margin (+ USDT surcharge), ceiled to 2dp. */
 export function onRampFeePercent(sourceCurrency: string, destinationCurrency: string): string | null {
   const wholesale = ONRAMP_WHOLESALE_PERCENT[sourceCurrency.toLowerCase()];
   if (wholesale === undefined) return null;
@@ -92,12 +84,12 @@ export function onRampFeePercent(sourceCurrency: string, destinationCurrency: st
   return ceil2(wholesale + PLATFORM_MARGIN_PERCENT + surcharge).toFixed(2);
 }
 
-// 之後若向 Bridge 申請開通 fee_config Beta，可改用 per-rail 的固定費 + 百分比
-// （例如 USD 的 Fedwire 第三方固定費）。設 BRIDGE_FEE_CONFIG_ENABLED=true 啟用。
+// When Bridge fee_config Beta is enabled, use per-rail fixed + percent
+// (e.g. Fedwire pass-through). Set BRIDGE_FEE_CONFIG_ENABLED=true.
 function buildFeeConfig(feePercent: string): BridgeFeeConfig {
   return {
     source: {
-      // minimum_fee 確保小額入金仍能覆蓋 Bridge 固定費（$2/VA、$2 KYC）的一部分。
+      // minimum_fee helps small deposits cover Bridge fixed fees ($2/VA, $2 KYC).
       default: { fee_percent: feePercent, minimum_fee: '2.00' },
     },
   };
@@ -108,11 +100,11 @@ function isFeeConfigEnabled(): boolean {
 }
 
 /**
- * 依入金幣別 + 目的幣組出要送給 Bridge 的費用欄位。
- * - BRIDGE_FEE_CONFIG_ENABLED=true → 回傳 { fee_config }（含 minimum_fee 下限）
- * - 否則 → 回傳 { developer_fee_percent }
- * - 無對應費率設定 → 回傳 {}（不收費，理論上不會發生：幣別由 schema enum 限制）
- * fee_config 與 developer_fee_percent 互斥，只會回傳其中一個。
+ * Build fee fields for Bridge VA create from source + destination currency.
+ * - BRIDGE_FEE_CONFIG_ENABLED=true → { fee_config } (with minimum_fee)
+ * - else → { developer_fee_percent }
+ * - no rate → {} (should not happen; currency is schema-enum constrained)
+ * fee_config and developer_fee_percent are mutually exclusive.
  */
 export function buildVirtualAccountFeeBody(
   sourceCurrency: string,
@@ -125,28 +117,28 @@ export function buildVirtualAccountFeeBody(
 }
 
 /**
- * 計算 off-ramp 要送給 Bridge 的 developer_fee（絕對金額，以 source 穩定幣計）。
- * = max(amount × (批發成本 + margin)%, OFFRAMP_MIN_FEE)，向上取 2 位小數。
- * 一律由後端計算，不接受 client 指定，避免被設成 0。
+ * Off-ramp developer_fee absolute amount (source stablecoin) for Bridge.
+ * = max(amount × (wholesale + margin)%, OFFRAMP_MIN_FEE), ceiled to 2dp.
+ * Always server-computed; never accept client value.
  */
 export function computeOffRampDeveloperFee(amount: string, destinationCurrency: string): string {
   const amt = Number(amount);
   const wholesale = OFFRAMP_WHOLESALE_PERCENT[destinationCurrency.toLowerCase()] ?? 0.25;
   if (!Number.isFinite(amt) || amt <= 0) return trimDecimal(OFFRAMP_MIN_FEE.toFixed(2));
   const pctFee = ceil2((amt * (wholesale + PLATFORM_MARGIN_PERCENT)) / 100);
-  // fee 不可超過轉帳本金（理論上不會發生，極小額時 minimum_fee 仍可能逼近本金）。
+  // Fee must not exceed principal (tiny amounts may push min fee near amount).
   const fee = Math.min(Math.max(pctFee, OFFRAMP_MIN_FEE), amt);
   return trimDecimal(fee.toFixed(2));
 }
 
-/** Liquidation Address 的 custom_developer_fee_percent（base 100，含 USDT surcharge）。 */
+/** Liquidation Address custom_developer_fee_percent (base 100; USDT surcharge included). */
 export function cryptoLiquidationFeePercent(): string {
   return ceil2(
     CRYPTO_LIQUIDATION_WHOLESALE_PERCENT + PLATFORM_MARGIN_PERCENT,
   ).toFixed(2);
 }
 
-/** Payout LA 的 custom_developer_fee_percent（base 100，依目的法幣批發 + margin）。 */
+/** Payout LA custom_developer_fee_percent (base 100; dest fiat wholesale + margin). */
 export function payoutLiquidationFeePercent(destinationCurrency: string): string {
   const wholesale = OFFRAMP_WHOLESALE_PERCENT[destinationCurrency.toLowerCase()] ?? 0.25;
   return ceil2(wholesale + PLATFORM_MARGIN_PERCENT).toFixed(2);

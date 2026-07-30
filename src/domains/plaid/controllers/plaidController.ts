@@ -1,3 +1,6 @@
+/**
+ * Plaid HTTP handlers — Link, snapshots, cache, and webhooks.
+ */
 import { Response, Request } from 'express';
 import { AuthRequest } from '../../auth/middleware/auth';
 import { PlaidService } from '../services/plaidService';
@@ -35,6 +38,7 @@ function resolvePlaidLastSyncedAt(cacheStats: {
   return new Date(Math.max(...timestamps)).toISOString();
 }
 
+/** POST /api/plaid/create-link-token */
 export const createLinkToken = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.userId) {
@@ -51,7 +55,7 @@ export const createLinkToken = async (req: AuthRequest, res: Response) => {
     const isFieldError = errorCode === 'INVALID_FIELD';
     const statusCode = isCountryCodeError || isFieldError ? 400 : 500;
 
-    // 如果是配置錯誤，傳遞詳細的錯誤訊息供調試
+    // Surface detailed config errors for debugging
     const message = error.message?.includes('Plaid ') 
       ? error.message 
       : 'Unable to create Plaid Link Token';
@@ -73,6 +77,7 @@ export const createLinkToken = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/** POST /api/plaid/exchange-public-token — link Item and kick off encrypted snapshot. */
 export const exchangePublicToken = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.userId) {
@@ -89,7 +94,7 @@ export const exchangePublicToken = async (req: AuthRequest, res: Response) => {
       plaidItemCount: itemCount,
     });
 
-    // Phase 3：第一次連接時觸發加密快照同步（前端會用 /encrypted endpoint 取資料）
+    // Phase 3: on first connect, sync encrypted snapshot (client reads /encrypted)
     try {
       const snapshot = await PlaidService.getFinanceSnapshotOptimized(req.userId, false);
       logBusinessEvent('plaid_initial_snapshot_after_connect', req.userId, {
@@ -112,7 +117,7 @@ export const exchangePublicToken = async (req: AuthRequest, res: Response) => {
         snapshot,
       });
     } catch (snapshotError: any) {
-      // 連結本身已成功；snapshot 失敗不影響連結狀態，但必須 loud log 出真正原因。
+      // Link succeeded; snapshot failure does not undo it — log the real cause loudly.
       const isKeyPairMissing = snapshotError instanceof KeyPairNotConfiguredError;
       logError('Initial Plaid snapshot after connect failed', snapshotError, {
         userId: req.userId,
@@ -124,7 +129,7 @@ export const exchangePublicToken = async (req: AuthRequest, res: Response) => {
       });
       sendSuccess(res, {
         message: 'Bank account linked successfully',
-        // 讓前端知道為何沒有 snapshot：需先設定 E2EE keypair 才能加密寫入並顯示資料。
+        // Tell the client why snapshot is missing: E2EE keypair required before encrypt/write.
         keyPairRequired: isKeyPairMissing,
       });
     }
@@ -137,6 +142,7 @@ export const exchangePublicToken = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/** POST /api/plaid/disconnect-item */
 export const disconnectPlaidItem = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.userId) {
@@ -173,11 +179,11 @@ export const disconnectPlaidItem = async (req: AuthRequest, res: Response) => {
 };
 
 /**
- * 獲取財務快照（仅使用緩存架構）
- * - API 層面只返回數據庫內容，Server 通過 Webhooks 自動更新數據庫
- * - 用戶可通過 ?refresh=true 參數強制更新，但受每日次數限制（基於訂閱等級）
- * - 達到限制時返回緩存數據
- * - Basic: 1次/天, Pro: 5次/天, Ultimate: 20次/天
+ * Finance snapshot (cache-first).
+ * - API returns DB contents; server updates via webhooks
+ * - `?refresh=true` forces refresh under daily tier limits
+ * - On limit: return cached data
+ * - Basic: 1/day, Pro: 5/day, Ultimate: 20/day
  */
 export const getFinanceSnapshotOptimized = async (req: AuthRequest, res: Response) => {
   try {
@@ -186,7 +192,7 @@ export const getFinanceSnapshotOptimized = async (req: AuthRequest, res: Respons
       return;
     }
 
-    // 只有當用戶明確請求 refresh=true 時才是手動刷新，受每日限制
+    // Manual refresh only when refresh=true — subject to daily limits
     const { refresh } = req.query as { refresh?: boolean };
     const isManualRefresh = refresh === true || req.body?.isManualRefresh === true;
     
@@ -211,11 +217,11 @@ export const getFinanceSnapshotOptimized = async (req: AuthRequest, res: Respons
         status,
       );
     } catch (error: any) {
-      // 處理刷新限制錯誤 - 達到限制時返回緩存數據
+      // On refresh-limit error, return cached data
       if (error.statusCode === 429 && isManualRefresh) {
         try {
           logDebug('Refresh limit reached, returning cached data', { userId: req.userId });
-          const cachedSnapshot = await PlaidService.getFinanceSnapshotOptimized(req.userId, false); // 獲取緩存不受限制
+          const cachedSnapshot = await PlaidService.getFinanceSnapshotOptimized(req.userId, false); // cache read is unlimited
           const cacheStats = await getCacheStats(req.userId);
           
           sendSuccess(res, {
@@ -230,7 +236,7 @@ export const getFinanceSnapshotOptimized = async (req: AuthRequest, res: Respons
           });
           return;
         } catch (cacheError) {
-          // 如果無法獲取緩存數據，返回錯誤
+          // If cache cannot be loaded, return the rate-limit error
           sendError(res, 429, {
             code: 'RATE_LIMITED',
             message: error.message,
@@ -264,7 +270,7 @@ export const getFinanceSnapshotOptimized = async (req: AuthRequest, res: Respons
 };
 
 /**
- * 清空 Plaid 緩存（完整清除）
+ * Clear all Plaid cache for the user.
  */
 export const clearPlaidCache = async (req: AuthRequest, res: Response) => {
   try {
@@ -287,23 +293,13 @@ export const clearPlaidCache = async (req: AuthRequest, res: Response) => {
 };
 
 /**
- * 取得「加密形式」財務快照（Phase 3 Zero-Access E2EE）
+ * Encrypted finance snapshot (Phase 3 Zero-Access E2EE).
  *
- * 回傳：
- *   {
- *     payloadKeys: [{ id, scope, wrappedSek, algorithm }, ...],
- *     accounts:    [{ accountId, plaidItemId, type, bucket, cachedAt, payloadCiphertext, payloadKeyId }, ...],
- *     transactions:[{ transactionId, accountId, date, month, isPending, ..., payloadCiphertext, payloadKeyId }, ...],
- *     investmentAccounts: [{ accountId, cachedAt, payloadCiphertext, payloadKeyId }, ...],
- *     investments: [{ investmentId, accountId, type, ..., payloadCiphertext, payloadKeyId }, ...],
- *     lastSyncedAt
- *   }
+ * Returns payloadKeys + metadata/ciphertext rows (accounts, transactions,
+ * investmentAccounts, investments) and lastSyncedAt.
  *
- * 前端流程：
- *   1. 用 KEK 解 encryptedPrivateKey → privateKey
- *   2. for each payloadKey: SEK = sealed_box_open(wrappedSek, privateKey, publicKey)
- *   3. for each row: plain = AES-GCM_decrypt(SEK, payloadCiphertext)
- *   4. 合併 metadata + plain → 渲染
+ * Client: unwrap encryptedPrivateKey with KEK → privateKey; open each
+ * wrappedSek; AES-GCM decrypt row payloads; merge metadata + plaintext to render.
  */
 export const getEncryptedFinanceSnapshot = async (req: AuthRequest, res: Response) => {
   try {
@@ -325,8 +321,8 @@ export const getEncryptedFinanceSnapshot = async (req: AuthRequest, res: Respons
       lastSyncedAt,
     });
     if (snapshot.payloadKeys.length === 0) {
-      // 沒有 payloadKeys = 前端無法解密任何 row（通常代表：尚未設定 keypair，
-      // 或設定 keypair 前寫入的舊明文 row 已被過濾）。loud 一點方便排查。
+      // No payloadKeys → client cannot decrypt any row (usually: no keypair yet,
+      // or pre-keypair plaintext rows were filtered). Log loudly for debugging.
       logDebug('Encrypted snapshot has no payloadKeys — frontend will show no data', {
         userId: req.userId,
         cachedAccounts: cacheStats.accounts,
@@ -349,7 +345,7 @@ export const getEncryptedFinanceSnapshot = async (req: AuthRequest, res: Respons
 };
 
 /**
- * 獲取 Plaid 緩存統計信息
+ * Plaid cache stats and sync timestamps.
  */
 export const getCacheInfo = async (req: AuthRequest, res: Response) => {
   try {
@@ -381,8 +377,7 @@ export const getCacheInfo = async (req: AuthRequest, res: Response) => {
 };
 
 /**
- * 處理 Plaid Webhook
- * 無需認證 - Plaid 服務直接調用
+ * Plaid webhook ingress (no auth — called by Plaid).
  */
 export const handlePlaidWebhook = async (req: Request, res: Response) => {
   try {
@@ -403,10 +398,10 @@ export const handlePlaidWebhook = async (req: Request, res: Response) => {
       item_id,
     });
 
-    // 立即返回 200，確認已收到（非回應式處理）
+    // Ack immediately with 200 (process asynchronously)
     sendSuccess(res, { webhook_received: true }, 200);
 
-    // 非同步處理 Webhook
+    // Process webhook asynchronously
     processPlaidWebhook(webhook_type, webhook_code, item_id, error).catch((err) => {
       logError('Error processing Plaid webhook', err, {
         webhook_type,
@@ -420,7 +415,7 @@ export const handlePlaidWebhook = async (req: Request, res: Response) => {
 };
 
 /**
- * 異步處理 Plaid Webhook
+ * Async Plaid webhook dispatcher.
  */
 async function processPlaidWebhook(
   webhook_type: string,
@@ -458,36 +453,36 @@ async function processPlaidWebhook(
 }
 
 /**
- * 處理 ITEM 相關事件
+ * Handle ITEM webhook events.
  */
 async function handleItemWebhook(webhook_code: string, item_id: string, error?: any) {
   try {
     switch (webhook_code) {
       case 'ERROR':
-        // Plaid Item 發生錯誤
+        // Plaid Item error
         logError('Plaid item error', new Error(error?.error_message || 'Unknown item error'), {
           item_id,
           error: error?.error_message,
         });
-        // TODO: 將錯誤狀態保存到數據庫或通知用戶
+        // TODO: persist error state or notify the user
         break;
 
       case 'PENDING_EXPIRATION':
-        // Plaid Item 的授權即將過期
+        // Plaid Item authorization is about to expire
         logDebug('Plaid item pending expiration', { item_id });
-        // TODO: 提醒用戶重新驗證
+        // TODO: prompt the user to re-authenticate
         break;
 
       case 'LOGIN_REPAIRED':
-        // LOGIN_REPAIRED 表示用戶已重新授權
+        // LOGIN_REPAIRED — user re-authorized
         logBusinessEvent('plaid_item_repaired', 'system', {
           item_id,
         });
-        // TODO: 清除錯誤狀態，恢復同步
+        // TODO: clear error state and resume sync
         break;
 
       case 'USER_PERMISSION_REVOKED':
-        // 用戶撤銷了權限
+        // User revoked permissions
         await handleUserPermissionRevoked(item_id);
         break;
 
@@ -500,7 +495,7 @@ async function handleItemWebhook(webhook_code: string, item_id: string, error?: 
 }
 
 /**
- * 處理交易同步完成
+ * Handle transaction sync webhooks.
  */
 async function handleTransactionsWebhook(webhook_code: string, item_id: string) {
   try {
@@ -509,13 +504,13 @@ async function handleTransactionsWebhook(webhook_code: string, item_id: string) 
         item_id,
       });
       
-      // 🔑 主動同步：後端立即從 Plaid 拉取最新數據
+      // Pull latest data from Plaid immediately
       await triggerPlaidDataSync(item_id, 'TRANSACTIONS');
     } else if (webhook_code === 'INITIAL_UPDATE_COMPLETE') {
       logBusinessEvent('plaid_initial_transactions_complete', 'system', {
         item_id,
       });
-      // 初始交易同步完成
+      // Initial transaction sync complete
     }
   } catch (err) {
     logError('Error handling transactions webhook', err, { item_id });
@@ -523,7 +518,7 @@ async function handleTransactionsWebhook(webhook_code: string, item_id: string) 
 }
 
 /**
- * 處理投資交易同步完成
+ * Handle investment-transaction sync webhooks.
  */
 async function handleInvestmentTransactionsWebhook(webhook_code: string, item_id: string) {
   try {
@@ -532,7 +527,7 @@ async function handleInvestmentTransactionsWebhook(webhook_code: string, item_id
         item_id,
       });
       
-      // 🔑 主動同步：後端立即從 Plaid 拉取最新投資數據
+      // Pull latest investment data from Plaid immediately
       await triggerPlaidDataSync(item_id, 'INVESTMENTS');
     }
   } catch (err) {
@@ -541,7 +536,7 @@ async function handleInvestmentTransactionsWebhook(webhook_code: string, item_id
 }
 
 /**
- * 處理 AUTH 相關事件
+ * Handle AUTH webhook events.
  */
 async function handleAuthWebhook(webhook_code: string, item_id: string) {
   try {
@@ -563,8 +558,8 @@ async function handleAuthWebhook(webhook_code: string, item_id: string) {
 }
 
 /**
- * 觸發 Plaid 數據同步（後端主動拉取）
- * 在 Webhook 中調用，確保即使 App 未打開也能更新數據
+ * Trigger server-side Plaid data sync from a webhook
+ * so data updates even when the app is closed.
  */
 async function triggerPlaidDataSync(item_id: string, dataType: 'TRANSACTIONS' | 'INVESTMENTS') {
   try {
@@ -584,8 +579,7 @@ async function triggerPlaidDataSync(item_id: string, dataType: 'TRANSACTIONS' | 
       dataType,
     });
 
-    // 🔑 調用 PlaidService 的同步方法
-    // 這些方法會後端主動拉取最新數據並保存到緩存
+    // PlaidService sync methods pull latest data and write cache
     
     switch (dataType) {
       case 'TRANSACTIONS':
@@ -602,7 +596,7 @@ async function triggerPlaidDataSync(item_id: string, dataType: 'TRANSACTIONS' | 
 }
 
 /**
- * 處理用戶權限撤銷
+ * Handle USER_PERMISSION_REVOKED.
  */
 async function handleUserPermissionRevoked(item_id: string) {
   try {
@@ -616,12 +610,12 @@ async function handleUserPermissionRevoked(item_id: string) {
         userId: plaidItem.userId,
       });
 
-      // 標記 item 為需要重新授權
+      // Mark item as needing re-auth
       logBusinessEvent('plaid_permissions_revoked', plaidItem.userId, {
         item_id,
       });
       
-      // TODO: 可在數據庫中添加字段如：needsReauth = true
+      // TODO: add a DB field such as needsReauth = true
     }
   } catch (err) {
     logError('Error handling user permission revoked', err, { item_id });

@@ -1,3 +1,5 @@
+/** Dinari Entity / KYC whitelist helpers (demo + env emails/domains). */
+
 import { prisma } from '../../shared/lib/prisma';
 import { DemoService } from '../../demo/demoService';
 
@@ -33,7 +35,7 @@ function emailMatchesWhitelistDomain(email: string): boolean {
   return dinariWhitelistDomains().has(domain);
 }
 
-/** Dinari Entity / KYC 白名單：demo 測試帳 + DINARI_WHITELIST_EMAILS + 允許網域。 */
+/** Dinari Entity / KYC whitelist: demo accounts + DINARI_WHITELIST_EMAILS + allowed domains. */
 export async function isDinariWhitelistedUser(userId: string): Promise<boolean> {
   const user = await prisma.user.findUnique({
     where: { id: userId },

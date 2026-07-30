@@ -1,3 +1,7 @@
+/**
+ * Admin email allowlist gate (ADMIN_EMAILS / ADMIN_EMAIL).
+ */
+
 import { Response, NextFunction } from 'express';
 import { prisma } from '../../shared/lib/prisma';
 import { sendError } from '../../shared/lib/apiResponse';

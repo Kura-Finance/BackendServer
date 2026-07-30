@@ -1,3 +1,7 @@
+/**
+ * Zod schemas for waitlist join body and status/count query params.
+ */
+
 import { z } from 'zod';
 import { WAITLIST_DEFAULT_PRODUCT } from '../models/types';
 

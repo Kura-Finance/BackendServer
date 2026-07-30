@@ -1,8 +1,13 @@
+/**
+ * HTTP handlers for Privy active-user sync and summary.
+ */
+
 import { Request, Response } from 'express';
 import { logError } from '../../logger';
 import { sendError, sendSuccess } from '../../shared/lib/apiResponse';
 import { PrivyAnalyticsService } from '../services/privyAnalyticsService';
 
+/** POST /sync — lazy sync of Privy user metrics into PlatformRecord. */
 export const syncActiveUsers = async (req: Request, res: Response): Promise<void> => {
   try {
     const { force, from, to } = req.query as { force?: boolean; from?: string; to?: string };
@@ -18,6 +23,7 @@ export const syncActiveUsers = async (req: Request, res: Response): Promise<void
   }
 };
 
+/** GET /summary — latest Privy total/active user snapshot. */
 export const getActiveUsersSummary = async (req: Request, res: Response): Promise<void> => {
   try {
     const { from, to } = req.query as { from?: string; to?: string };

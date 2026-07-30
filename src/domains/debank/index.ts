@@ -1,17 +1,21 @@
-// 路由
+/**
+ * DeBank domain — OpenAPI protocol / token snapshots (Zero-Access E2EE).
+ */
+
+// Router
 export { default as debankRouter } from './router';
 
-// 服務
+// Service
 export { DeBankService } from './services/debankService';
 
-// 控制器
+// Controllers
 export {
   getUserProtocolPositions,
   getUserTokenPositions,
   unlinkDeBankAddress,
 } from './controllers/debankController';
 
-// 型別
+// Types
 export type {
   DeBankProtocolPosition,
   DeBankProtocolPortfolio,

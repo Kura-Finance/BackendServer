@@ -1,3 +1,6 @@
+/**
+ * Zod schemas for treasury API request validation.
+ */
 import { z } from 'zod';
 
 const ethAddress = z
@@ -6,6 +9,7 @@ const ethAddress = z
 
 const treasurySource = z.enum(['created', 'bound']);
 
+/** Single treasury item (create / replace payload). */
 export const treasuryItemSchema = z
   .object({
     id: z.string().min(1).max(64).optional(),

@@ -1,24 +1,24 @@
 /**
- * E2EE Reset Service（換裝置 / 換 Passkey）
+ * E2EE Reset Service (new device / replace Passkey).
  *
- * 場景：使用者換裝置後遺失 passkey。由於：
- *   - encryptedPrivateKey 是用「舊裝置 passkey PRF 推導的 KEK」包的 → 新裝置解不開
- *   - 所有業務快取的 wrappedSek 是用「舊 publicKey」seal 的 → 換 keypair 後變死資料
- * 而被保護的資料（Plaid / 交易所 / DeBank 快取）都能重新同步取得，
- * 因此最乾淨的「換 passkey」方式就是把整個 E2EE 加密層砍掉重建。
+ * When the user loses their passkey after switching devices:
+ *   - encryptedPrivateKey is wrapped with a KEK from the old passkey PRF → unreadable on the new device
+ *   - Business-cache wrappedSek values are sealed to the old publicKey → dead after keypair rotate
+ * Protected data (Plaid / exchange / DeBank caches) can be re-synced, so the cleanest
+ * passkey replacement is to wipe and rebuild the whole E2EE layer.
  *
- * 本服務只清除「加密層」：
- *   - 所有 passkey credential + 進行中的 WebAuthn challenge
- *   - 使用者的 keypair（publicKey / encryptedPrivateKey / kekSalt）
- *   - 所有 EncryptedPayloadKey（wrappedSek）
- *   - 所有 zero-access 加密快取 + AssetSnapshot 歷史
- *   - Plaid 同步狀態（讓下次讀取重新抓資料）
+ * This service clears only the crypto layer:
+ *   - All passkey credentials + in-flight WebAuthn challenges
+ *   - User keypair (publicKey / encryptedPrivateKey / kekSalt)
+ *   - All EncryptedPayloadKey (wrappedSek)
+ *   - All zero-access encrypted caches + AssetSnapshot history
+ *   - Plaid sync state (next read re-fetches)
  *
- * Plaid 連線會一併撤銷（itemRemove + 刪除 PlaidItem），使用者需重新走 Link 流程。
- * 交易所連線（ExchangeAccount.apiKey/apiSecret）仍保留，不需重連。
+ * Plaid links are revoked (itemRemove + delete PlaidItem); user must re-Link.
+ * Exchange connections (ExchangeAccount.apiKey/apiSecret) are kept.
  *
- * 授權：呼叫者必須已透過 Privy 登入（requireAuth）。本流程「不」要求舊 passkey
- * assertion —— 因為用戶正是遺失了 passkey，Privy 登入即為足夠的身分證明。
+ * Auth: caller must be Privy-logged-in (requireAuth). No old passkey assertion —
+ * the user lost the passkey; Privy login is sufficient identity proof.
  */
 
 import { prisma } from '../../shared/lib/prisma';
@@ -37,7 +37,7 @@ export class E2EEResetService {
     const { revoked: plaidItemsRevoked } = await PlaidAccountService.revokeAllItemsForUser(userId);
 
     const result = await prisma.$transaction(async (tx) => {
-      // 1. 清除 zero-access 加密快取（可重新同步取得）
+      // 1. Clear zero-access encrypted caches (re-syncable)
       const [
         plaidAccounts,
         plaidTransactions,
@@ -56,17 +56,17 @@ export class E2EEResetService {
         tx.assetSnapshot.deleteMany({ where: { userId } }),
       ]);
 
-      // 2. 清除 payload keys（wrappedSek，皆以舊 publicKey seal）
+      // 2. Clear payload keys (wrappedSek sealed to old publicKey)
       const payloadKeys = await tx.encryptedPayloadKey.deleteMany({ where: { userId } });
 
-      // 3. 重置 Plaid 同步狀態，讓下次讀取以新 keypair 重新加密寫入
+      // 3. Reset Plaid sync state so next read re-encrypts with new keypair
       await tx.plaidSyncLog.deleteMany({ where: { userId } });
 
-      // 4. 清除 passkey + 進行中的 challenge
+      // 4. Clear passkeys + in-flight challenges
       const passkeys = await tx.passkeyCredential.deleteMany({ where: { userId } });
       await tx.webAuthnChallenge.deleteMany({ where: { userId } });
 
-      // 5. 清掉使用者身上的 keypair，回到「未設定」狀態
+      // 5. Clear user keypair → unconfigured state
       await tx.user.update({
         where: { id: userId },
         data: {

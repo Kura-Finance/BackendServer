@@ -1,3 +1,5 @@
+/** DeBank OpenAPI protocol and token position types. */
+
 export interface DeBankProtocolPortfolio {
   chain: string;
   name: string;

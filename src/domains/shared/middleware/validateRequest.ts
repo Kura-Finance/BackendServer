@@ -1,3 +1,7 @@
+/**
+ * Express middleware: validate body/query/params with Zod schemas.
+ */
+
 import { Request, Response, NextFunction } from 'express';
 import { ZodError, ZodTypeAny } from 'zod';
 import { sendError } from '../lib/apiResponse';
@@ -24,6 +28,7 @@ function formatZodError(error: ZodError): string {
     .join('; ');
 }
 
+/** Validate and replace req.body / query / params using Zod schemas. */
 export function validateRequest(schemas: RequestSchemas) {
   return (req: Request, res: Response, next: NextFunction): void => {
     try {

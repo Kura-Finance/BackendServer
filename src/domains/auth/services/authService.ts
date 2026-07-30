@@ -17,10 +17,11 @@ import {
 import { AccountDeletionService } from './accountDeletionService';
 
 /**
- * 認證服務 - 業務邏輯層
+ * Auth service — business logic.
  *
- * 登入由 Privy 驅動：前端用 Privy 完成登入後，後端驗證 Privy token、
- * 對應到內部 user（以 privyUserId 為主鍵），再核發自有的 JWT session token。
+ * Login is Privy-driven: after the client finishes Privy login, the backend
+ * verifies the Privy token, maps to an internal user (keyed by privyUserId),
+ * and issues our own JWT session token.
  */
 
 export class AuthService {
@@ -57,11 +58,11 @@ export class AuthService {
 
   /**
    * ============================================
-   * Privy 登入
+   * Privy login
    * ============================================
    *
-   * 以 Privy DID 為主鍵 upsert 使用者，綁定 embedded wallet，回傳自有 JWT。
-   * 首次登入即註冊（無需獨立的註冊流程）。
+   * Upsert user by Privy DID, bind embedded wallet, return our JWT.
+   * First login registers the account (no separate signup flow).
    */
   static async loginWithPrivy(
     identity: PrivyIdentity,
@@ -83,11 +84,11 @@ export class AuthService {
 
     let resolved: { id: string; publicKey: string | null } | null = null;
     let email: string | undefined = identityEmail;
-    // Privy 回報的 email 已被「另一個 Kura 帳號」使用時為 true：
-    // 不阻擋登入、也不覆蓋 email，僅回報讓前端提示使用者去處理。
+    // true when Privy's email is already used by another Kura account:
+    // do not block login or overwrite email; surface so the client can prompt the user.
     let emailConflict = false;
 
-    // 1. 以 privyUserId 查找既有帳號
+    // 1. Look up existing account by privyUserId
     const byPrivy = await prisma.user.findUnique({
       where: { privyUserId },
       select: { id: true, publicKey: true, email: true },
@@ -105,7 +106,7 @@ export class AuthService {
       }
     }
 
-    // 2. 尚未綁定 Privy 的同 email 帳號 → 連結到此 Privy 身分（略過 UUID placeholder）
+    // 2. Same-email account not yet linked to Privy → attach this Privy identity (skip UUID placeholder)
     if (!resolved && email && !isPlaceholderEmail(email)) {
       const byEmail = await prisma.user.findUnique({
         where: { email },
@@ -128,14 +129,14 @@ export class AuthService {
       }
     }
 
-    // 3. 建立新帳號（首次登入即註冊）
+    // 3. Create new account (first-login registration)
     if (!resolved) {
       let inviter: { id: string; referCode: string } | undefined;
       if (referralCode) {
         try {
           inviter = await this.resolveInviterByReferralCode(referralCode);
         } catch {
-          // 邀請碼無效不應阻擋登入；忽略即可（之後可用 /me/referral-code 補填）
+          // Invalid invite must not block login; ignore (user can apply via /me/referral-code later)
           logDebug('Ignoring invalid referral code on Privy login', { referralCode });
         }
       }
@@ -162,9 +163,9 @@ export class AuthService {
       });
       resolved = created;
     } else {
-      // 既有帳號（以 privyUserId 命中）：補寫 / 更新 wallet。
-      // email 僅在「有值且未被其他帳號佔用」時才更新，否則會撞 email unique 約束。
-      // placeholder email 可在 Privy 提供真實 email 時覆寫。
+      // Existing account (hit by privyUserId): backfill / update wallet.
+      // Update email only when present and not taken — avoids unique constraint conflicts.
+      // Placeholder email may be overwritten when Privy supplies a real one.
       let emailToUpdate: string | undefined;
       const currentUser = await prisma.user.findUnique({
         where: { id: resolved.id },
@@ -202,7 +203,7 @@ export class AuthService {
           },
         });
       } catch (error) {
-        // 防競態：check 與 update 之間若 email 被別的帳號搶走，退回只更新 wallet，不阻擋登入
+        // Race: if email is taken between check and update, fall back to wallet-only update; don't block login
         if (error instanceof PrismaClientKnownRequestError && error.code === 'P2002') {
           emailConflict = true;
           logDebug('Privy email update hit unique conflict, updating wallet only', {
@@ -228,8 +229,8 @@ export class AuthService {
 
     logAuthEvent('login', resolved.id, { method: 'privy' });
 
-    // needsProfileSetup: 用戶尚未主動設定過 displayName（name 欄位）→ 提示前端引導補資料
-    // email 由 Privy 管理，後端不允許獨立修改，因此不納入判斷
+    // needsProfileSetup: user has not set displayName (name field) → prompt client onboarding
+    // email is Privy-managed; backend cannot change it independently — omit from this check
     const needsProfileSetup = !profile.hasName;
 
     return {
@@ -271,7 +272,7 @@ export class AuthService {
   }
 
   /**
-   * 取得使用者資料
+   * Fetch user profile data
    */
   static async buildUserProfile(userId: string): Promise<UserProfile | null> {
     const user = await prisma.user.findUnique({
@@ -331,7 +332,7 @@ export class AuthService {
   }
 
   /**
-   * 取得當前使用者資訊
+   * Fetch current user info
    */
   static async getCurrentUser(userId: string): Promise<UserProfile> {
     const startTime = Date.now();
@@ -347,13 +348,13 @@ export class AuthService {
   }
 
   /**
-   * 取得當前使用者資訊（包含 Plaid 快取統計）
+   * Fetch current user info (includes Plaid cache stats)
    */
   static async getCurrentUserWithPlaidCache(userId: string): Promise<UserProfile> {
     const profile = await this.getCurrentUser(userId);
 
     try {
-      // 取得 Plaid 快取統計資料
+      // Load Plaid cache stats
       const cacheStats = await getCacheStats(userId);
 
       const plaidCacheInfo: PlaidCacheInfo = {
@@ -377,13 +378,13 @@ export class AuthService {
         error: error instanceof Error ? error.message : 'Unknown error',
       });
 
-      // 若取得快取統計失敗，仍回傳使用者資料（快取資訊為可選）
+      // On cache-stats failure, still return user (cache info is optional)
       return profile;
     }
   }
 
   /**
-   * 更新使用者資料
+   * Update user profile
    */
   static async updateUserProfile(userId: string, payload: UpdateProfilePayload): Promise<UserProfile> {
     const updateData: { name?: string | null; avatarUrl?: string | null } = {};
@@ -397,7 +398,7 @@ export class AuthService {
     }
 
     if (payload.avatarBase64 !== undefined) {
-      updateData.avatarUrl = payload.avatarBase64;  // 將 Base64 直接儲存在 avatarUrl 欄位
+      updateData.avatarUrl = payload.avatarBase64;  // Store Base64 directly in avatarUrl
     }
 
     logDebug('Updating user profile', { userId, changes: Object.keys(updateData) });
@@ -421,7 +422,7 @@ export class AuthService {
   }
 
   /**
-   * 刪除使用者帳戶
+   * Delete user account
    */
   static async deleteAccount(userId: string): Promise<{ success: boolean; message: string }> {
     logDebug('Processing account deletion', { userId });
@@ -430,7 +431,7 @@ export class AuthService {
       throw new Error('Missing required parameters');
     }
 
-    // 取得使用者資訊
+    // Load user
     const startTime = Date.now();
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -447,7 +448,7 @@ export class AuthService {
 
     await AccountDeletionService.purgeExternalIntegrations(userId, user.privyUserId);
 
-    // 刪除使用者及其相關資料（DB cascade）
+    // Delete user and related rows (DB cascade)
     const deleteStartTime = Date.now();
     await prisma.user.delete({
       where: { id: userId },

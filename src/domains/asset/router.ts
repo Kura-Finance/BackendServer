@@ -1,3 +1,9 @@
+/**
+ * Asset routes (all require auth) — Phase 3 Zero-Access E2EE only.
+ *
+ * Since PR 5, all asset history is encrypted.
+ * `/history` is kept as a compatibility alias of `/history/encrypted`.
+ */
 import { Router } from 'express';
 import {
   getEncryptedAssetHistory,
@@ -11,15 +17,8 @@ import {
 
 const router = Router();
 
-/**
- * 資產路由（全部需要驗證）— Phase 3 Zero-Access E2EE only
- *
- * 自 PR 5 起：所有 asset history 均為加密形式。
- * `/history` 保留作為 `/history/encrypted` 的相容性別名，避免前端 404。
- */
-
-// 取得「加密形式」資產歷史（canonical path + legacy alias）
-// 查詢參數：?days=30（預設 30 天；Basic 最多 30 天，付費方案最多 365 天）
+// Encrypted asset history (canonical path + legacy alias).
+// Query: ?days=30 (default 30; Basic max 30, paid tiers max 365).
 router.get(
   ['/history/encrypted', '/history'],
   requireAuth,
@@ -27,7 +26,7 @@ router.get(
   getEncryptedAssetHistory,
 );
 
-// 取得所有記錄日期（metadata only）
+// Distinct recordedAt dates (metadata only).
 router.get('/dates', requireAuth, getRecordDates);
 
 export default router;

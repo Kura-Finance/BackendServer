@@ -1,3 +1,13 @@
+/**
+ * Asset service — asset tracking business logic (Phase 3 Zero-Access E2EE only).
+ *
+ * Since PR 5:
+ *   - Removed legacy `getAssetHistory` / `recordCompositeSnapshot` /
+ *     `computeCurrentBreakdownFromSources` (depended on plaintext cache rows and
+ *     `AssetPerformance`, incompatible with zero-access)
+ *   - Keeps per-metric encrypted snapshot write & encrypted read APIs
+ *   - `getRecordDates` returns metadata only (`AssetSnapshot.recordedAt`)
+ */
 import { prisma } from '../../shared/lib/prisma';
 import { encryptPayload, zeroize } from '../../shared/crypto';
 import {
@@ -8,24 +18,13 @@ import { appLogger, logDebug, logError } from '../../logger';
 import { DemoService } from '../../demo/demoService';
 import { clampAssetHistoryDays, getUserTier } from '../../shared/lib/apiRateLimitUtil';
 
-/**
- * 資產服務 - 資產追蹤業務邏輯（Phase 3 Zero-Access E2EE only）
- *
- * 自 PR 5 起：
- *   - 移除舊版 `getAssetHistory` / `recordCompositeSnapshot` /
- *     `computeCurrentBreakdownFromSources`（依賴明文 cache row 與
- *     `AssetPerformance` 表，與 zero-access 模型互斥）
- *   - 僅保留 per-metric 加密快照寫入 & 加密讀取 API
- *   - `getRecordDates` 仍以 metadata 形式回傳（`AssetSnapshot.recordedAt`）
- */
-
 // Phase 3 metric naming:
-//   - 單來源 base：    "cashFlow"、"plaidInvestment"
-//   - 多來源 sub-scoped："{base}:{source}:{id}"
-//                       e.g. "cryptoSpot:exchange:acct-123"、
-//                            "cryptoSpot:debank:0xabc..."、
-//                            "defiProtocol:debank:0xabc..."
-//     前端讀取後按 base 加總、按 sub-scoped key 取 latest 來組日線。
+//   - Single-source base: "cashFlow", "plaidInvestment"
+//   - Multi-source sub-scoped: "{base}:{source}:{id}"
+//       e.g. "cryptoSpot:exchange:acct-123",
+//            "cryptoSpot:debank:0xabc...",
+//            "defiProtocol:debank:0xabc..."
+//     Client sums by base and takes latest per sub-scoped key for daily series.
 export type AssetMetricBase = 'cashFlow' | 'plaidInvestment' | 'cryptoSpot' | 'defiProtocol';
 export type AssetMetricKey = string;
 
@@ -43,15 +42,15 @@ const assetHistoryMetricWhere = {
 };
 
 /**
- * `Record<metric, value>` — metric 字串可為 base 或 sub-scoped 形式。
- * 為了向後相容仍允許 4 個 base metric 為 optional 欄位。
+ * `Record<metric, value>` — metric may be base or sub-scoped.
+ * Four base metrics remain optional fields for backward compatibility.
  */
 export interface PlaintextMetrics {
   cashFlow?: number;
   plaidInvestment?: number;
   cryptoSpot?: number;
   defiProtocol?: number;
-  // 任意 sub-scoped metric（"cryptoSpot:exchange:acct-id" 等）
+  // Any sub-scoped metric (e.g. "cryptoSpot:exchange:acct-id")
   [extendedMetric: string]: number | undefined;
 }
 
@@ -71,8 +70,8 @@ export interface EncryptedAssetHistoryResponse {
 
 export class AssetService {
   /**
-   * 取得用戶所有 snapshot 的 recordedAt（去重排序，metadata only）。
-   * 不解密 payload，純粹給前端做日期選擇器。
+   * Distinct recordedAt values for the user's snapshots (sorted, metadata only).
+   * No payload decryption — used by the date picker.
    */
   static async getRecordDates(userId: string): Promise<Date[]> {
     if (await DemoService.isDemoUser(userId)) {
@@ -98,25 +97,25 @@ export class AssetService {
   }
 
   // ═════════════════════════════════════════════════════════════════
-  // Phase 3 Zero-Access E2EE — per-metric 加密快照
+  // Phase 3 Zero-Access E2EE — per-metric encrypted snapshots
   // ═════════════════════════════════════════════════════════════════
 
   /**
-   * 把已知明文的 metric 寫成加密 AssetSnapshot row（每個 metric 一個 row）。
+   * Encrypt known plaintext metrics into AssetSnapshot rows (one row per metric).
    *
-   * 設計理念：呼叫者通常是某個 sync 流程（PlaidCacheService / ExchangeService /
-   * DeBankService），它在 sync 過程中**還持有明文**，把要寫的 metric 直接傳進來。
-   * 後端就在這唯一短暫持有明文的瞬間做加密，立刻 zeroize SEK，永久失去解密能力。
+   * Callers are typically sync flows (PlaidCacheService / ExchangeService /
+   * DeBankService) that still hold plaintext. Encrypt in that brief window,
+   * then zeroize the SEK so the server permanently loses decrypt ability.
    *
-   * 使用範例（PlaidCacheService 內）：
+   * Example (inside PlaidCacheService):
    *   await AssetService.recordSnapshotFromPlaintext(userId, {
-   *     cashFlow: bankingValue,           // 從 snapshot.accounts 算出
-   *     plaidInvestment: plaidInvValue,   // 從 snapshot.investments 算出
+   *     cashFlow: bankingValue,           // from snapshot.accounts
+   *     plaidInvestment: plaidInvValue,   // from snapshot.investments
    *   });
    *
-   * 若使用者尚未 setup keypair：graceful degrade，記 warning 後直接 return。
-   * 由於 PR 5 已移除 legacy snapshot 寫入路徑，此情況下不會有資產歷史資料；
-   * 必須先呼叫 `POST /api/auth/keys/setup`。
+   * If the user has no keypair yet: soft degrade (warn + return).
+   * PR 5 removed legacy snapshot writes, so history stays empty until
+   * `POST /api/auth/keys/setup`.
    */
   static async recordSnapshotFromPlaintext(
     userId: string,
@@ -179,10 +178,8 @@ export class AssetService {
   }
 
   /**
-   * 用「Plaid snapshot」直接算出 cashFlow + plaidInvestment 兩個 metric 的明文。
-   *
-   * 給 PlaidCacheService.saveFinanceSnapshotToCache 在 SEK 還在記憶體時呼叫。
-   * 不讀任何快取，純函式。
+   * Derive cashFlow + plaidInvestment plaintext from a Plaid snapshot.
+   * Pure function for PlaidCacheService while SEK is still in memory.
    */
   static computePlaidMetricsFromSnapshot(snapshot: {
     accounts: Array<{ balance: number; type: string }>;
@@ -204,16 +201,16 @@ export class AssetService {
   }
 
   /**
-   * 取得某段時間內的加密 AssetSnapshot rows + 對應的 wrappedSek。
+   * Encrypted AssetSnapshot rows + wrappedSek for a time range.
+   * Backend does not decrypt; client builds the 2-metric series.
    *
-   * 後端不解密，前端用 privateKey unwrap 後在客戶端組成 2-metric 時間序列。
+   * Returns plaidInvestment + cryptoSpot (incl. sub-scoped cryptoSpot:*);
+   * excludes cashFlow / defiProtocol.
    *
-   * 僅回傳 plaidInvestment + cryptoSpot（含 sub-scoped cryptoSpot:*）；不含 cashFlow / defiProtocol。
-   *
-   * 前端聚合規則：
-   *   - metric 字串：可能是 base("plaidInvestment") 或 sub-scoped("cryptoSpot:exchange:acct-123")
-   *   - 同 sub-scoped key 在同一天若有多筆 row，取 recordedAt 最大者（去掉重複 sync）
-   *   - 同 base、不同 sub-scope 的值要加總（cryptoSpot 跨 exchange + debank）
+   * Client aggregation:
+   *   - metric may be base ("plaidInvestment") or sub-scoped ("cryptoSpot:exchange:acct-123")
+   *   - same sub-scoped key, same day → keep latest recordedAt
+   *   - same base, different sub-scopes → sum (cryptoSpot across exchange + debank)
    */
   static async getEncryptedAssetHistory(
     userId: string,

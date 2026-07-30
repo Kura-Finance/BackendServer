@@ -1,20 +1,20 @@
 /**
- * Session Encryption Key (SEK) 產生與 AES-256-GCM 對稱加密。
+ * Session Encryption Key (SEK) generation and AES-256-GCM symmetric crypto.
  *
- * 流程：
- *   1. 後端 sync 開始時呼叫 `generateSEK()` 拿一把隨機 32 bytes
- *   2. 用該 SEK 對所有 row 做 `encryptWithSEK`
- *   3. 把 SEK 用 sealedBox 包成 wrappedSek 存入 EncryptedPayloadKey
- *   4. **立即** `zeroize(sek)` 清除記憶體
+ * Flow:
+ *   1. At sync start, call `generateSEK()` for a random 32-byte key
+ *   2. Encrypt all rows with `encryptWithSEK`
+ *   3. Seal the SEK into wrappedSek and store EncryptedPayloadKey
+ *   4. Immediately `zeroize(sek)`
  *
- * Ciphertext 格式（base64）：
+ * Ciphertext layout (base64):
  *   `{iv (12B)}{authTag (16B)}{ciphertext (?B)}` → base64
  *
- * 與前端 WebCrypto AES-GCM 互通：
+ * Interop with WebCrypto AES-GCM on the client:
  *   - iv 12 bytes
  *   - tag 16 bytes
- *   - WebCrypto 會把 tag 自動 append 到 ciphertext 尾巴；本格式則明確切出來
- *     （前端解時要把最後 16B 視為 tag）
+ *   - WebCrypto appends the tag to ciphertext; this format splits it out
+ *     (client must treat the last 16B as the tag when unpacking)
  */
 
 import crypto from 'crypto';
@@ -25,15 +25,13 @@ export const SEK_BYTES = 32;
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 
-/**
- * 產生一把全新的 SEK（32 bytes 隨機）。
- */
+/** Generate a fresh SEK (32 random bytes). */
 export function generateSEK(): Uint8Array {
   return new Uint8Array(crypto.randomBytes(SEK_BYTES));
 }
 
 /**
- * 用 SEK 加密一段 UTF-8 字串。
+ * Encrypt a UTF-8 string with the SEK.
  *
  * @returns base64(iv | tag | ciphertext)
  */
@@ -47,15 +45,14 @@ export function encryptWithSEK(sek: Uint8Array, plaintext: string): string {
   const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   const tag = cipher.getAuthTag();
 
-  // Pack as iv | tag | ciphertext，前端按相同 layout 拆解
+  // Pack as iv | tag | ciphertext; client unpacks the same layout
   const packed = Buffer.concat([iv, tag, ciphertext]);
   return toBase64(new Uint8Array(packed));
 }
 
 /**
- * 用 SEK 解密 — 後端**永遠不應該執行此函式**（後端沒有 SEK）。
- *
- * 僅供測試 / 開發環境使用。
+ * Decrypt with SEK — the backend must never call this in production
+ * (it does not hold SEKs). For tests / local development only.
  */
 export function decryptWithSEK(sek: Uint8Array, packedB64: string): string {
   if (sek.length !== SEK_BYTES) {

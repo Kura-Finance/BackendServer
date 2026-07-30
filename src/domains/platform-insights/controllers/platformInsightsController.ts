@@ -1,3 +1,7 @@
+/**
+ * HTTP handlers for Investor platform insights (summary, records, backfill).
+ */
+
 import { Response } from 'express';
 import { Request } from 'express';
 import { logError } from '../../logger';
@@ -9,6 +13,7 @@ import type {
 } from '../models/types';
 import { PlatformRecordService } from '../services/platformRevenueService';
 
+/** GET /summary — Investor process + platform revenue snapshot. */
 export const getInvestorSummary = async (req: Request, res: Response): Promise<void> => {
   try {
     const { from, to } = req.query as { from?: string; to?: string };
@@ -20,7 +25,7 @@ export const getInvestorSummary = async (req: Request, res: Response): Promise<v
   }
 };
 
-/** 直接回傳 PlatformRecord DB 列（外部查詢用）。 */
+/** GET /records — raw PlatformRecord rows for external queries. */
 export const listRecords = async (req: Request, res: Response): Promise<void> => {
   try {
     const { from, to, category, source, product, limit, offset } = req.query as {
@@ -91,6 +96,7 @@ export const listProcessEvents = async (req: Request, res: Response): Promise<vo
   }
 };
 
+/** POST /backfill — lazy sync of platform records from existing sources. */
 export const backfillProcessEvents = async (req: Request, res: Response): Promise<void> => {
   try {
     const { force } = req.query as { force?: boolean };

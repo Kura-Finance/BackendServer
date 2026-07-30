@@ -1,14 +1,14 @@
 /**
- * Notification 領域模型型別
+ * Notification domain model types.
  */
 
 export type NotificationType = 'email' | 'push' | 'in_app';
 export type NotificationCategory = 
-  | 'price_alert'      // 價格變動提醒
-  | 'account_activity' // 帳戶活動
-  | 'transaction'      // 交易相關
-  | 'system_alert'     // 系統提醒
-  | 'security';        // 安全相關
+  | 'price_alert'      // price change alerts
+  | 'account_activity' // account activity
+  | 'transaction'      // transactions
+  | 'system_alert'     // system alerts
+  | 'security';        // security
 
 export type NotificationStatus = 'pending' | 'sent' | 'delivered' | 'read' | 'failed';
 
@@ -46,7 +46,7 @@ export interface NotificationRecord {
 
 export interface CreateNotificationPayload {
   userId: string;
-  types?: NotificationType[]; // 支援多種通知類型，預設為全部
+  types?: NotificationType[]; // channel types; default = all enabled
   category: NotificationCategory;
   subject: string;
   title: string;
@@ -93,7 +93,7 @@ export interface NotificationPreferences {
   enableEmailNotifications: boolean;
   enablePushNotifications: boolean;
   enableInAppNotifications: boolean;
-  priceAlertThreshold: number; // 百分比
+  priceAlertThreshold: number; // percent
   accountActivityAlerts: boolean;
   transactionAlerts: boolean;
   systemAlerts: boolean;

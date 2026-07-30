@@ -1,3 +1,6 @@
+/**
+ * Treasury service — multi-treasury workspace persistence and invariants.
+ */
 import { randomUUID } from 'crypto';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { prisma } from '../../shared/lib/prisma';
@@ -64,6 +67,7 @@ function uniqueTargetFields(error: PrismaClientKnownRequestError): string[] {
 }
 
 export class TreasuryService {
+  /** List treasuries and resolve/persist activeTreasuryId. */
   static async getWorkspace(userId: string): Promise<TreasuryWorkspaceDto> {
     const [user, rows] = await Promise.all([
       prisma.user.findUniqueOrThrow({
@@ -89,6 +93,7 @@ export class TreasuryService {
     return { treasuries, activeTreasuryId };
   }
 
+  /** Create a treasury, or activate an existing one with the same address. */
   static async create(
     userId: string,
     input: {
@@ -170,6 +175,7 @@ export class TreasuryService {
     }
   }
 
+  /** Rename a treasury owned by the user. */
   static async rename(userId: string, id: string, name: string): Promise<TreasuryDto> {
     const row = await prisma.treasury.findFirst({ where: { id, userId } });
     if (!row) {
@@ -182,6 +188,7 @@ export class TreasuryService {
     return toDto(updated);
   }
 
+  /** Delete a treasury and return the updated workspace. */
   static async remove(userId: string, id: string): Promise<TreasuryWorkspaceDto> {
     const row = await prisma.treasury.findFirst({ where: { id, userId } });
     if (!row) {
@@ -192,6 +199,7 @@ export class TreasuryService {
     return this.getWorkspace(userId);
   }
 
+  /** Set activeTreasuryId (null clears; must own the id when set). */
   static async setActive(
     userId: string,
     activeTreasuryId: string | null,
@@ -209,6 +217,7 @@ export class TreasuryService {
     return this.getWorkspace(userId);
   }
 
+  /** Replace the full workspace (migration / bulk import). */
   static async replaceAll(
     userId: string,
     input: {

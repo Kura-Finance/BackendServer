@@ -1,3 +1,7 @@
+/**
+ * Virtual Account on-ramp: create/list VAs and deposit activity sync.
+ */
+
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../shared/lib/prisma';
 import {
@@ -106,8 +110,8 @@ export class BridgeVirtualAccountService {
 
     const bridgeCustomerId = await requireTransactableCustomer(userId);
 
-    // 入金幣別需要對應的 rail endorsement（gbp→faster_payments 等）；
-    // 缺少時回清楚的 409，而非 Bridge 的神秘 401 not_allowed。
+    // Deposit currency needs matching rail endorsement (gbp→faster_payments, etc.);
+    // missing → clear 409 instead of Bridge's opaque 401 not_allowed.
     await assertEndorsementForCurrency(userId, params.sourceCurrency);
 
     const address = params.toAddress ?? (await resolveUserWalletAddress(userId));
@@ -132,14 +136,14 @@ export class BridgeVirtualAccountService {
 
     if (existing) {
       try {
-        // 向 Bridge 確認 VA 仍存在並同步最新 deposit instructions / 狀態
+        // Confirm VA still exists on Bridge; sync deposit instructions / status
         const va = await bridgeFetch<BridgeVirtualAccountResponse>(
           `/customers/${bridgeCustomerId}/virtual_accounts/${existing.bridgeVirtualAccountId}`,
         );
         return this.persistVirtualAccount(userId, bridgeCustomerId, params, address, va);
       } catch (error) {
         if (!isBridgeNotFound(error)) throw error;
-        // VA 在 Bridge 端已不存在（sandbox 重置等）：刪本地後重建
+        // VA gone on Bridge (e.g. sandbox reset): delete local and recreate
         await prisma.bridgeVirtualAccount.delete({ where: { id: existing.id } }).catch(() => undefined);
         appLogger.warn('[BridgeService] Stale virtual account, recreating', {
           userId,
@@ -148,7 +152,7 @@ export class BridgeVirtualAccountService {
       }
     }
 
-    // idempotency key 綁定 (userId + 組合)，並發首建會在 Bridge 端去重
+    // Idempotency key binds (userId + route); concurrent first creates dedupe on Bridge
     const idempotencyKey = `va:${userId}:${params.sourceCurrency}:${params.destinationRail}:${params.destinationCurrency}`;
 
     const va = await withStaleCustomerGuard(userId, 'getOrCreateVirtualAccount', () =>
@@ -164,7 +168,7 @@ export class BridgeVirtualAccountService {
               currency: params.destinationCurrency,
               address,
             },
-            // 費率由後端依入金幣別 + 目的幣套用（fee_config 或 developer_fee_percent）
+            // Fees applied server-side from source + dest (fee_config or developer_fee_percent)
             ...buildVirtualAccountFeeBody(params.sourceCurrency, params.destinationCurrency),
           },
         },

@@ -1,18 +1,18 @@
 import dotenv from 'dotenv';
 
 /**
- * 環境變數配置
- * 集中管理環境變數加載和驗證
+ * Environment configuration.
+ * Centralizes loading and validation of process.env.
  */
 
-// 如果 NODE_ENV 未設置，預設為 development
+// Default NODE_ENV to development when unset.
 if (!process.env.NODE_ENV) {
   process.env.NODE_ENV = 'development';
 }
 
 const isProduction = process.env.NODE_ENV === 'production';
 
-// 加載 .env 文件（開發環境）
+// Load .env file in non-production when DB_HOST is not already injected.
 if (!isProduction && !process.env.DB_HOST) {
   const envFile = `.env.${process.env.NODE_ENV || 'development'}`;
   console.log(`📝 Loading environment from ${envFile}`);
@@ -20,13 +20,13 @@ if (!isProduction && !process.env.DB_HOST) {
 }
 
 /**
- * 構建 DATABASE_URL
- * 自動判斷 TCP（開發）或 Unix Socket（生產）
+ * Build DATABASE_URL for Prisma.
+ * Uses Unix socket for Cloud SQL in production, TCP otherwise.
  */
 export function buildDatabaseUrl(): string {
   const dbUser = process.env.DB_USER || 'postgres';
   const rawPassword = process.env.DB_PASSWORD || '';
-  // 只在密碼含特殊字元時進行 URL 編碼
+  // Always encode so special characters in the password stay URL-safe.
   const dbPassword = encodeURIComponent(rawPassword);
   const dbName = process.env.DB_NAME || 'kura_db';
   const dbSchema = process.env.DB_SCHEMA || 'public';
@@ -35,25 +35,23 @@ export function buildDatabaseUrl(): string {
 
   console.log(`📊 Database config: user=${dbUser}, host=${dbHost}, port=${dbPort}, db=${dbName}`);
 
-  // 生產環境：使用 Unix Socket（Cloud SQL Proxy）
+  // Production Cloud SQL: connect via Unix socket (Cloud SQL Proxy).
   if (isProduction && dbHost.startsWith('/cloudsql/')) {
     console.log('🔌 Using Cloud SQL Proxy Unix Socket');
-    // 使用 Prisma 連線 Unix socket 時，hostname 必須指定為 localhost
-    // 實際 socket 路徑放在 ?host 參數中
-    // 格式：postgresql://user:password@localhost/dbname?host=/path/to/socket&schema=public
+    // Prisma Unix-socket URLs must use hostname `localhost`; the real socket
+    // path goes in the `?host=` query param:
+    // postgresql://user:password@localhost/dbname?host=/path/to/socket&schema=public
     const url = `postgresql://${dbUser}:${dbPassword}@localhost/${dbName}?host=${dbHost}&schema=${dbSchema}`;
     console.log(`✅ Constructed Unix socket URL with localhost hostname override`);
     return url;
   }
 
-  // 開發環境或非 Cloud SQL：使用 TCP 連接
+  // Development / non–Cloud SQL: TCP.
   console.log(`🔌 Using TCP connection to ${dbHost}:${dbPort}`);
   return `postgresql://${dbUser}:${dbPassword}@${dbHost}:${dbPort}/${dbName}?schema=${dbSchema}`;
 }
 
-/**
- * 驗證必填環境變數
- */
+/** Validate required environment variables; exit on hard failures in production. */
 export function validateEnvironment(): void {
   const required = ['JWT_SECRET', 'ENCRYPTION_KEY'];
   const missing = required.filter((key) => !process.env[key]);
@@ -63,7 +61,7 @@ export function validateEnvironment(): void {
     process.exit(1);
   }
 
-  // 驗證 ENCRYPTION_KEY 格式：必須是 64 hex 字元（32 bytes，用於 AES-256）
+  // ENCRYPTION_KEY must be 64 lowercase hex chars (32 bytes for AES-256).
   const encKey = process.env.ENCRYPTION_KEY ?? '';
   if (!/^[0-9a-f]{64}$/.test(encKey)) {
     console.error('❌ ENCRYPTION_KEY must be exactly 64 lowercase hex characters (32 bytes)');
@@ -71,27 +69,27 @@ export function validateEnvironment(): void {
     process.exit(1);
   }
 
-  // 驗證 Resend API 配置（後端驗證郵件，需要完整配置）
+  // Resend (transactional email).
   const emailVars = ['RESEND_API_KEY', 'RESEND_FROM_EMAIL'];
   const missingEmailVars = emailVars.filter((key) => !process.env[key]);
-  
+
   if (missingEmailVars.length > 0) {
     console.error(`❌ Resend API not fully configured: ${missingEmailVars.join(', ')}`);
     console.error('💡 Set RESEND_API_KEY and RESEND_FROM_EMAIL environment variables');
     if (isProduction) process.exit(1);
   }
 
-  // 驗證 Plaid API 配置
+  // Plaid.
   const plaidVars = ['PLAID_CLIENT_ID', 'PLAID_SANDBOX_SECRET', 'PLAID_PRODUCTION_SECRET'];
   const missingPlaidVars = plaidVars.filter((key) => !process.env[key]);
-  
+
   if (missingPlaidVars.length > 0) {
     console.error(`❌ Plaid API not fully configured: ${missingPlaidVars.join(', ')}`);
     console.error('💡 Set PLAID_CLIENT_ID, PLAID_SANDBOX_SECRET, and PLAID_PRODUCTION_SECRET environment variables');
     if (isProduction) process.exit(1);
   }
 
-  // 驗證 Stripe API 配置
+  // Stripe.
   const stripeVars = ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'];
   const missingStripeVars = stripeVars.filter((key) => !process.env[key]);
 
@@ -101,7 +99,7 @@ export function validateEnvironment(): void {
     if (isProduction) process.exit(1);
   }
 
-  // 驗證 DeBank API 配置
+  // DeBank.
   const debankVars = ['DEBANK_ACCESS_KEY'];
   const missingDeBankVars = debankVars.filter((key) => !process.env[key]);
 
@@ -111,27 +109,25 @@ export function validateEnvironment(): void {
     if (isProduction) process.exit(1);
   }
 
-  // 驗證 Privy 認證配置（登入系統核心）
+  // Privy (core login). Warn only so the process can still boot.
   const privyVars = ['PRIVY_APP_ID', 'PRIVY_APP_SECRET', 'PRIVY_VERIFICATION_KEY'];
   const missingPrivyVars = privyVars.filter((key) => !process.env[key]);
 
   if (missingPrivyVars.length > 0) {
     console.warn(`⚠️ Privy auth not fully configured: ${missingPrivyVars.join(', ')}`);
     console.warn('💡 Set PRIVY_APP_ID, PRIVY_APP_SECRET, PRIVY_VERIFICATION_KEY (from the Privy Dashboard)');
-    // Login will fail until configured, but the server should still boot.
   }
 
-  // 驗證 WebAuthn / Passkey 配置（E2EE 資料層解鎖）
+  // WebAuthn / Passkey (E2EE unlock). Warn only.
   const webauthnVars = ['WEBAUTHN_RP_ID', 'WEBAUTHN_RP_NAME', 'WEBAUTHN_ORIGIN'];
   const missingWebauthnVars = webauthnVars.filter((key) => !process.env[key]);
 
   if (missingWebauthnVars.length > 0) {
     console.warn(`⚠️ WebAuthn/Passkey not fully configured: ${missingWebauthnVars.join(', ')}`);
     console.warn('💡 Set WEBAUTHN_RP_ID (domain), WEBAUTHN_RP_NAME, WEBAUTHN_ORIGIN (comma-separated allowed origins)');
-    // Passkey endpoints will fail until configured, but the server should still boot.
   }
 
-  // 驗證 Bridge API 配置（on/off ramp）
+  // Bridge on/off-ramp.
   const bridgeVars = ['BRIDGE_API_KEY'];
   const missingBridgeVars = bridgeVars.filter((key) => !process.env[key]);
 
@@ -141,12 +137,12 @@ export function validateEnvironment(): void {
     if (isProduction) process.exit(1);
   }
 
-  // Webhook 簽章公鑰為可選：未設定時 webhook 端點會拒絕所有事件（fail-closed）
+  // Webhook public key is optional; without it the webhook endpoint fail-closes.
   if (!process.env.BRIDGE_WEBHOOK_PUBLIC_KEY) {
     console.warn('⚠️ BRIDGE_WEBHOOK_PUBLIC_KEY not set — Bridge webhooks will be rejected until configured');
   }
 
-  // 驗證 Dinari API 配置（tokenized stocks / dShares）
+  // Dinari tokenized stocks.
   const dinariVars = ['DINARI_API_KEY_ID', 'DINARI_API_SECRET_KEY'];
   const missingDinariVars = dinariVars.filter((key) => !process.env[key]);
 
@@ -156,7 +152,7 @@ export function validateEnvironment(): void {
     if (isProduction) process.exit(1);
   }
 
-  // 下單需要支付代幣地址（USDC）；未設定時下單會被拒
+  // Payment token (e.g. USDC) required for orders.
   if (!process.env.DINARI_PAYMENT_TOKEN_ADDRESS) {
     console.warn('⚠️ DINARI_PAYMENT_TOKEN_ADDRESS not set — Dinari order placement will be rejected until configured');
   }
@@ -166,15 +162,15 @@ export function validateEnvironment(): void {
     );
   }
 
-  // LI.FI analytics（Investor 處理量）；未設 integrator 時 sync 端點會拒絕
-  // 支援逗號分隔多個：LIFI_INTEGRATOR=kura-ios,kura-android,kura-web
+  // LI.FI Investor analytics; sync rejects until integrator is set.
+  // Comma-separated: LIFI_INTEGRATOR=kura-ios,kura-android,kura-web
   if (!process.env.LIFI_INTEGRATOR) {
     console.warn(
       '⚠️ LIFI_INTEGRATOR not set — LI.FI transfer sync for Investor will be unavailable until configured',
     );
   }
 
-  // 在生產環境檢查數據庫配置
+  // Production DB config check.
   if (isProduction) {
     const dbVars = {
       'DB_USER': process.env.DB_USER,
@@ -183,11 +179,11 @@ export function validateEnvironment(): void {
       'DB_HOST': process.env.DB_HOST,
       'DATABASE_URL': process.env.DATABASE_URL,
     };
-    
+
     const emptyVars = Object.entries(dbVars)
       .filter(([, value]) => !value)
       .map(([key]) => key);
-    
+
     if (emptyVars.length > 0) {
       console.error(`❌ Production environment missing database configuration: ${emptyVars.join(', ')}`);
       console.error(`📋 DATABASE_URL: ${process.env.DATABASE_URL || 'NOT SET'}`);
@@ -214,11 +210,9 @@ export function getJwtSecret(): string {
   return secret;
 }
 
-/**
- * 初始化環境配置
- */
+/** Initialize env: build DATABASE_URL, then validate required vars. */
 export function initializeEnv(): void {
-  // 先檢查環境變數是否存在（Cloud Run 診斷）
+  // Cloud Run diagnostics: surface missing DB_* early.
   if (isProduction) {
     const requiredVars = ['DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'];
     const missing = requiredVars.filter((key) => !process.env[key]);
@@ -231,7 +225,6 @@ export function initializeEnv(): void {
     }
   }
 
-  // 設置 DATABASE_URL
   const url = buildDatabaseUrl();
   if (!url) {
     console.error('❌ Failed to build DATABASE_URL');
@@ -240,7 +233,6 @@ export function initializeEnv(): void {
   process.env.DATABASE_URL = url;
   console.log('✅ DATABASE_URL configured');
 
-  // 驗證必填變數
   validateEnvironment();
 
   console.log(`✅ Environment initialized (NODE_ENV=${process.env.NODE_ENV})`);

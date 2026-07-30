@@ -1,13 +1,13 @@
 /**
- * Bridge Webhook 簽章驗證與事件處理
+ * Bridge webhook signature verification and event handling.
  *
- * Bridge 以 RSA 簽署 webhook：
+ * Bridge signs with RSA:
  *   Header:  X-Webhook-Signature: t=<timestampMs>,v0=<base64Signature>
  *   signed = "{t}.{rawBody}"
- *   digest = SHA256(signed) → 再以 RSA-SHA256 對 digest 驗章（雙重 SHA256；見 Bridge Node/Go 範例）
+ *   digest = SHA256(signed) → verify digest with RSA-SHA256 (double SHA256; see Bridge Node/Go samples)
  *
- * 防重放：拒絕 timestamp 早於 10 分鐘的事件。
- * 公鑰由 Bridge 在建立 webhook endpoint 時提供（PEM），存於 BRIDGE_WEBHOOK_PUBLIC_KEY。
+ * Replay protection: reject events whose timestamp is older than 10 minutes.
+ * Public key (PEM) is provided when creating the webhook endpoint; stored as BRIDGE_WEBHOOK_PUBLIC_KEY.
  */
 
 import crypto from 'crypto';
@@ -25,7 +25,7 @@ import type {
   BridgeVirtualAccountEventResponse,
 } from '../models/types';
 
-const REPLAY_TOLERANCE_MS = 10 * 60 * 1000; // 10 分鐘
+const REPLAY_TOLERANCE_MS = 10 * 60 * 1000; // 10 minutes
 
 export interface BridgeWebhookVerifyResult {
   valid: boolean;
@@ -48,7 +48,7 @@ function getWebhookPublicKey(): string | null {
 }
 
 function parseSignatureHeader(header: string): { timestamp: number; signature: string } | null {
-  // 格式：t=<ms>,v0=<base64>
+  // Format: t=<ms>,v0=<base64>
   const parts = header.split(',').map((p) => p.trim());
   let timestamp: number | null = null;
   let signature: string | null = null;
@@ -65,9 +65,9 @@ function parseSignatureHeader(header: string): { timestamp: number; signature: s
 }
 
 /**
- * 驗證 Bridge webhook 簽章。
- * @param rawBody 原始請求字串（驗章前未經 JSON.parse）
- * @param signatureHeader X-Webhook-Signature 值
+ * Verify Bridge webhook signature.
+ * @param rawBody Raw request body string (before JSON.parse)
+ * @param signatureHeader X-Webhook-Signature header value
  */
 export function verifyWebhookSignature(
   rawBody: string,
@@ -86,7 +86,7 @@ export function verifyWebhookSignature(
     return { valid: false, reason: 'malformed_signature_header' };
   }
 
-  // 防重放：timestamp 為毫秒
+  // Replay check: timestamp is milliseconds
   if (Math.abs(Date.now() - parsed.timestamp) > REPLAY_TOLERANCE_MS) {
     return { valid: false, reason: 'timestamp_out_of_tolerance' };
   }
@@ -108,7 +108,7 @@ export function verifyWebhookSignature(
   }
 }
 
-// ── 事件處理 ──────────────────────────────────────────────────────────
+// ── Event handling ──────────────────────────────────────────────────
 
 export interface BridgeWebhookEvent {
   api_version?: string;

@@ -1,16 +1,17 @@
 /**
  * Payload Key Service
  *
- * 封裝「為一輪同步建立一把 SEK，wrap 後寫入 EncryptedPayloadKey」的標準流程。
+ * Standard flow: create a SEK for one sync round, wrap it, and persist
+ * EncryptedPayloadKey.
  *
- * 典型用法（PR 2 之後）：
+ * Typical usage (after PR 2):
  *
  *   const { sek, payloadKeyId } = await PayloadKeyService.createForUser(
  *     userId,
  *     `plaid_tx:${plaidItemId}`,
  *   );
  *   try {
- *     // 用 sek 加密所有 row，把 payloadCiphertext + payloadKeyId 寫入業務表
+ *     // Encrypt rows with sek; write payloadCiphertext + payloadKeyId
  *   } finally {
  *     zeroize(sek);
  *   }
@@ -41,13 +42,13 @@ export class KeyPairNotConfiguredError extends Error {
 }
 
 export interface PayloadKeyHandle {
-  /** 32-byte session encryption key — caller 必須在用完後 zeroize */
+  /** 32-byte session encryption key — caller must zeroize after use */
   sek: Uint8Array;
-  /** EncryptedPayloadKey.id，寫入業務 row 的 payloadKeyId 用 */
+  /** EncryptedPayloadKey.id for business-row payloadKeyId */
   payloadKeyId: string;
-  /** 該 payload key 的 scope（例如 "plaid_tx:item-123"），方便 log */
+  /** Payload key scope (e.g. "plaid_tx:item-123") for logging */
   scope: string;
-  /** 演算法字串，會與 EncryptedPayloadKey.algorithm 一致 */
+  /** Algorithm string; matches EncryptedPayloadKey.algorithm */
   algorithm: string;
 }
 
@@ -55,11 +56,10 @@ const ALGORITHM = 'x25519-sealedbox+aes-256-gcm';
 
 export class PayloadKeyService {
   /**
-   * 為指定 user / scope 建立一把新的 SEK，
-   * 用該 user 的 publicKey 包裝後寫入 EncryptedPayloadKey 表，
-   * 回傳 SEK 和對應的 payloadKeyId。
+   * Create a new SEK for the given user/scope, wrap with the user's publicKey,
+   * persist EncryptedPayloadKey, and return the SEK plus payloadKeyId.
    *
-   * 流程結束後 caller 必須 `zeroize(handle.sek)`。
+   * Caller must `zeroize(handle.sek)` when finished.
    *
    * Pass `db` to participate in an outer transaction so the
    * `EncryptedPayloadKey` row is rolled back together with the business
@@ -85,7 +85,7 @@ export class PayloadKeyService {
     try {
       wrappedSek = await sealForPublicKey(sek, user.publicKey);
     } catch (error) {
-      // sealing 失敗就直接清掉 SEK 再拋；不留下未 wrap 的 SEK
+      // On seal failure, zeroize SEK before rethrowing — never leave an unwrapped SEK
       zeroize(sek);
       throw error;
     }
@@ -116,12 +116,12 @@ export class PayloadKeyService {
   }
 
   /**
-   * 一次性建立多個 scope 的 payload key（同 user）。
+   * Create payload keys for multiple scopes (same user) in one call.
    *
-   * 例如 Plaid sync 需要 `plaid_tx:itemId`、`plaid_acct:itemId`、`plaid_inv:itemId`
-   * 三把獨立 SEK 時可以一次拿。
+   * E.g. Plaid sync may need independent SEKs for `plaid_tx:itemId`,
+   * `plaid_acct:itemId`, and `plaid_inv:itemId`.
    *
-   * 回傳的 map key 對應傳入的 scope 字串。
+   * Returned map keys match the input scope strings.
    */
   static async createForUserScopes(
     userId: string,
@@ -139,31 +139,32 @@ export class PayloadKeyService {
       }
       return result;
     } catch (error) {
-      // 任何一個 scope 失敗 → 全部 SEK 清掉並拋
+      // Any scope failure → zeroize all SEKs and rethrow
       created.forEach((h) => zeroize(h.sek));
       throw error;
     }
   }
 
   /**
-   * 清掉「不再被任何加密快取 row 引用」的 EncryptedPayloadKey（孤兒 key）。
+   * Delete EncryptedPayloadKey rows no longer referenced by any encrypted
+   * cache row (orphan keys).
    *
-   * 背景：每輪 sync 都會建新的 SEK / EncryptedPayloadKey。snapshot 模式
-   * （account / investment / debank：delete + insert）的舊 key 在 cache row
-   * 被換掉後立刻變孤兒；長期使用者的 EncryptedPayloadKey 表會無限成長。
+   * Context: each sync creates a new SEK / EncryptedPayloadKey. Snapshot-mode
+   * writers (account / investment / debank: delete + insert) orphan the old
+   * key as soon as cache rows are replaced; without GC the table grows forever.
    *
-   * 安全性：
-   *   - 參照集涵蓋所有 9 張會寫 payloadKeyId 的表，referenced 的 key 一律保留，
-   *     避免誤刪仍在用的 key（誤刪會讓對應 row 永久無法解密）。
-   *   - 只刪 createdAt 早於 cutoff（預設 60s）的 key：任何「先建 key、後在另一個
-   *     transaction 寫 cache row」的 writer 都會在數秒內完成，cutoff 確保
-   *     in-flight 的新 key 不會被當成孤兒刪掉（防 race）。
+   * Safety:
+   *   - Reference set covers all 9 tables that write payloadKeyId; referenced
+   *     keys are always kept (mistaken delete makes rows permanently undecryptable).
+   *   - Only deletes keys with createdAt older than cutoff (default 60s): writers
+   *     that create a key then write cache rows in another transaction finish in
+   *     seconds; the cutoff avoids racing in-flight keys.
    *
-   * Best-effort：呼叫端應 try/catch 包起來，GC 失敗不影響主 sync 流程。
+   * Best-effort: callers should try/catch; GC failure must not fail the main sync.
    */
   static async deleteOrphanedKeys(userId: string, olderThanMs = 60_000): Promise<number> {
-    // payloadKeyId 在大多數 cache 表是 nullable，只收非 null 的；
-    // AssetSnapshot.payloadKeyId 是 required，故用 { userId } 即可。
+    // Most cache tables have nullable payloadKeyId — only collect non-null;
+    // AssetSnapshot.payloadKeyId is required, so `{ userId }` is enough.
     const nullableArgs = (): {
       where: { userId: string; payloadKeyId: { not: null } };
       select: { payloadKeyId: true };
@@ -213,8 +214,8 @@ export class PayloadKeyService {
   }
 
   /**
-   * 由 payloadKeyId 反查 wrappedSek + scope + algorithm，
-   * 給前端讀取流程使用（前端拿到 wrappedSek 後用 privateKey 解開 SEK）。
+   * Look up wrappedSek + scope + algorithm by payloadKeyId for client reads
+   * (client unwraps SEK with privateKey).
    */
   static async getForRead(
     userId: string,

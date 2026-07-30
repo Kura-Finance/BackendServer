@@ -1,3 +1,5 @@
+/** Exchange HTTP controllers — connect, balances (E2EE), accounts, disconnect. */
+
 import { Response } from 'express';
 import { AuthRequest } from '../../auth/middleware/auth';
 import { ExchangeService } from '../services/exchangeService';
@@ -11,8 +13,7 @@ import {
 } from '../../shared/lib/cacheResponseUtil';
 
 /**
- * 連結交易所帳戶
- * 受用戶等級限制：每天最多連接次數
+ * Link an exchange account (subject to daily connect rate limits by tier).
  */
 export const connectExchange = async (req: AuthRequest, res: Response) => {
   try {
@@ -21,7 +22,7 @@ export const connectExchange = async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    // 檢查 API 操作限制
+    // Check API operation limit
     const limitCheck = await checkApiLimit(req.userId, 'exchange_connect');
     if (!limitCheck.canOperate) {
       sendError(res, 429, {
@@ -45,7 +46,7 @@ export const connectExchange = async (req: AuthRequest, res: Response) => {
       passphrase
     );
 
-    // 記錄 API 操作
+    // Record API operation
     await recordApiOperation(req.userId, 'exchange_connect');
 
     sendSuccess(res, {
@@ -72,13 +73,13 @@ export const connectExchange = async (req: AuthRequest, res: Response) => {
 };
 
 /**
- * 取得交易所餘額和資產（Phase 3 Zero-Access E2EE only）。
+ * Get exchange balances + assets (Phase 3 Zero-Access E2EE only).
  *
- * 路由：GET /api/exchange/:exchangeAccountId/balances
+ * Route: GET /api/exchange/:exchangeAccountId/balances
  *
- * - 觸發 CCXT 同步 → 加密寫快取 → 回傳加密形式 snapshot
- * - 達到查詢上限時，回退讀加密快取（不再呼叫 CCXT）
- * - 後端不解密任何敏感欄位；前端用 privateKey unwrap payloadKeys 後解 row
+ * - Triggers CCXT sync → encrypt cache → return encrypted snapshot
+ * - On query limit: fall back to encrypted cache (no CCXT)
+ * - Backend never decrypts; client unwraps payloadKeys then decrypts rows
  */
 export const getExchangeBalances = async (req: AuthRequest, res: Response) => {
   try {
@@ -163,7 +164,7 @@ export const getExchangeBalances = async (req: AuthRequest, res: Response) => {
 };
 
 /**
- * 獲取用戶所有交易所帳戶
+ * List the user's linked exchange accounts.
  */
 export const getUserExchangeAccounts = async (req: AuthRequest, res: Response) => {
   try {
@@ -196,7 +197,7 @@ export const getUserExchangeAccounts = async (req: AuthRequest, res: Response) =
 };
 
 /**
- * 斷開交易所連接
+ * Disconnect an exchange account.
  */
 export const disconnectExchange = async (req: AuthRequest, res: Response) => {
   try {
@@ -223,7 +224,7 @@ export const disconnectExchange = async (req: AuthRequest, res: Response) => {
 };
 
 /**
- * 獲取支持的交易所列表
+ * List supported exchanges (static catalog).
  */
 export const getSupportedExchanges = async (req: AuthRequest, res: Response) => {
   try {

@@ -1,12 +1,12 @@
 /**
- * Privy 認證控制器
+ * Privy auth controller.
  *
  * POST /api/auth/login
  *   Body: { accessToken, identityToken?, referralCode? }
- *   - 驗證 Privy access token → DID（登入權威證明）
- *   - 解析 email + embedded wallet（identity token 或 Privy Server API fallback）
- *   - 無 Privy email 時以內部 UUID placeholder 寫入 DB
- *   - upsert 內部 user，核發自有 JWT（web 用 cookie，mobile 用 Bearer）
+ *   - Verify Privy access token → DID (authoritative login proof)
+ *   - Resolve email + embedded wallet (identity token or Privy Server API fallback)
+ *   - If no Privy email, store an internal UUID placeholder in DB
+ *   - Upsert internal user; issue our JWT (web cookie, mobile Bearer)
  */
 
 import { Request, Response } from 'express';
@@ -19,13 +19,13 @@ import {
 import { logError, logDebug, appLogger } from '../../logger';
 import { sendError, sendSuccess } from '../../shared/lib/apiResponse';
 
-// Cookie 設定（與既有認證保持一致）
+// Cookie options (aligned with existing auth)
 function setAuthCookie(res: Response, token: string): void {
   res.cookie('authToken', token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 天
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
   });
 }
 
@@ -39,7 +39,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
     const clientType = ((req.headers['x-client-type'] as string) || 'web') as 'web' | 'mobile';
 
-    // 1. 驗證 access token → DID（登入權威證明）
+    // 1. Verify access token → DID (authoritative login proof)
     let did: string;
     logDebug('[Login] Received login request', {
       clientType,
@@ -82,7 +82,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // 2. 解析 email + wallet（identity token → Privy API fallback）
+    // 2. Resolve email + wallet (identity token → Privy API fallback)
     let identity;
     try {
       identity = await resolvePrivyIdentity(did, identityToken);
@@ -97,7 +97,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       throw error;
     }
 
-    // 3. upsert 內部 user + 核發自有 JWT
+    // 3. Upsert internal user + issue our JWT
     const result = await AuthService.loginWithPrivy(identity, referralCode);
 
     if (clientType === 'web') {

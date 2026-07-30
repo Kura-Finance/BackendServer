@@ -1,17 +1,14 @@
 /**
- * Plaid Payload Builder
+ * Plaid payload builder — split plaintext Plaid rows into metadata + sensitive.
  *
- * 把「Plaid 從 API 拉到的明文 row」拆成兩部分：
- *   1. metadata — 後端需要做 sync / dedup / 排程 / 篩選的欄位（明文留 DB）
- *   2. sensitive — 純粹給使用者看的金融機密（用 SEK 加密成 payloadCiphertext）
+ * 1. metadata — fields needed for sync / dedup / scheduling / filtering (plaintext in DB)
+ * 2. sensitive — user-visible financial secrets (AES-GCM ciphertext via SEK)
  *
- * 本檔案只負責「拆與序列化」，不負責「加密」與「寫 DB」，
- * 加密由 caller 用 `encryptPayload(sek, sensitive)` 完成。
+ * This module only splits and serializes; callers encrypt with
+ * `encryptPayload(sek, sensitive)` and write to DB.
  *
- * 之所以拆檔：
- *   - 同樣的 metadata 拆分邏輯在 PlaidCacheService（全量同步）與
- *     PlaidWebhookSyncService（增量同步）都會用到。
- *   - 把欄位清單集中管理避免漏欄位（例如新增 merchantSubCategory 時只改一處）。
+ * Shared by PlaidCacheService (full sync) and PlaidWebhookSyncService (incremental)
+ * so field lists stay in one place.
  */
 
 import {
@@ -27,8 +24,8 @@ import {
 
 export interface AccountMetadata {
   accountId: string;
-  plaidItemId: string | null;  // 目前 aggregation 流程沒帶入，先 null；之後可追溯
-  type: string;     // checking | saving | credit | investment（AssetService 算負債用）
+  plaidItemId: string | null; // null until aggregation tags the item
+  type: string; // checking | saving | credit | investment (liability math in AssetService)
   bucket: 'banking' | 'investment';
 }
 
@@ -80,9 +77,9 @@ export function splitAccount(
 export interface TransactionMetadata {
   accountId: string;
   transactionId: string;
-  plaidItemId: string | null;  // 目前 aggregation 流程沒帶入，先 null
-  date: string;       // YYYY-MM-DD
-  month: string;      // YYYY-MM
+  plaidItemId: string | null; // null until aggregation tags the item
+  date: string; // YYYY-MM-DD
+  month: string; // YYYY-MM
   isPending: boolean;
   isRecurring: boolean;
   isSubscription: boolean;
@@ -188,7 +185,7 @@ export interface InvestmentMetadata {
   accountId: string;
   investmentId: string;
   plaidItemId: string | null;
-  type: string;       // stock | crypto | etf | other（分類統計用）
+  type: string; // stock | crypto | etf | other (for classification stats)
 }
 
 export interface InvestmentSensitive {

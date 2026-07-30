@@ -1,3 +1,5 @@
+/** Stripe HTTP controllers for checkout, portal, billing status, and webhooks. */
+
 import { Request, Response } from 'express';
 import { AuthRequest } from '../../auth/middleware/auth';
 import { logError } from '../../logger';
@@ -13,6 +15,7 @@ function getAuthenticatedUserId(req: AuthRequest, res: Response): string | null 
   return req.userId;
 }
 
+/** Create a Stripe Checkout Session for a subscription price. */
 export const createCheckoutSession = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = getAuthenticatedUserId(req, res);
@@ -33,6 +36,7 @@ export const createCheckoutSession = async (req: AuthRequest, res: Response): Pr
   }
 };
 
+/** Create a Stripe Customer Portal session. */
 export const createBillingPortalSession = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = getAuthenticatedUserId(req, res);
@@ -48,6 +52,7 @@ export const createBillingPortalSession = async (req: AuthRequest, res: Response
   }
 };
 
+/** Return the user's current billing / subscription status. */
 export const getBillingStatus = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = getAuthenticatedUserId(req, res);
@@ -62,6 +67,7 @@ export const getBillingStatus = async (req: AuthRequest, res: Response): Promise
   }
 };
 
+/** Verify and process a Stripe webhook event. */
 export const handleStripeWebhook = async (req: Request, res: Response): Promise<void> => {
   const signature = req.headers['stripe-signature'];
 

@@ -1,3 +1,5 @@
+/** Stripe billing domain — checkout, portal, subscriptions, webhooks. */
+
 export { default as stripeRouter } from './router';
 export { StripeService } from './services/stripeService';
 export {

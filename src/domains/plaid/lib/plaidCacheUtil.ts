@@ -1,3 +1,6 @@
+/**
+ * Plaid cache utilities — TTL checks, clear, upsert encrypted rows, stats.
+ */
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../shared/lib/prisma';
 import { logDebug } from '../../logger';
@@ -11,14 +14,14 @@ import { logDebug } from '../../logger';
 export type CacheUtilDb = Prisma.TransactionClient | typeof prisma;
 
 /**
- * 是缓存已过期，需要更新
- * @param lastSyncedAt 上次同步时间（可以为 null）
- * @param cacheTtlSeconds 缓存 TTL（秒）
- * @returns true 表示缓存已过期，需要刷新
+ * Whether the cache is expired and needs a refresh.
+ * @param lastSyncedAt last sync time (may be null)
+ * @param cacheTtlSeconds cache TTL in seconds
+ * @returns true if expired / missing and should refresh
  */
 export function isCacheExpired(lastSyncedAt: Date | null, cacheTtlSeconds: number): boolean {
   if (!lastSyncedAt) {
-    return true; // 没有之前的缓存，视为已过期
+    return true; // No prior cache — treat as expired
   }
 
   const now = new Date();
@@ -27,9 +30,7 @@ export function isCacheExpired(lastSyncedAt: Date | null, cacheTtlSeconds: numbe
   return elapsedSeconds > cacheTtlSeconds;
 }
 
-/**
- * 获取或创建用户的同步日志记录
- */
+/** Get or create the user's Plaid sync log row. */
 export async function getOrCreateSyncLog(userId: string, db: CacheUtilDb = prisma) {
   const dbAny = db as any;
 
@@ -46,33 +47,25 @@ export async function getOrCreateSyncLog(userId: string, db: CacheUtilDb = prism
   });
 }
 
-/**
- * 检查账户缓存是否需要刷新
- */
+/** Whether accounts cache needs a refresh. */
 export async function shouldRefreshAccountsCache(userId: string): Promise<boolean> {
   const syncLog = await getOrCreateSyncLog(userId);
   return isCacheExpired(syncLog.accountsSyncedAt, syncLog.accountsCacheTtl);
 }
 
-/**
- * 检查交易缓存是否需要刷新
- */
+/** Whether transactions cache needs a refresh. */
 export async function shouldRefreshTransactionsCache(userId: string): Promise<boolean> {
   const syncLog = await getOrCreateSyncLog(userId);
   return isCacheExpired(syncLog.transactionsSyncedAt, syncLog.transactionsCacheTtl);
 }
 
-/**
- * 检查投资缓存是否需要刷新
- */
+/** Whether investments cache needs a refresh. */
 export async function shouldRefreshInvestmentsCache(userId: string): Promise<boolean> {
   const syncLog = await getOrCreateSyncLog(userId);
   return isCacheExpired(syncLog.investmentsSyncedAt, syncLog.investmentsCacheTtl);
 }
 
-/**
- * 清空用户的所有 Plaid 缓存 (用于手动刷新)
- */
+/** Clear all Plaid caches for the user (manual refresh). */
 export async function clearAllPlaidCache(userId: string): Promise<void> {
   const prismaAny = prisma as any;
 
@@ -83,7 +76,7 @@ export async function clearAllPlaidCache(userId: string): Promise<void> {
     prismaAny.plaidInvestmentCache.deleteMany({ where: { userId } }),
   ]);
 
-  // 重置同步时间
+  // Reset sync timestamps
   await prismaAny.plaidSyncLog.update({
     where: { userId },
     data: {
@@ -100,9 +93,7 @@ export async function clearAllPlaidCache(userId: string): Promise<void> {
   logDebug('Cleared all Plaid cache', { userId });
 }
 
-/**
- * 清空用户的账户缓存
- */
+/** Clear accounts cache for the user. */
 export async function clearAccountsCache(userId: string): Promise<void> {
   const prismaAny = prisma as any;
 
@@ -116,9 +107,7 @@ export async function clearAccountsCache(userId: string): Promise<void> {
   logDebug('Cleared accounts cache', { userId });
 }
 
-/**
- * 清空用户的交易缓存
- */
+/** Clear transactions cache for the user. */
 export async function clearTransactionsCache(userId: string): Promise<void> {
   const prismaAny = prisma as any;
 
@@ -132,9 +121,7 @@ export async function clearTransactionsCache(userId: string): Promise<void> {
   logDebug('Cleared transactions cache', { userId });
 }
 
-/**
- * 清空用户的投资缓存
- */
+/** Clear investments cache for the user. */
 export async function clearInvestmentsCache(userId: string): Promise<void> {
   const prismaAny = prisma as any;
 
@@ -151,9 +138,7 @@ export async function clearInvestmentsCache(userId: string): Promise<void> {
   logDebug('Cleared investments cache', { userId });
 }
 
-/**
- * 更新同步时间戳
- */
+/** Update sync timestamps (and optional totals) for a cache type. */
 export async function updateSyncTimestamp(
   userId: string,
   type: 'accounts' | 'transactions' | 'investments',
@@ -193,12 +178,12 @@ export async function updateSyncTimestamp(
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Phase 3 Zero-Access E2EE 寫入專用：每筆 row 只接 metadata + encrypted payload
+// Phase 3 Zero-Access E2EE writes: each row is metadata + encrypted payload
 // ────────────────────────────────────────────────────────────────────
 
 /**
- * 批量同步 Plaid 帳戶快取（snapshot 模式：先 delete 後 insert）。
- * Plaid accounts API 永遠回完整列表，本函式保持「整體替換」語意。
+ * Batch-sync account cache (snapshot mode: delete then insert).
+ * Plaid accounts API always returns the full list — keep replace-all semantics.
  */
 export async function upsertAccountsCache(
   userId: string,
@@ -231,12 +216,12 @@ export async function upsertAccountsCache(
 }
 
 /**
- * 批量同步 Plaid 交易快取（增量 upsert by transactionId）。
+ * Batch-sync transaction cache (incremental upsert by transactionId).
  *
- * 與 PR 5 之前的「by-month delete + insert」不同：
- *   - Plaid transactionsSync 為增量 API，只回 added / modified / removed
- *   - removedTransactionIds 由 caller 處理（在 fetchPlaintextFromPlaid 中直接 delete）
- *   - 既有未變更的 row 必須保留在 DB（其加密 payloadCiphertext 仍由舊 SEK 保護）
+ * Unlike pre-PR-5 by-month delete+insert:
+ *   - transactionsSync is incremental (added / modified / removed only)
+ *   - removedTransactionIds are deleted by the caller (in fetchPlaintextFromPlaid)
+ *   - unchanged rows must stay (ciphertext still protected by the old SEK)
  */
 export async function upsertTransactionsCache(
   userId: string,
@@ -304,9 +289,7 @@ export async function upsertTransactionsCache(
   return transactions.length;
 }
 
-/**
- * 批量同步 Plaid 投資帳戶快取（snapshot 模式：先 delete 後 insert）。
- */
+/** Batch-sync investment account cache (snapshot: delete then insert). */
 export async function upsertInvestmentAccountsCache(
   userId: string,
   investmentAccounts: Array<{
@@ -335,9 +318,7 @@ export async function upsertInvestmentAccountsCache(
   return investmentAccounts.length;
 }
 
-/**
- * 批量同步 Plaid 投資持倉快取（snapshot 模式：先 delete 後 insert）。
- */
+/** Batch-sync investment holdings cache (snapshot: delete then insert). */
 export async function upsertInvestmentsCache(
   userId: string,
   investments: Array<{
@@ -368,9 +349,7 @@ export async function upsertInvestmentsCache(
   return investments.length;
 }
 
-/**
- * 获取用户的缓存统计信息
- */
+/** Cache row counts and sync timestamps for a user. */
 export async function getCacheStats(userId: string) {
   const prismaAny = prisma as any;
   const syncLog = await getOrCreateSyncLog(userId);

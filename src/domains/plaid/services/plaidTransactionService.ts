@@ -1,6 +1,5 @@
 /**
- * Plaid 交易服務
- * 處理交易資料讀取、分類與補強
+ * Plaid transaction service — sync fetch, classify, and enrich merchants.
  */
 
 import { logDebug } from '../../logger';
@@ -18,7 +17,7 @@ export class PlaidTransactionService {
       return 'Unknown Merchant';
     }
 
-    // 部分機構會把多個候選商戶名用分號串起來，優先取第一段可用值
+    // Some institutions join candidate names with ';'; prefer the first usable segment
     const firstSegment = raw
       .split(';')
       .map((segment) => segment.trim())
@@ -31,7 +30,7 @@ export class PlaidTransactionService {
       .replace(/\s+/g, ' ')
       .trim();
 
-    // 若第一段是敘述句，改抓 "Merchant name: xxx"
+    // If the first segment is a narrative, pull "Merchant name: xxx"
     if (!normalized || /^from\s+/i.test(normalized)) {
       const embeddedMerchant = raw.match(/merchant\s*name:\s*([^;]+)/i)?.[1]?.trim();
       if (embeddedMerchant) {
@@ -162,9 +161,7 @@ export class PlaidTransactionService {
     };
   }
 
-  /**
-   * 格式化單筆交易
-   */
+  /** Format a single Plaid transaction into app payload shape. */
   private static formatTransaction(
     tx: any,
     accountsMetadata: Map<string, { name: string; type: string; subtype?: string | null }>,
@@ -173,7 +170,6 @@ export class PlaidTransactionService {
     const primaryCategory = tx.personal_finance_category?.primary || tx.category?.[0] || 'Uncategorized';
     const normalizedMerchant = this.normalizeMerchantName(tx.merchant_name || tx.name);
 
-    // 識別定期交易和訂閱
     const { isSubscription, isRecurring } = this.identifyRecurringTransactions(primaryCategory, tx.merchant_name);
 
     const txPayload: any = {
@@ -187,12 +183,12 @@ export class PlaidTransactionService {
       category: primaryCategory,
       type: mapPlaidTransactionType(tx.amount, primaryCategory),
 
-      // ===== 進階交易信息 =====
+      // ===== Enriched fields =====
       personalFinanceCategory: primaryCategory,
       isRecurring: isRecurring,
     };
 
-    // 只在有值時添加可選欄位
+    // Optional fields only when present
     if (isRecurring) {
       txPayload.recurringFrequency = 'MONTHLY';
     }
@@ -204,7 +200,7 @@ export class PlaidTransactionService {
       txPayload.enrichedMerchantName = normalizedMerchant;
     }
 
-    // merchantLogo 完全以 Plaid 回傳為準，不再 fallback logo.dev
+    // merchantLogo comes only from Plaid (no logo.dev fallback)
     if (plaidMerchantLogo) {
       txPayload.merchantLogo = plaidMerchantLogo;
       txPayload.plaidMerchantLogo = plaidMerchantLogo;
@@ -216,9 +212,7 @@ export class PlaidTransactionService {
     return txPayload;
   }
 
-  /**
-   * 識別定期交易和訂閱
-   */
+  /** Detect recurring / subscription transactions from category and merchant. */
   private static identifyRecurringTransactions(
     primaryCategory: string,
     merchantName?: string | null,
@@ -242,9 +236,6 @@ export class PlaidTransactionService {
     return { isSubscription: isSubscriptionFlag, isRecurring: isRecurringFlag };
   }
 
-  /**
-   * 為緩存格式化交易
-   */
-  // formatTransactionsForCache 已於 PR 5 移除——Phase 3 zero-access 寫入
-  // 直接走 `plaidPayloadBuilder.splitTransaction()` + SEK 加密路徑，無需 legacy 中介格式。
+  // formatTransactionsForCache removed in PR 5 — Phase 3 zero-access writes
+  // go through `plaidPayloadBuilder.splitTransaction()` + SEK encryption.
 }

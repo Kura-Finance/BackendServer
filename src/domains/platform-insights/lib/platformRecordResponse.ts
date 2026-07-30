@@ -1,6 +1,11 @@
+/**
+ * Map Prisma PlatformRecord rows to API response DTOs.
+ */
+
 import type { PlatformRecord } from '@prisma/client';
 import type { PlatformRecordResponse } from '../models/types';
 
+/** Serialize a PlatformRecord for HTTP responses. */
 export function toPlatformRecordResponse(record: PlatformRecord): PlatformRecordResponse {
   return {
     id: record.id,

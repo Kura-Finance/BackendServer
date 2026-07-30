@@ -14,9 +14,9 @@ import {
 } from './schemas/platformInsightsSchemas';
 
 /**
- * 平台投資人報表
- * 基礎路徑：/api/platform-insights
- * GET 公開；POST /backfill 依 DB 時間戳懶更新（?force=true 強制）
+ * Investor platform insights.
+ * Base path: /api/platform-insights
+ * GETs are public; POST /backfill lazy-updates from DB timestamps (?force=true to bypass).
  */
 const router = Router();
 

@@ -1,6 +1,8 @@
 /**
- * Plaid 服務 - 外觀層
- * 負責協調專職 Plaid 服務並維持向後相容
+ * Plaid service facade — coordinates auth, accounts, cache, and webhook sync.
+ * Phase 3 Zero-Access E2EE only: public APIs return encrypted snapshots;
+ * backend never decrypts sensitive payloads. Client unwraps payloadKeys with
+ * X25519 privateKey, then decrypts each row ciphertext.
  */
 
 import { PlaidAuthService } from './plaidAuthService';
@@ -9,14 +11,8 @@ import { PlaidCacheService, EncryptedFinanceSnapshot } from './plaidCacheService
 import { PlaidWebhookSyncService } from './plaidWebhookSyncService';
 import { DemoService } from '../../demo/demoService';
 
-/**
- * 統一的 Plaid 服務門面（Phase 3 Zero-Access E2EE only）。
- *
- * 所有對外 API 都回傳「加密形式」snapshot：後端永不解密 sensitive payload，
- * 前端用 X25519 privateKey unwrap payloadKeys 後解每個 row 的 ciphertext。
- */
 export class PlaidService {
-  // ===== 驗證 =====
+  // ===== Auth =====
   static async createLinkToken(userId: string): Promise<string> {
     return PlaidAuthService.createLinkToken(userId);
   }
@@ -25,7 +21,7 @@ export class PlaidService {
     return PlaidAuthService.exchangePublicToken(userId, publicToken, institutionName);
   }
 
-  // ===== 帳戶管理 =====
+  // ===== Account management =====
   static async disconnectItemByAccountId(
     userId: string,
     accountId: string
@@ -33,9 +29,10 @@ export class PlaidService {
     return PlaidAccountService.disconnectItemByAccountId(userId, accountId);
   }
 
-  // ===== 快取與同步（全部加密形式）=====
+  // ===== Cache & sync (all encrypted) =====
   /**
-   * 優化版：快取未過期 → 直接讀加密 row；過期或手動刷新 → 從 Plaid API 抓 → 加密寫入 → 回讀加密 row。
+   * Optimized read: fresh cache → encrypted rows; stale or manual refresh →
+   * fetch from Plaid → encrypt → re-read encrypted rows.
    */
   static async getFinanceSnapshotOptimized(
     userId: string,
@@ -48,11 +45,13 @@ export class PlaidService {
   }
 
   /**
-   * 加密財務快照讀取：快取未過期直接回傳；過期則從 Plaid 刷新並寫入 AssetSnapshot 歷史。
+   * Encrypted finance snapshot: serve cache when fresh; otherwise refresh from
+   * Plaid and write AssetSnapshot history.
    *
-   * Mobile 只打 `/finance-snapshot/encrypted`。若此路徑永遠只讀 cache、從不觸發
-   * `saveFinanceSnapshotToCache`，Broker 頁的資產歷史會一直空白，顯示
-   * 「No performance data yet」（webhook 更新 holdings 也不會寫 AssetSnapshot）。
+   * Mobile only hits `/finance-snapshot/encrypted`. If this path only read
+   * cache and never called `saveFinanceSnapshotToCache`, Broker asset history
+   * would stay empty ("No performance data yet") — webhooks that update
+   * holdings also do not write AssetSnapshot.
    */
   static async getEncryptedFinanceSnapshot(userId: string): Promise<EncryptedFinanceSnapshot> {
     if (await DemoService.isDemoUser(userId)) {
@@ -62,7 +61,7 @@ export class PlaidService {
     return PlaidCacheService.getFinanceSnapshotOptimized(userId, false);
   }
 
-  // ===== Webhook 同步 =====
+  // ===== Webhook sync =====
   static async syncTransactionsFromWebhook(userId: string, itemId: string): Promise<void> {
     return PlaidWebhookSyncService.syncTransactionsFromWebhook(userId, itemId);
   }

@@ -1,5 +1,5 @@
 /**
- * Auth 領域模型型別
+ * Auth domain model types.
  */
 
 export interface PlaidCacheInfo {
@@ -20,12 +20,12 @@ export interface UserProfile {
   emailIsPlaceholder: boolean;
   walletAddress?: string | null;
   displayName: string;
-  /** true 當 displayName 來自用戶主動設定的 name 欄位（非 fallback） */
+  /** true when displayName comes from the user-set name field (not a fallback) */
   hasName: boolean;
   avatarUrl: string;
   membershipLabel: string;
   tier: string;
-  /** Pro / Ultimate 為 true；Web Basic 用戶登入後應導向付費頁 */
+  /** true for Pro / Ultimate; Web Basic users should be sent to the paywall after login */
   webAccessAllowed: boolean;
   referCode?: string;
   referredByCode?: string | null;
@@ -37,5 +37,5 @@ export interface UserProfile {
 export interface UpdateProfilePayload {
   displayName?: string;
   avatarUrl?: string;
-  avatarBase64?: string;  // Base64 編碼的圖片數據 (data:image/...;base64,...)
+  avatarBase64?: string;  // Base64 image data (data:image/...;base64,...)
 }

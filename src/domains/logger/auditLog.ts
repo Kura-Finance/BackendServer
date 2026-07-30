@@ -15,20 +15,20 @@
 export type AuditLevel = 'INFO' | 'WARNING' | 'ERROR';
 
 export type AuditAction =
-  // 加密操作
+  // Encryption
   | 'ENCRYPT_EXCHANGE_CREDENTIAL'
   | 'DECRYPT_EXCHANGE_CREDENTIAL'
   | 'ENCRYPT_PLAID_TOKEN'
   | 'DECRYPT_PLAID_TOKEN'
 
-  // 敏感操作 - 交易所
+  // Sensitive — exchange
   | 'CONNECT_EXCHANGE'
   | 'DISCONNECT_EXCHANGE'
   | 'FETCH_EXCHANGE_BALANCE'
   | 'FETCH_EXCHANGE_ASSETS'
   | 'FETCH_EXCHANGE_BALANCES_AND_ASSETS'
 
-  // 敏感操作 - Plaid
+  // Sensitive — Plaid
   | 'EXCHANGE_PLAID_TOKEN'
   | 'DISCONNECT_PLAID_ACCOUNT'
   | 'FETCH_FINANCE_SNAPSHOT'
@@ -36,7 +36,7 @@ export type AuditAction =
   | 'FETCH_PLAID_TRANSACTIONS'
   | 'FETCH_PLAID_INVESTMENTS'
 
-  // 敏感操作 - 认证
+  // Sensitive — auth
   | 'USER_LOGIN'
   | 'USER_LOGOUT'
   | 'USER_REGISTER'
@@ -45,13 +45,13 @@ export type AuditAction =
   | 'EMAIL_VERIFICATION_REQUESTED'
   | 'EMAIL_VERIFIED'
 
-  // 通知系统
+  // Notifications
   | 'NOTIFICATION_SENT'
   | 'NOTIFICATION_READ'
   | 'NOTIFICATION_DELETED'
   | 'NOTIFICATION_PREFERENCES_UPDATED'
 
-  // 密钥管理
+  // Key management
   | 'ENCRYPTION_KEY_ACCESS'
   | 'ENCRYPTION_KEY_ERROR';
 

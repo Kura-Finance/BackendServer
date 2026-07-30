@@ -1,5 +1,6 @@
-// 交易所領域模組
-// 加密貨幣交易所整合 (CCXT)
+/**
+ * Exchange domain — crypto exchange integration via CCXT.
+ */
 
 export { ExchangeService } from './services/exchangeService';
 export * as ExchangeController from './controllers/exchangeController';

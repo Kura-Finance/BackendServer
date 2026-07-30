@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 
 /**
- * 簡單的記憶體型速率限制（Rate Limiter）中間件
- * 使用 IP 位址進行限流，防止 API 被濫用或攻擊
+ * Simple in-memory IP rate limiter.
+ * Mitigates API abuse; not a substitute for edge/WAF limits.
  */
 
 interface RateLimitStore {
@@ -14,35 +14,33 @@ interface RateLimitStore {
 
 const store: RateLimitStore = {};
 
-// 預設配置
 export interface RateLimiterConfig {
-  windowMs?: number; // 時間窗口（毫秒）
-  maxRequests?: number; // 時間窗口內最大請求數
+  windowMs?: number; // Window length in ms
+  maxRequests?: number; // Max requests per window
 }
 
 /**
- * 創建速率限制中間件
- * @param config 配置選項
- * @returns Express 中間件函數
+ * Build a rate-limit middleware.
+ * @param config Optional window / max overrides
+ * @returns Express middleware
  */
 export function createRateLimiter(config: RateLimiterConfig = {}) {
-  const windowMs = config.windowMs || 15 * 60 * 1000; // 預設 15 分鐘
-  const maxRequests = config.maxRequests || 1000; // 預設 1000 次請求
+  const windowMs = config.windowMs || 15 * 60 * 1000; // default 15 minutes
+  const maxRequests = config.maxRequests || 1000; // default 1000 requests
 
   return (req: Request, res: Response, next: NextFunction) => {
-    // Bridge / Stripe / Plaid 等 server-to-server webhook 不限流。
-    // 否則同一出口 IP 重試佇列會打爆共享 429，導致事件卡住。
+    // Skip rate limits for Bridge / Stripe / Plaid server-to-server webhooks.
+    // Shared egress IPs would otherwise exhaust a shared 429 and stall events.
     const pathOnly = (req.originalUrl || req.url || '').split('?')[0] ?? '';
     if (pathOnly === '/webhook' || pathOnly.endsWith('/webhook')) {
       return next();
     }
 
-    // 取得客戶端 IP 位址
     const ip = req.ip || req.socket.remoteAddress || 'unknown';
 
     const now = Date.now();
 
-    // 初始化或重設此 IP 的存取紀錄
+    // Init or reset this IP's window
     if (!store[ip] || now > store[ip].resetTime) {
       store[ip] = {
         count: 1,
@@ -51,15 +49,12 @@ export function createRateLimiter(config: RateLimiterConfig = {}) {
       return next();
     }
 
-    // 增加計數
     store[ip].count++;
 
-    // 設定 RateLimit 相關標頭
     res.setHeader('RateLimit-Limit', maxRequests.toString());
     res.setHeader('RateLimit-Remaining', Math.max(0, (maxRequests - store[ip].count)).toString());
     res.setHeader('RateLimit-Reset', new Date(store[ip].resetTime).toISOString());
 
-    // 檢查是否超過限制
     if (store[ip].count > maxRequests) {
       return res.status(429).json({
         error: 'Too Many Requests',
@@ -72,37 +67,25 @@ export function createRateLimiter(config: RateLimiterConfig = {}) {
   };
 }
 
-/**
- * 默認的速率限制中間件
- * 15 分鐘內最多 1000 次（Cloud Run / NAT 下多用戶常共 IP）
- */
+/** Default limiter: 1000 req / 15 min (shared IPs common on Cloud Run / NAT). */
 export const rateLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000,
   maxRequests: 1000,
 });
 
-/**
- * 認證相關速率限制（登入等）
- * 15 分鐘內最多 200 次
- */
+/** Auth endpoints (login, etc.): 200 req / 15 min. */
 export const authRateLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000,
   maxRequests: 200,
 });
 
-/**
- * 嚴格的速率限制（例如 waitlist）
- * 5 分鐘內最多 100 次
- */
+/** Strict limiter (e.g. waitlist): 100 req / 5 min. */
 export const strictRateLimiter = createRateLimiter({
   windowMs: 5 * 60 * 1000,
   maxRequests: 100,
 });
 
-/**
- * 寬鬆的速率限制（健康檢查等）
- * 1 分鐘內最多 300 次
- */
+/** Lenient limiter (health checks, etc.): 300 req / 1 min. */
 export const lenientRateLimiter = createRateLimiter({
   windowMs: 1 * 60 * 1000,
   maxRequests: 300,

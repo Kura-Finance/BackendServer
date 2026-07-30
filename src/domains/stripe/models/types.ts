@@ -1,3 +1,5 @@
+/** Stripe billing public result types. */
+
 export type TierName = 'Basic' | 'Pro' | 'Ultimate';
 
 export type CheckoutSessionResult = {

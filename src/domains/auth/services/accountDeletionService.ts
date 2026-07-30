@@ -5,7 +5,7 @@ import { DinariService } from '../../dinari/services/dinariService';
 import { deletePrivyUser } from './privyService';
 
 /**
- * 帳號刪除前的外部服務清理（best-effort，失敗不阻擋 DB 刪除）。
+ * External cleanup before account deletion (best-effort; failures do not block DB delete).
  */
 export class AccountDeletionService {
   static async purgeExternalIntegrations(userId: string, privyUserId: string | null): Promise<void> {

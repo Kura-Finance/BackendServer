@@ -1,3 +1,7 @@
+/**
+ * Referral cashback: award pending credits, reverse, and withdraw.
+ */
+
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { prisma } from '../../shared/lib/prisma';
 import { EmailService } from '../../email';
@@ -28,7 +32,7 @@ export interface AwardReferralCashbackParams {
   referredUserId: string;
   source: string;
   eventType: string;
-  /** 冪等 key，建議 `referral:${platformRecordIdempotencyKey}` */
+  /** Idempotency key; prefer `referral:${platformRecordIdempotencyKey}` */
   idempotencyKey: string;
   grossAmount: number;
   platformFee?: number | null;
@@ -59,7 +63,7 @@ export class ReferralCashbackService {
   }
 
   /**
-   * Refer 返現基數：優先 platformFee；Stripe 訂閱可 fallback 至 gross。
+   * Referral cashback base: prefer platformFee; Stripe subscriptions may fall back to gross.
    */
   static resolveCashbackBase(
     source: string,
@@ -114,7 +118,7 @@ export class ReferralCashbackService {
     }
   }
 
-  /** PlatformRecord 寫入成功後，對 referrable 營收發放 pending 返現。 */
+  /** After PlatformRecord insert, grant pending cashback on referrable revenue. */
   static async awardFromPlatformRecord(input: {
     userId: string | null | undefined;
     inviterUserId: string | null;
@@ -188,7 +192,7 @@ export class ReferralCashbackService {
     }
   }
 
-  /** PlatformRecord 的 idempotencyKey（不含 referral: 前綴）→ 沖銷對應 ReferralCashback。 */
+  /** PlatformRecord idempotencyKey (no `referral:` prefix) → reverse matching ReferralCashback. */
   static async reverseByIdempotencyKey(
     platformIdempotencyKey: string,
     reason: string,
@@ -272,7 +276,7 @@ export class ReferralCashbackService {
   }
 
   /**
-   * 申請提領可用 cashback：原子扣減餘額、建立申請紀錄，並 email 通知 Support。
+   * Request withdrawal of available cashback: atomically debit balance, create request, email Support.
    */
   static async requestWithdrawal(
     params: RequestCashbackWithdrawalParams,

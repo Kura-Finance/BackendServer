@@ -1,3 +1,7 @@
+/**
+ * Waitlist persistence — join, status lookup, and counts (also notifies platform-insights).
+ */
+
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../shared/lib/prisma';
 import {
@@ -32,6 +36,7 @@ function resolveProduct(product?: string): string {
 }
 
 export class WaitlistService {
+  /** Create a waitlist entry (or return existing for the same email+product). */
   static async join(params: JoinWaitlistParams): Promise<JoinWaitlistResult> {
     const product = resolveProduct(params.product);
     const existing = await prisma.waitlistEntry.findUnique({
@@ -85,6 +90,7 @@ export class WaitlistService {
     };
   }
 
+  /** Look up whether an email has joined for a product. */
   static async getStatus(email: string, product?: string): Promise<WaitlistStatusResult> {
     const resolvedProduct = resolveProduct(product);
     const entry = await prisma.waitlistEntry.findUnique({
@@ -97,6 +103,7 @@ export class WaitlistService {
     };
   }
 
+  /** Count waitlist entries, optionally filtered by product. */
   static async getCount(product?: string): Promise<WaitlistCountResult> {
     const resolvedProduct = product ? resolveProduct(product) : null;
     const count = await prisma.waitlistEntry.count({

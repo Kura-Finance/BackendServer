@@ -1,3 +1,8 @@
+/**
+ * Bridge HTTP routes (mounted at /api/bridge).
+ * Auth required except webhook (signature-verified).
+ */
+
 import { Router, Request, Response, NextFunction } from 'express';
 import { requireAuth } from '../auth/middleware/auth';
 import { appLogger } from '../logger';
@@ -62,9 +67,9 @@ router.post(
 );
 router.get('/customer', requireAuth, wrapAsync(getCustomerStatus));
 
-// ── On-ramp（入金）：Virtual Accounts ────────────────────────────────
-// POST /onramp：取得 / 建立專屬法幣入金帳戶（持久、免 memo）
-// GET  /onramp：列出使用者的入金帳戶
+// ── On-ramp (fiat → crypto): Virtual Accounts ─────────────────────────
+// POST /onramp — get or create a persistent fiat deposit VA (no memo)
+// GET  /onramp — list the user's virtual accounts
 router.post(
   '/onramp',
   requireAuth,
@@ -85,7 +90,7 @@ router.get(
   wrapAsync(listDeposits),
 );
 
-// ── Off-ramp（出金）：Payout Liquidation Address（Base USDC → 法幣）────
+// ── Off-ramp: Payout Liquidation Address (Base USDC → fiat) ───────────
 router.get('/payout-options', requireAuth, wrapAsync(listPayoutOptions));
 router.post(
   '/payout-address',
@@ -108,7 +113,7 @@ router.get(
   wrapAsync(getTransfer),
 );
 
-// ── Crypto 入金：Liquidation Address（Tron USDT → Base USDC，永久地址）────
+// ── Crypto deposit: Liquidation Address (Tron USDT → Base USDC) ───────
 router.post(
   '/crypto-deposit-address',
   requireAuth,
@@ -117,7 +122,7 @@ router.post(
 );
 router.get('/crypto-deposit-address', requireAuth, wrapAsync(listCryptoDepositAddresses));
 
-// ── External Accounts（off-ramp 出金銀行）──────────────────────────
+// ── External Accounts (off-ramp bank accounts) ────────────────────────
 router.post(
   '/external-accounts',
   requireAuth,
@@ -132,7 +137,7 @@ router.delete(
   wrapAsync(deleteExternalAccount),
 );
 
-// ── Webhook（無需 auth，靠簽章驗證）─────────────────────────────────
+// ── Webhook (no auth; signature verification) ─────────────────────────
 router.post('/webhook', wrapAsync(handleBridgeWebhook));
 
 export default router;

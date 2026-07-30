@@ -1,3 +1,5 @@
+/** DeBank HTTP routes for protocols, tokens, and address unlink. */
+
 import { Router, Request, Response, NextFunction } from 'express';
 import { requireAuth } from '../auth/middleware/auth';
 import { appLogger } from '../logger';
@@ -12,7 +14,7 @@ import { getProtocolsQuerySchema, unlinkAddressParamsSchema } from './schemas/de
 const router = Router();
 
 /**
- * DeBank 路由錯誤處理中介層
+ * Async error wrapper for DeBank routes.
  */
 const wrapAsync = (fn: (req: any, res: Response, next?: NextFunction) => Promise<void>) => {
   return (req: Request, res: Response, next: NextFunction) => {
@@ -24,10 +26,8 @@ const wrapAsync = (fn: (req: any, res: Response, next?: NextFunction) => Promise
 };
 
 /**
- * 路由：GET /api/debank/protocols
- * 功能：取得指定地址的 DeBank 協議持倉資料
- * 驗證：需要登入
- * 查詢參數：address=0x...、refresh=true（可選，強制刷新）
+ * GET /api/debank/protocols — DeBank protocol positions for an address.
+ * Auth required. Query: address=0x..., refresh=true (optional force refresh).
  */
 router.get(
   '/protocols',
@@ -37,10 +37,8 @@ router.get(
 );
 
 /**
- * 路由：GET /api/debank/tokens
- * 功能：取得指定地址的 DeBank EVM Token 持倉資料
- * 驗證：需要登入
- * 查詢參數：address=0x...、refresh=true（可選，強制刷新）
+ * GET /api/debank/tokens — DeBank EVM token holdings for an address.
+ * Auth required. Query: address=0x..., refresh=true (optional force refresh).
  */
 router.get(
   '/tokens',
@@ -50,9 +48,8 @@ router.get(
 );
 
 /**
- * 路由：DELETE /api/debank/addresses/:address
- * 功能：解除指定地址的 DeBank 連結（清除該地址快取）
- * 驗證：需要登入
+ * DELETE /api/debank/addresses/:address — unlink address (clear its cache).
+ * Auth required.
  */
 router.delete(
   '/addresses/:address',

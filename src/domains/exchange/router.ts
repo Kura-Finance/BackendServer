@@ -1,3 +1,5 @@
+/** Exchange HTTP routes — supported catalog, connect, accounts, balances, disconnect. */
+
 import { Router, Request, Response } from 'express';
 import { requireAuth } from '../auth/middleware/auth';
 import * as ExchangeController from './controllers/exchangeController';
@@ -11,35 +13,35 @@ const router = Router();
 
 /**
  * GET /api/exchange/supported
- * 獲取支持的交易所列表（公開：純靜態清單，不含任何使用者資料）。
+ * Public static catalog of supported exchanges (no user data).
  *
- * 刻意註冊在 router.use(requireAuth) 之前 → 前端在登入流程未完成 / token 尚未
- * 附上時也能載入「支援交易所」清單（例如 ExchangeLinkModal 開啟當下）。
+ * Registered before requireAuth so the client can load the list during login
+ * (e.g. ExchangeLinkModal before a token is attached).
  */
 router.get('/supported', ExchangeController.getSupportedExchanges);
 
-// 以下所有交易所路由都需要驗證
+// All routes below require auth
 router.use(requireAuth);
 
 /**
  * POST /api/exchange/connect
- * 連結新的交易所帳戶
+ * Link a new exchange account.
  * Body: { exchange, apiKey, apiSecret, passphrase? }
  */
 router.post('/connect', validateRequest({ body: connectExchangeBodySchema }), ExchangeController.connectExchange);
 
 /**
  * GET /api/exchange/accounts
- * 獲取用戶所有交易所帳戶
+ * List the user's linked exchange accounts.
  */
 router.get('/accounts', ExchangeController.getUserExchangeAccounts);
 
 /**
  * GET /api/exchange/:exchangeAccountId/balances
- * 取得特定交易所帳戶的「加密形式」餘額 + 資產（Phase 3 Zero-Access E2EE only）。
- * - 觸發 CCXT 同步 → 加密寫快取 → 回讀加密 row
- * - 達到查詢上限時，回退讀本地加密快取
- * 返回: { account, payloadKeys[], balances[], assets[] }
+ * Encrypted balances + assets for one account (Phase 3 Zero-Access E2EE only).
+ * - Triggers CCXT sync → encrypt cache → reload encrypted rows
+ * - On query limit: fall back to local encrypted cache
+ * Returns: { account, payloadKeys[], balances[], assets[] }
  */
 router.get(
   '/:exchangeAccountId/balances',
@@ -49,7 +51,7 @@ router.get(
 
 /**
  * DELETE /api/exchange/:exchangeAccountId
- * 斷開交易所連接
+ * Disconnect an exchange account.
  */
 router.delete(
   '/:exchangeAccountId',

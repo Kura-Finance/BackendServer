@@ -1,3 +1,7 @@
+/**
+ * Zod schemas for platform-insights (and shared lazy-update) query params.
+ */
+
 import { z } from 'zod';
 
 export const lazyUpdateQuerySchema = z.object({

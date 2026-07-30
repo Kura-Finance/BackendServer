@@ -1,14 +1,13 @@
 /**
- * /api/treasuries
- *
+ * /api/treasuries — multi-treasury workspace routes.
  * Pro / Ultimate only (requirePaidTier).
  *
- * GET    /           → { treasuries[], activeTreasuryId }
- * PUT    /           → replace workspace (migration / bulk import)
- * POST   /           → create one
- * PUT    /active     → set activeTreasuryId
- * PATCH  /:id        → rename
- * DELETE /:id        → remove
+ * GET    /       → { treasuries[], activeTreasuryId }
+ * PUT    /       → replace workspace (migration / bulk import)
+ * POST   /       → create one
+ * PUT    /active → set activeTreasuryId
+ * PATCH  /:id    → rename
+ * DELETE /:id    → remove
  */
 import { Router } from 'express';
 import { requireAuth } from '../auth/middleware/auth';

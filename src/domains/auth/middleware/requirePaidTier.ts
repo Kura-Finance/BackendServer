@@ -1,3 +1,5 @@
+/** Hard paid-tier gate middleware (Pro / Ultimate only). */
+
 import { Response, NextFunction } from 'express';
 import { getUserTier } from '../../shared/lib/apiRateLimitUtil';
 import { sendError } from '../../shared/lib/apiResponse';
@@ -5,8 +7,8 @@ import { tierHasWebAccess } from '../../shared/lib/webTierAccess';
 import { AuthRequest } from './auth';
 
 /**
- * Hard gate：僅 Pro / Ultimate 可通過（所有 clientType）。
- * 須接在 requireAuth 之後。
+ * Hard gate: only Pro / Ultimate may pass (all clientTypes).
+ * Must run after requireAuth.
  */
 export async function requirePaidTier(
   req: AuthRequest,

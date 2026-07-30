@@ -1,3 +1,7 @@
+/**
+ * Admin controllers for Bridge funds-request sync and fiat deposit returns.
+ */
+
 import { Response } from 'express';
 import { AuthRequest } from '../../auth/middleware/auth';
 import { BridgeError, BridgeService } from '../../bridge/services/bridgeService';
@@ -28,6 +32,7 @@ function handleBridgeAdminError(res: Response, error: unknown, fallbackMessage: 
   sendError(res, 500, { code: 'INTERNAL_ERROR', message });
 }
 
+/** Lazy/force sync of Bridge funds requests into local DB. */
 export const syncFundsRequests = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const force = Boolean((req.query as { force?: boolean }).force);
@@ -39,6 +44,7 @@ export const syncFundsRequests = async (req: AuthRequest, res: Response): Promis
   }
 };
 
+/** List local funds requests (optional fraud filter). */
 export const listFundsRequests = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const query = req.query as {
@@ -60,6 +66,7 @@ export const listFundsRequests = async (req: AuthRequest, res: Response): Promis
   }
 };
 
+/** Initiate a fiat deposit return for a funds request. */
 export const initiateFundsRequestReturn = async (
   req: AuthRequest,
   res: Response,

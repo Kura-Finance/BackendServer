@@ -1,3 +1,6 @@
+/**
+ * Verify Plaid webhook JWT (Plaid-Verification header) and body hash.
+ */
 import * as crypto from 'crypto';
 import { Request } from 'express';
 import { decodeProtectedHeader, importJWK, jwtVerify, JWTPayload, JWK } from 'jose';
@@ -54,6 +57,7 @@ async function getPlaidJwkByKeyId(keyId: string): Promise<JWK> {
   return key;
 }
 
+/** Validate Plaid-Verification JWT and request body SHA-256. */
 export async function verifyPlaidWebhook(req: Request): Promise<PlaidVerificationResult> {
   const signedJwt = getPlaidVerificationHeader(req);
   if (!signedJwt) {
@@ -91,6 +95,7 @@ export async function verifyPlaidWebhook(req: Request): Promise<PlaidVerificatio
   }
 }
 
+/** Clear cached Plaid JWKs (tests / key rotation). */
 export function clearPlaidWebhookVerificationKeyCache(): void {
   plaidVerificationKeyCache.clear();
   logDebug('Cleared Plaid webhook verification key cache');

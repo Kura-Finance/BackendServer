@@ -1,13 +1,14 @@
+/**
+ * HTTP handlers for public waitlist join, status, and count.
+ */
+
 import { Request, Response } from 'express';
 import { logError } from '../../logger';
 import { sendError, sendSuccess } from '../../shared/lib/apiResponse';
 import { WaitlistService } from '../services/waitlistService';
 import type { JoinWaitlistParams } from '../models/types';
 
-/**
- * 加入 waitlist
- * 路由：POST /api/waitlist
- */
+/** POST /api/waitlist — join the waitlist. */
 export const joinWaitlist = async (req: Request, res: Response): Promise<void> => {
   try {
     const { email, product, name, source, metadata } = req.body as {
@@ -45,10 +46,7 @@ export const joinWaitlist = async (req: Request, res: Response): Promise<void> =
   }
 };
 
-/**
- * 查詢 email 是否已在 waitlist
- * 路由：GET /api/waitlist/status?email=
- */
+/** GET /api/waitlist/status?email= — whether the email is already on the waitlist. */
 export const getWaitlistStatus = async (req: Request, res: Response): Promise<void> => {
   try {
     const { email, product } = req.query as { email: string; product?: string };
@@ -63,10 +61,7 @@ export const getWaitlistStatus = async (req: Request, res: Response): Promise<vo
   }
 };
 
-/**
- * 取得 waitlist 總人數（landing page 用）
- * 路由：GET /api/waitlist/count
- */
+/** GET /api/waitlist/count — total signups (landing page). */
 export const getWaitlistCount = async (req: Request, res: Response): Promise<void> => {
   try {
     const { product } = req.query as { product?: string };

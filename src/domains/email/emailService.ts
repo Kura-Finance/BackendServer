@@ -2,7 +2,7 @@ import { Resend } from 'resend';
 import { logDebug, logError, logBusinessEvent } from '../logger';
 
 /**
- * 郵件服務 - 透過 Resend API 處理所有郵件發送
+ * Email service — all outbound mail via Resend API.
  */
 export class EmailService {
   private static resend: Resend | null = null;
@@ -16,9 +16,7 @@ export class EmailService {
       .replace(/'/g, '&#39;');
   }
 
-  /**
-   * 使用 API key 初始化 Resend 實例
-   */
+  /** Initialize (or reuse) the Resend client from RESEND_API_KEY. */
   private static initializeResend(): Resend {
     if (this.resend) {
       return this.resend;
@@ -42,9 +40,7 @@ export class EmailService {
     }
   }
 
-  /**
-   * 發送管理操作通知郵件
-   */
+  /** Send an admin-operation notification email. */
   static async sendAdminOperationEmail(operationType: string, operationDetails: any): Promise<boolean> {
     try {
       const apiKey = process.env.RESEND_API_KEY;
@@ -62,7 +58,7 @@ export class EmailService {
         throw new Error('Missing required environment variable: RESEND_FROM_EMAIL');
       }
 
-      // 建立操作詳情的 HTML
+      // Build operation-details HTML rows
       let detailsHtml = '';
       for (const [key, value] of Object.entries(operationDetails)) {
         detailsHtml += `<tr><td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>${key}:</strong></td><td style="padding: 8px; border-bottom: 1px solid #eee;">${value}</td></tr>`;
@@ -121,9 +117,7 @@ export class EmailService {
     }
   }
 
-  /**
-   * 通知 Support：用戶申請提領 referral cashback
-   */
+  /** Notify Support that a user requested a referral-cashback withdrawal. */
   static async sendCashbackWithdrawalNotice(details: {
     withdrawalId: string;
     userId: string;

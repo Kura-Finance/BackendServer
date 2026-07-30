@@ -1,9 +1,9 @@
-/** Web 平台允許使用的訂閱等級（Pro / Ultimate） */
+/** Subscription tiers allowed on the web platform (Pro / Ultimate). */
 export const WEB_ALLOWED_TIERS = new Set(['Pro', 'Ultimate']);
 
 /**
- * Basic 用戶在 Web 仍可存取的路徑（soft gate：可登入、查 profile、付費升級）
- * 使用完整 API path（含 /api 前綴）
+ * Paths Basic web users may still hit (soft gate: login, profile, paid upgrade).
+ * Full API paths including the `/api` prefix.
  */
 export const WEB_TIER_EXEMPT_PATHS = new Set([
   '/api/auth/login',

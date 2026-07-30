@@ -1,10 +1,14 @@
-// 路由
+/**
+ * Bridge domain public exports (router, facade, controllers, types).
+ */
+
+// Router
 export { default as bridgeRouter } from './router';
 
-// 服務
+// Service facade
 export { BridgeService, BridgeError, CURRENCY_ENDORSEMENT, resolveEndorsementForCurrency } from './services/bridgeService';
 
-// 控制器
+// Controllers
 export {
   createKycLink,
   createEndorsementLink,
@@ -26,7 +30,7 @@ export {
   handleBridgeWebhook,
 } from './controllers/bridgeController';
 
-// 型別
+// Types
 export type {
   BridgeCustomerType,
   BridgeEndorsementType,

@@ -1,3 +1,7 @@
+/**
+ * Bridge funds requests and fiat deposit return flows (admin/ops).
+ */
+
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../shared/lib/prisma';
 import {

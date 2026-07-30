@@ -1,3 +1,7 @@
+/**
+ * Prisma JSON helpers and Bridge rejection_reasons normalization.
+ */
+
 import { Prisma } from '@prisma/client';
 import type { BridgeRejectionReason, BridgeRejectionReasonPublic } from '../models/types';
 
@@ -5,7 +9,7 @@ export function asJson(value: unknown): Prisma.InputJsonValue {
   return value as unknown as Prisma.InputJsonValue;
 }
 
-/** 正規化 Bridge rejection_reasons；無效項目略過。 */
+/** Normalize Bridge rejection_reasons; skip invalid entries. */
 export function normalizeRejectionReasons(raw: unknown): BridgeRejectionReason[] {
   if (!Array.isArray(raw)) return [];
   const out: BridgeRejectionReason[] = [];
@@ -25,7 +29,7 @@ export function normalizeRejectionReasons(raw: unknown): BridgeRejectionReason[]
   return out;
 }
 
-/** 僅顧客可看的 reason（不含 developer_reason）。 */
+/** Customer-facing reasons only (excludes developer_reason). */
 export function toPublicRejectionReasons(raw: unknown): BridgeRejectionReasonPublic[] {
   return normalizeRejectionReasons(raw)
     .map((r) => {

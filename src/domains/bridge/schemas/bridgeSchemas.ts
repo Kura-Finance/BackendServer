@@ -1,15 +1,19 @@
+/**
+ * Zod request schemas for Bridge HTTP routes.
+ */
+
 import { z } from 'zod';
 
-// 金額：decimal string（例如 "100.25"、"0.1"）。允許可選小數。
+// Amount as decimal string (e.g. "100.25", "0.1"); optional fractional part.
 const decimalAmount = z
   .string()
   .trim()
   .regex(/^\d+(\.\d+)?$/, 'amount must be a positive decimal string');
 
-// EVM / Solana 地址（寬鬆驗證，由 Bridge 做最終校驗）
+// EVM / Solana address (loose check; Bridge validates finally)
 const cryptoAddress = z.string().trim().min(20, 'invalid crypto address').max(120);
 
-// 法幣 rails 與 crypto rails（off-ramp Pay Out）
+// Fiat rails and crypto rails (off-ramp Pay Out)
 const fiatRail = z.enum([
   'ach',
   'ach_push',
@@ -62,7 +66,7 @@ const stablecoin = z.enum(['usdc', 'usdb', 'eurc', 'usdt', 'dai', 'pyusd']);
 
 // ── KYC / Customer ────────────────────────────────────────────────────
 
-// 可申請的 endorsement（rail）類型
+// Requestable endorsement (rail) types
 const endorsementType = z.enum([
   'base',
   'cards',
@@ -73,8 +77,8 @@ const endorsementType = z.enum([
   'spei',
 ]);
 
-// individual = KYC，business = KYB。
-// fullName 對 business 而言是「公司法定名稱」（Bridge 允許至 1024 字）。
+// individual = KYC, business = KYB.
+// For business, fullName is the legal company name (Bridge allows up to 1024 chars).
 export const createEndorsementLinkBodySchema = z
   .object({
     endorsement: endorsementType.optional(),
@@ -97,27 +101,27 @@ export const createKycLinkBodySchema = z.object({
   email: z.string().trim().email('email must be valid').optional(),
   endorsements: z.array(endorsementType).min(1).optional(),
   redirectUri: z.string().trim().url('redirectUri must be a valid URL').optional(),
-  // 含非 Latin-1 字元時 Bridge 要求提供羅馬化名稱
+  // Bridge requires romanized names when non-Latin-1 characters are present
   transliteratedFirstName: z.string().trim().min(1).max(256).optional(),
   transliteratedMiddleName: z.string().trim().min(1).max(256).optional(),
   transliteratedLastName: z.string().trim().min(1).max(256).optional(),
   transliteratedBusinessLegalName: z.string().trim().min(1).max(1024).optional(),
 });
 
-// ── On-ramp（fiat → crypto）：改用 Virtual Account ────────────────────
-// 入金一律走 VA：建立 / 取得使用者專屬的法幣入金帳戶（持久、免 memo），
-// 入金後 Bridge 自動轉成穩定幣送往 destination。
+// ── On-ramp (fiat → crypto): Virtual Account ─────────────────────────
+// Deposits always use a VA: get/create a persistent fiat deposit account (no memo);
+// Bridge converts to stablecoin and sends to destination.
 
 export const createOnRampBodySchema = z.object({
   sourceCurrency: fiatCurrency,
   destinationRail: cryptoRail,
   destinationCurrency: stablecoin,
-  // 未提供時後端會回退到使用者錢包地址（scaAddress / walletAddress）
+  // If omitted, backend falls back to user wallet (scaAddress / walletAddress)
   toAddress: cryptoAddress.optional(),
-  // 費率（developer fee）由後端依入金幣別套用，不接受 client 指定。
+  // Developer fee is applied server-side from deposit currency; not client-set.
 });
 
-// ── Payout Liquidation Address（Base USDC → 法幣，永久出金地址）────────
+// ── Payout Liquidation Address (Base USDC → fiat, permanent) ────────
 export const createPayoutAddressBodySchema = z
   .object({
     destinationRail: fiatRail,
@@ -137,14 +141,14 @@ export const createPayoutAddressBodySchema = z
     }
   });
 
-// ── Crypto 入金：Liquidation Address（Tron USDT → Base USDC，永久地址）────────
-// 固定幣對；Bridge 回傳永久 Tron 地址 + memo，無需每次建立 transfer。
+// ── Crypto deposit: Liquidation Address (Tron USDT → Base USDC) ───────
+// Fixed pair; Bridge returns a permanent Tron address + memo (no per-transfer create).
 export const createCryptoDepositAddressBodySchema = z.object({
   toAddress: ethAddress.optional(),
   returnAddress: tronAddress.optional(),
 });
 
-// ── External Account（off-ramp 出金銀行帳戶）──────────────────────────
+// ── External Account (off-ramp bank account) ─────────────────────────
 
 function pickStr(data: Record<string, unknown>, ...keys: string[]): string | undefined {
   for (const key of keys) {
@@ -191,7 +195,7 @@ export const createExternalAccountBodySchema = z
       .trim()
       .regex(/^\d{6}$/, 'sortCode must be 6 digits')
       .optional(),
-    // 受款人
+    // Beneficiary
     firstName: z.string().trim().max(100).optional(),
     lastName: z.string().trim().max(100).optional(),
     businessName: z.string().trim().max(200).optional(),
@@ -276,7 +280,7 @@ export const createExternalAccountBodySchema = z
     }
   });
 
-// ── 路徑參數 ──────────────────────────────────────────────────────────
+// ── Path params ─────────────────────────────────────────────────────
 
 export const transferIdParamSchema = z.object({
   transferId: z.string().trim().min(1, 'transferId is required'),

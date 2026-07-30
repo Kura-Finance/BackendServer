@@ -1,3 +1,7 @@
+/**
+ * Bridge external (bank) accounts for off-ramp payouts.
+ */
+
 import { prisma } from '../../shared/lib/prisma';
 import { appLogger } from '../../logger';
 import { DemoService } from '../../demo/demoService';

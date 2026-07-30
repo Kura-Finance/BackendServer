@@ -2,30 +2,28 @@ import { PrismaClient } from '@prisma/client';
 import { logDebug, logDatabaseOperation, logError } from '../../logger';
 
 /**
- * Prisma Client 單一實例
- * 參考 saori 的做法，集中管理數據庫連接
- * DATABASE_URL 必須在此模組載入前已設定 (透過 initializeEnv)
+ * Singleton Prisma client.
+ * DATABASE_URL must be set before this module loads (via initializeEnv).
  */
 export const prisma = new PrismaClient();
 
 /**
- * 初始化資料庫連線
- * - Migration 必須由 CI/CD 或部署流程執行 (prisma migrate deploy)
- * - 測試連接
- * - 記錄連接狀態
+ * Initialize the database connection.
+ * - Migrations run in CI/CD (`prisma migrate deploy`), not here
+ * - Smoke-test connectivity and log status
  */
 export async function initializeDatabase(): Promise<void> {
   try {
     logDebug('Initializing database connection...');
-    
+
     const startTime = Date.now();
-    
-    // 建立連線並測試可用性
+
+    // Connect and verify availability
     await prisma.$connect();
     await prisma.$executeRaw`SELECT 1`;
-    
+
     const duration = Date.now() - startTime;
-    
+
     logDatabaseOperation('Connection Test', 'system', duration, true);
 
     console.log('✅ Database connection successful');
@@ -39,9 +37,7 @@ export async function initializeDatabase(): Promise<void> {
   }
 }
 
-/**
- * 優雅關閉數據庫連接
- */
+/** Gracefully disconnect Prisma. */
 export async function closeDatabase(): Promise<void> {
   try {
     await prisma.$disconnect();
@@ -53,9 +49,7 @@ export async function closeDatabase(): Promise<void> {
   }
 }
 
-/**
- * 全局錯誤處理：優雅關閉
- */
+/** Process signals → graceful DB shutdown. */
 process.on('SIGTERM', async () => {
   console.log('💤 Received SIGTERM signal, closing database...');
   await closeDatabase();

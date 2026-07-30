@@ -1,3 +1,5 @@
+/** Exchange service — CCXT connect, sync, and Zero-Access encrypted snapshots. */
+
 import ccxt from 'ccxt';
 import { prisma } from '../../shared/lib/prisma';
 import { appLogger, logDebug, logError, logBusinessEvent } from '../../logger';
@@ -14,15 +16,10 @@ import {
 import { DemoService } from '../../demo/demoService';
 
 /**
- * 交易所服務 - CCXT 整合層
- * 支持全球 100+ 加密貨幣交易所
- */
-
-/**
- * Phase 3 Zero-Access E2EE：加密形式的交易所快照。
+ * Phase 3 Zero-Access E2EE: encrypted exchange snapshot.
  *
- * 後端只回 metadata + payloadCiphertext + payloadKeyId；payloadKeys 由前端用
- * privateKey unwrap 出 SEK 後解每個 row 的 payloadCiphertext。
+ * Backend returns only metadata + payloadCiphertext + payloadKeyId; the client
+ * unwraps SEK from payloadKeys with its privateKey, then decrypts each row.
  */
 export interface EncryptedExchangeSnapshot {
   account: { id: string; exchange: string; displayName: string };
@@ -43,7 +40,7 @@ export interface EncryptedExchangeSnapshot {
 
 export class ExchangeService {
   /**
-   * 驗證交易所連接
+   * Verify exchange API credentials via a live CCXT call.
    */
   static async verifyExchangeConnection(
     exchange: string,
@@ -54,7 +51,7 @@ export class ExchangeService {
     try {
       logDebug('Verifying exchange connection', { exchange });
 
-      // 獲取 CCXT 交易所類
+      // Resolve CCXT exchange class
       const ExchangeClass = ccxt[exchange as keyof typeof ccxt] as any;
       if (!ExchangeClass) {
         return {
@@ -63,15 +60,15 @@ export class ExchangeService {
         };
       }
 
-      // 創建交易所實例
+      // Create exchange instance
       const exchangeInstance = new ExchangeClass({
         apiKey,
         secret: apiSecret,
-        password: passphrase, // 某些交易所需要密語
+        password: passphrase, // some exchanges require a passphrase
         enableRateLimit: true,
       });
 
-      // 測試連接 - 獲取交易所時間
+      // Probe connectivity via exchange time
       const timestamp = await exchangeInstance.fetchTime();
       logDebug('Exchange verification successful', {
         exchange,
@@ -90,7 +87,7 @@ export class ExchangeService {
   }
 
   /**
-   * 連結新的交易所帳戶
+   * Link a new exchange account for the user.
    */
   static async connectExchange(
     userId: string,
@@ -103,7 +100,7 @@ export class ExchangeService {
     try {
       logDebug('Connecting exchange account', { userId, exchange });
 
-      // 驗證連接
+      // Verify connection
       const verification = await this.verifyExchangeConnection(
         exchange,
         apiKey,
@@ -115,15 +112,15 @@ export class ExchangeService {
         throw new Error(verification.error || 'Connection failed');
       }
 
-      // 獲取交易所顯示名稱
+      // Resolve display name
       const exchangeDisplayName = this.getExchangeDisplayName(exchange);
 
-      // 加密敏感信息
+      // Encrypt sensitive credentials
       const encryptedApiKey = EncryptionUtil.encrypt(apiKey);
       const encryptedApiSecret = EncryptionUtil.encrypt(apiSecret);
       const encryptedPassphrase = passphrase ? EncryptionUtil.encrypt(passphrase) : null;
 
-      // 保存到數據庫
+      // Persist account
       const account = await prisma.exchangeAccount.upsert({
         where: {
           userId_exchange: {
@@ -158,7 +155,7 @@ export class ExchangeService {
         exchangeDisplayName,
       });
 
-      // 記錄審計日誌
+      // Audit log
       AuditLogger.logExchangeOperation('CONNECT', userId, exchange, 'SUCCESS', {
         exchange,
         exchangeDisplayName,
@@ -174,7 +171,7 @@ export class ExchangeService {
       const errorMsg = error instanceof Error ? error.message : String(error);
       logError('Failed to connect exchange', error, { userId, exchange });
       
-      // 記錄審計日誌（失敗）
+      // Audit log (failure)
       AuditLogger.logExchangeOperation('CONNECT', userId, exchange, 'FAILURE', {
         exchange,
       }, errorMsg, duration);
@@ -184,7 +181,7 @@ export class ExchangeService {
   }
 
   /**
-   * 獲取交易所餘額
+   * Fetch exchange balances via CCXT and cache them.
    */
   static async getExchangeBalances(userId: string, exchangeAccountId: string) {
     const startTime = Date.now();
@@ -195,7 +192,7 @@ export class ExchangeService {
         throw new Error('Invalid account ID');
       }
 
-      // 從數據庫獲取帳戶信息
+      // Load account from DB
       const account = await prisma.exchangeAccount.findUnique({
         where: { id: exchangeAccountId },
       });
@@ -208,12 +205,12 @@ export class ExchangeService {
         throw new Error('Account is inactive');
       }
 
-      // 解密敏感信息
+      // Decrypt credentials
       const decryptedApiKey = EncryptionUtil.decrypt(account.apiKey);
       const decryptedApiSecret = EncryptionUtil.decrypt(account.apiSecret);
       const decryptedPassphrase = account.passphrase ? EncryptionUtil.decrypt(account.passphrase) : undefined;
 
-      // 使用 CCXT 獲取餘額
+      // Fetch balances via CCXT
       const ExchangeClass = ccxt[account.exchange as keyof typeof ccxt] as any;
       const exchangeInstance = new ExchangeClass({
         apiKey: decryptedApiKey,
@@ -224,7 +221,7 @@ export class ExchangeService {
 
       const balances = await exchangeInstance.fetchBalance();
 
-      // 快取餘額數據
+      // Cache balances
       await this.cacheBalances(userId, exchangeAccountId, account.exchange, balances);
 
       const duration = Date.now() - startTime;
@@ -233,7 +230,7 @@ export class ExchangeService {
         symbolCount: Object.keys(balances).length,
       });
 
-      // 記錄審計日誌
+      // Audit log
       AuditLogger.logExchangeOperation('FETCH_BALANCE', userId, exchangeAccountId, 'SUCCESS', {
         exchange: account.exchange,
         symbolCount: Object.keys(balances).length,
@@ -252,7 +249,7 @@ export class ExchangeService {
       const errorMsg = error instanceof Error ? error.message : String(error);
       logError('Failed to fetch exchange balances', error, { userId, exchangeAccountId });
       
-      // 記錄審計日誌（失敗）
+      // Audit log (failure)
       AuditLogger.logExchangeOperation('FETCH_BALANCE', userId, exchangeAccountId, 'FAILURE', {}, errorMsg, duration);
       
       throw error;
@@ -260,16 +257,16 @@ export class ExchangeService {
   }
 
   /**
-   * 同步交易所餘額 + 資產，並回傳「加密形式」snapshot（Phase 3 Zero-Access E2EE only）。
+   * Sync exchange balances + assets and return an encrypted snapshot (Phase 3 Zero-Access E2EE only).
    *
-   * 後端流程：
-   *   1. CCXT fetchBalance → 暫時持有明文 balances
-   *   2. 透過 CCXT 取得各 symbol 的 USD 價格（純算術，不持久化）
-   *   3. cacheBalances / cacheAssets 把明文 SEK 加密寫入 cache + AssetSnapshot
-   *   4. 立即 zeroize SEK，從加密 cache 撈出 row 回傳（前端解密渲染）
+   * Backend flow:
+   *   1. CCXT fetchBalance → hold plaintext balances briefly
+   *   2. Fetch USD prices per symbol via CCXT (ephemeral; not persisted)
+   *   3. cacheBalances / cacheAssets encrypt with SEK into cache + AssetSnapshot
+   *   4. Zeroize SEK, reload encrypted cache rows for the client to decrypt
    *
-   * 注意：期貨持倉（positions）目前未做 zero-access 加密儲存（只在同步當下回傳），
-   * PR 5 後 positions 不再寫入持久層；若需 zero-access 期貨歷史，需另闢儲存表。
+   * Note: futures positions are not zero-access encrypted yet (ephemeral on sync only).
+   * After PR 5, positions are not persisted; a dedicated table is needed for encrypted history.
    */
   static async getBalancesAndAssets(
     userId: string,
@@ -383,7 +380,7 @@ export class ExchangeService {
         duration,
       );
 
-      // 同步完成後從加密快取撈出新 row 回傳
+      // Reload encrypted cache rows after sync
       return this.getEncryptedBalancesAndAssets(userId, exchangeAccountId);
     } catch (error) {
       const duration = Date.now() - startTime;
@@ -409,13 +406,13 @@ export class ExchangeService {
   }
 
   /**
-   * 寫入交易所現貨持倉（Phase 3 Zero-Access E2EE only）。
+   * Persist exchange spot holdings (Phase 3 Zero-Access E2EE only).
    *
-   * 1. 為這次 sync 建立一把 SEK（scope=`exchange_asset:{accountId}:{ts}`），
-   *    沒 keypair 直接拋（caller 顯示「請先 setup keypair」）
-   * 2. 對 {holdings, price, value, percentageOfTotal} 整包加密成 payloadCiphertext
-   * 3. 同一把 SEK 加密 `cryptoSpot:exchange:{accountId}` AssetSnapshot
-   * 4. finally 立即釋放 SEK
+   * 1. Create SEK for this sync (scope=`exchange_asset:{accountId}:{ts}`);
+   *    throw if no keypair (caller should prompt keypair setup)
+   * 2. Encrypt {holdings, price, value, percentageOfTotal} as payloadCiphertext
+   * 3. Reuse SEK for `cryptoSpot:exchange:{accountId}` AssetSnapshot
+   * 4. finally: release SEK immediately
    */
   private static async cacheAssets(
     userId: string,
@@ -483,9 +480,9 @@ export class ExchangeService {
         });
       }
 
-      // 在 SEK 還在記憶體時，把本帳戶現貨 USD 總值加密寫入 AssetSnapshot。
-      // 用 sub-scoped metric "cryptoSpot:exchange:{accountId}"，
-      // 前端讀取 encrypted history 後按 base "cryptoSpot" 加總（含 debank token）。
+      // While SEK is in memory, encrypt this account's spot USD total into AssetSnapshot.
+      // Sub-scoped metric "cryptoSpot:exchange:{accountId}"; client sums by base "cryptoSpot"
+      // (includes DeBank tokens) when reading encrypted history.
       try {
         await AssetService.recordSnapshotFromPlaintext(userId, {
           [`cryptoSpot:exchange:${exchangeAccountId}`]: assetsUsdTotal,
@@ -503,31 +500,30 @@ export class ExchangeService {
   }
 
   /**
-   * 獲取代幣 USD 價格和 24h 變化
-   * 通過 CCXT 交易所獲取最新價格信息和 24h 漲幅
+   * Fetch token USD prices and 24h change via CCXT tickers.
    */
   private static async getPrices(exchangeInstance: any, symbols: string[]): Promise<Record<string, { price: number; change24h: number }>> {
     const prices: Record<string, { price: number; change24h: number }> = {};
     
     try {
-      // 批量獲取價格 (使用 USDT 對錶)
+      // Batch-fetch prices (USDT pairs)
       const tickers = await Promise.all(
         symbols.map(async (symbol) => {
           try {
             const pair = `${symbol}/USDT`;
             const ticker = await exchangeInstance.fetchTicker(pair);
             
-            // 計算 24h 變化百分比
+            // Compute 24h change percent
             let change24h = 0;
             if (ticker.percentage !== undefined && ticker.percentage !== null) {
-              // 優先使用 percentage 欄位（已是百分比格式）
+              // Prefer percentage field when present
               change24h = ticker.percentage;
             } else if (ticker.open && ticker.close) {
-              // 若沒有 percentage，從 open 與 close 計算
+              // Else derive from open / close
               change24h = ((ticker.close - ticker.open) / ticker.open) * 100;
               change24h = parseFloat(change24h.toFixed(2));
             } else if (ticker.quoteVolume && ticker.baseVolume) {
-              // 備用方案：嘗試其他可用的欄位
+              // Fallback: try other available fields
               logDebug(`Limited ticker data for ${symbol}`, {
                 hasPercentage: ticker.percentage !== undefined,
                 hasOpen: ticker.open !== undefined,
@@ -541,7 +537,7 @@ export class ExchangeService {
               change24h,
             };
           } catch (err) {
-            // 某個幣對獲取失敗,返回 0
+            // Pair fetch failed — return zeros
             logDebug(`Failed to fetch price for ${symbol}`, {
               error: err instanceof Error ? err.message : String(err),
             });
@@ -567,15 +563,14 @@ export class ExchangeService {
     }
   }
 
-  // getPositions（期貨合約持倉）已於 PR 5 移除：zero-access 模式下需另設加密表，
-  // 否則明文 positions 不能持久化。目前 sync 流程不再回傳 positions，
-  // 等未來 PR 補上 zero-access positions table 後再恢復。
+  // getPositions (futures) removed in PR 5: zero-access needs a dedicated encrypted table;
+  // plaintext positions must not be persisted. Sync no longer returns positions until then.
 
   /**
-   * 快取餘額數據（Phase 3 Zero-Access E2EE only）。
+   * Cache balances (Phase 3 Zero-Access E2EE only).
    *
-   * 取得 SEK（scope=`exchange_balance:{accountId}:{ts}`），對 {free,used,total} 整包加密。
-   * 沒 keypair → 拋（caller 顯示「請先 setup keypair」）。
+   * Obtain SEK (scope=`exchange_balance:{accountId}:{ts}`) and encrypt {free,used,total}.
+   * No keypair → throw (caller should prompt keypair setup).
    */
   private static async cacheBalances(
     userId: string,
@@ -672,11 +667,11 @@ export class ExchangeService {
   }
 
   /**
-   * Phase 3 Zero-Access E2EE：取得交易所「加密形式」餘額 + 資產快照。
+   * Phase 3 Zero-Access E2EE: load encrypted exchange balances + asset snapshot.
    *
-   * - 後端只 select metadata + payloadCiphertext + payloadKeyId，不解密
-   * - 額外回傳 payloadKeys（去重後的 wrappedSek 清單）
-   * - 沒有 payloadCiphertext 的 legacy row 會被跳過
+   * - Selects metadata + payloadCiphertext + payloadKeyId only (no decrypt)
+   * - Also returns deduped payloadKeys (wrappedSek list)
+   * - Skips legacy rows without payloadCiphertext
    */
   static async getEncryptedBalancesAndAssets(
     userId: string,
@@ -772,21 +767,21 @@ export class ExchangeService {
   }
 
   /**
-   * 獲取所有支持的交易所列表
+   * List supported exchanges.
    */
   static getSupportedExchanges() {
     return KURA_SUPPORTED_EXCHANGES;
   }
 
   /**
-   * 獲取交易所顯示名稱
+   * Resolve exchange display name.
    */
   private static getExchangeDisplayName(exchange: string): string {
     return EXCHANGE_DISPLAY_MAP[exchange] || exchange.toUpperCase();
   }
 
   /**
-   * 斷開交易所連接
+   * Disconnect (delete) an exchange account.
    */
   static async disconnectExchange(userId: string, exchangeAccountId: string) {
     const startTime = Date.now();
@@ -805,7 +800,7 @@ export class ExchangeService {
         throw new Error('Account not found or access denied');
       }
 
-      // 刪除帳戶（ExchangeCache 透過 FK onDelete Cascade 一併清除）
+      // Delete account (ExchangeCache cleared via FK onDelete Cascade)
       await prisma.exchangeAccount.delete({
         where: { id: exchangeAccountId },
       });
@@ -815,7 +810,7 @@ export class ExchangeService {
         exchange: account.exchange,
       });
 
-      // 記錄審計日誌
+      // Audit log
       AuditLogger.logExchangeOperation('DISCONNECT', userId, exchangeAccountId, 'SUCCESS', {
         exchange: account.exchange,
       }, undefined, duration);
@@ -826,7 +821,7 @@ export class ExchangeService {
       const errorMsg = error instanceof Error ? error.message : String(error);
       logError('Failed to disconnect exchange', error, { userId, exchangeAccountId });
       
-      // 記錄審計日誌（失敗）
+      // Audit log (failure)
       AuditLogger.logExchangeOperation('DISCONNECT', userId, exchangeAccountId, 'FAILURE', {}, errorMsg, duration);
       
       throw error;
@@ -834,7 +829,7 @@ export class ExchangeService {
   }
 
   /**
-   * 獲取用戶連接的所有交易所帳戶
+   * List all exchange accounts linked by the user.
    */
   static async getUserExchangeAccounts(userId: string) {
     if (await DemoService.isDemoUser(userId)) {
@@ -853,7 +848,7 @@ export class ExchangeService {
       },
     });
 
-    // 為每個帳戶加入 icon 欄位
+    // Attach icon per account
     return accounts.map(account => ({
       ...account,
       icon: getExchangeIcon(account.exchange),

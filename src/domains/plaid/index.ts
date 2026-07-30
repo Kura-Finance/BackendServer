@@ -1,10 +1,11 @@
-// 路由
+/**
+ * Plaid domain public exports.
+ * Bank / brokerage link, encrypted finance snapshots, and webhooks.
+ */
 export { default as plaidRouter } from './router';
 
-// 服務
 export { PlaidService } from './services/plaidService';
 
-// 控制器
 export {
   createLinkToken,
   exchangePublicToken,
@@ -12,7 +13,6 @@ export {
   getFinanceSnapshotOptimized,
 } from './controllers/plaidController';
 
-// 型別與介面
 export type {
   BankingAccountType,
   TransactionType,

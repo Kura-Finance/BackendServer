@@ -1,3 +1,5 @@
+/** Dinari HTTP routes — KYC, wallet, market data, orders, portfolio, sandbox. */
+
 import { Router, Request, Response, NextFunction } from 'express';
 import { requireAuth } from '../auth/middleware/auth';
 import { requireDinariWhitelist } from './middleware/requireDinariWhitelist';
@@ -43,7 +45,7 @@ const wrapAsync = (fn: (req: any, res: Response, next?: NextFunction) => Promise
   };
 };
 
-// ── KYC / Entity（僅白名單測試帳可註冊 / 走 KYC）────────────────────────
+// ── KYC / Entity (whitelist-only registration / KYC) ──
 router.get('/entity', requireAuth, requireDinariWhitelist, wrapAsync(getEntityStatus));
 router.post(
   '/kyc-link',
@@ -68,7 +70,7 @@ router.post(
   wrapAsync(connectWallet),
 );
 
-// ── 行情 ──────────────────────────────────────────────────────────────
+// ── Market data ──
 router.get(
   '/stocks',
   requireAuth,
@@ -88,7 +90,7 @@ router.get(
   wrapAsync(getStockQuote),
 );
 
-// ── 下單（市價，EIP155 自管錢包）────────────────────────────────────
+// ── Orders (market, EIP-155 self-custodial wallet) ──
 router.post(
   '/orders/prepare',
   requireAuth,
@@ -110,7 +112,7 @@ router.get(
   wrapAsync(getOrder),
 );
 
-// ── 持倉 / 現金 / Sandbox ────────────────────────────────────────────
+// ── Portfolio / cash / sandbox ──
 router.get('/portfolio', requireAuth, wrapAsync(getPortfolio));
 router.get('/cash', requireAuth, wrapAsync(getCashBalances));
 router.post('/sandbox/faucet', requireAuth, wrapAsync(mintSandboxTokens));

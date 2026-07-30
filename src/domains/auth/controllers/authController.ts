@@ -6,10 +6,10 @@ import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { sendError, sendSuccess } from '../../shared/lib/apiResponse';
 
 /**
- * 認證控制器 - 請求與回應處理
+ * Auth controller — request/response handling.
  *
- * 登入流程改由 Privy 驅動（見 privyController），此控制器只負責登入後的
- * 個人資料、登出、邀請碼、返現紀錄／提領與帳號刪除。
+ * Login is Privy-driven (see privyController). This controller covers
+ * post-login profile, logout, invite codes, cashback history/withdraw, and account deletion.
  */
 
 function getAuthenticatedUserId(req: AuthRequest, res: Response): string | null {
@@ -32,7 +32,7 @@ export const me = async (req: AuthRequest, res: Response): Promise<void> => {
     sendSuccess(res, { user: profile });
   } catch (error) {
     logError('Fetch current user profile failed', error, { userId: req.userId });
-    // 使用者不存在回傳 404，資料庫錯誤回傳 503，其他錯誤回傳 500
+    // Missing user → 404; DB errors → 503; otherwise → 500
     const isNotFoundError = error instanceof Error && error.message.toLowerCase().includes('not found');
     const isDatabaseError = error instanceof PrismaClientKnownRequestError;
     const statusCode = isNotFoundError ? 404 : isDatabaseError ? 503 : 500;
@@ -62,7 +62,7 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
 };
 
 /**
- * 登出 - 清除 Cookie（網頁客戶端）
+ * Logout — clear Cookie (web clients)
  */
 function clearAuthCookie(res: Response): void {
   res.clearCookie('authToken', {
@@ -106,7 +106,7 @@ export const deleteAccount = async (req: AuthRequest, res: Response): Promise<vo
 };
 
 /**
- * 專用頭像修改介面 - 接收 Base64 編碼圖片
+ * Dedicated avatar update — accepts Base64 image
  */
 export const updateAvatar = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -132,7 +132,7 @@ export const updateAvatar = async (req: AuthRequest, res: Response): Promise<voi
 };
 
 /**
- * 修改顯示名稱 API
+ * Update display-name API
  */
 export const updateDisplayName = async (req: AuthRequest, res: Response): Promise<void> => {
   try {

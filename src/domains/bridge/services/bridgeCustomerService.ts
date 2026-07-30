@@ -1,3 +1,7 @@
+/**
+ * Bridge customer / KYC link lifecycle and webhook sync.
+ */
+
 import { prisma } from '../../shared/lib/prisma';
 import { appLogger, logDebug, logError } from '../../logger';
 import { DemoService } from '../../demo/demoService';
@@ -34,8 +38,8 @@ export class BridgeCustomerService {
 
     const existing = await prisma.bridgeCustomer.findUnique({ where: { userId } });
 
-    // 既有 customer 申請額外 endorsement（例如 BRL→pix、COP→cop）：
-    // 走 Bridge GET /customers/{id}/kyc_link?endorsement=...，而非重建 kyc_link。
+    // Existing customer requesting extra endorsement (e.g. BRL→pix, COP→cop):
+    // use Bridge GET /customers/{id}/kyc_link?endorsement=..., not a new kyc_link.
     if (existing?.bridgeCustomerId && params.endorsements?.length) {
       const status = await this.getCustomerStatus(userId);
       const missing = params.endorsements.filter(
@@ -65,17 +69,17 @@ export class BridgeCustomerService {
 
     if (existing?.kycLinkId) {
       try {
-        // 已建立過：刷新狀態後回傳既有連結
+        // Already created: refresh status and return existing link
         return await this.refreshKycLinkStatus(userId, existing.kycLinkId);
       } catch (error) {
         if (!isBridgeNotFound(error)) throw error;
 
-        // Bridge 端 customer / kyc_link 已不存在（sandbox 重置或被刪）。
-        // 清除失效參照並重建，而不是把 404 丟回 App。
+        // Remote customer/kyc_link gone (sandbox reset or deleted).
+        // Clear stale refs and rebuild instead of returning 404 to the app.
         await clearStaleCustomer(userId);
 
-        // 以舊 kycLinkId 推導 idempotency key：同一批並發重建會共用同一把鑰匙
-        // → Bridge 端去重，不會建立多個 customer。
+        // Idempotency key derived from old kycLinkId so concurrent rebuilds
+        // share one key → Bridge dedupes; no duplicate customers.
         const result = await this.createKycLinkForUser(
           userId,
           params,
@@ -94,7 +98,7 @@ export class BridgeCustomerService {
       }
     }
 
-    // 首次建立：以 userId 為 idempotency key，避免並發首呼建立重複 customer。
+    // First create: userId as idempotency key to avoid duplicate customers on concurrent first calls.
     return this.createKycLinkForUser(userId, params, `kyc-new:${userId}`);
   }
 
@@ -104,7 +108,7 @@ export class BridgeCustomerService {
     idempotencyKey: string,
   ): Promise<KycLinkResult> {
     const { type, fullName } = params;
-    // Bridge 的 /kyc_links 將 email 列為必填
+    // Bridge /kyc_links requires email
     const resolvedEmail = params.email ?? (await resolveUserEmail(userId)) ?? null;
     if (!resolvedEmail) {
       throw new BridgeError(
@@ -296,7 +300,7 @@ export class BridgeCustomerService {
       throw new BridgeError(404, 'Bridge customer not found. Create a KYC link first.', 'getCustomerStatus');
     }
 
-    // 還沒有 customer_id（KYC 尚未開始/完成）時，嘗試用 kyc_link 刷新
+    // No customer_id yet (KYC not started/finished): try refreshing via kyc_link
     if (!record.bridgeCustomerId) {
       if (record.kycLinkId) {
         await this.refreshKycLinkStatus(userId, record.kycLinkId);
@@ -320,8 +324,8 @@ export class BridgeCustomerService {
     } catch (error) {
       if (!isBridgeNotFound(error)) throw error;
 
-      // Bridge 端 customer 已不存在：主動清除 stale 參照，
-      // 讓下一次 POST /kyc-link 以乾淨狀態重建，不再卡關。
+      // Remote customer gone: clear stale refs so the next POST /kyc-link
+      // rebuilds cleanly instead of getting stuck.
       appLogger.warn('[BridgeService] Stale Bridge customer on status fetch, clearing', {
         userId,
         staleCustomerId: record.bridgeCustomerId,

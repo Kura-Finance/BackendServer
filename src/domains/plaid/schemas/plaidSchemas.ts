@@ -1,3 +1,6 @@
+/**
+ * Zod schemas for Plaid API request validation.
+ */
 import { z } from 'zod';
 
 export const exchangePublicTokenBodySchema = z.object({

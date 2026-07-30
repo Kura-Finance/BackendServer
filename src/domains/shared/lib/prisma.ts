@@ -1,6 +1,5 @@
 /**
- * Prisma 向後相容導出
- * 請改用 src/domains/shared/lib/database.ts 中的功能
+ * Prisma re-exports for backward compatibility.
+ * Prefer `src/domains/shared/lib/database.ts`.
  */
 export { prisma, initializeDatabase, closeDatabase } from './database';
-

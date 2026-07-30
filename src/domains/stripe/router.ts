@@ -1,3 +1,5 @@
+/** Stripe HTTP routes: checkout, billing portal, status, webhook. */
+
 import { Router, Request, Response, NextFunction } from 'express';
 import { requireAuth } from '../auth/middleware/auth';
 import { appLogger } from '../logger';

@@ -1,12 +1,12 @@
 /**
  * Key Pair Controller
  *
- * 提供使用者管理 E2EE keypair 的 HTTP endpoints。
+ * HTTP endpoints for managing the user's E2EE keypair.
  *
- * Endpoints：
- *   POST  /api/auth/keys/setup    首次設定 keypair（已有則拒絕）
- *   GET   /api/auth/keys/me       取得自己的 keypair（含 encryptedPrivateKey）
- *   POST  /api/auth/keys/rotate   輪替 keypair（會讓既有 wrappedSek 失效）
+ * Endpoints:
+ *   POST  /api/auth/keys/setup    First-time keypair setup (rejects if already set)
+ *   GET   /api/auth/keys/me       Fetch own keypair (incl. encryptedPrivateKey)
+ *   POST  /api/auth/keys/rotate   Rotate keypair (invalidates existing wrappedSek)
  */
 
 import { Response } from 'express';
@@ -81,7 +81,7 @@ export const setupKeyPair = async (req: AuthRequest, res: Response): Promise<voi
 
 /**
  * GET /api/auth/keys/me
- * 回傳自己的 keypair（含 encryptedPrivateKey）。
+ * Return own keypair (incl. encryptedPrivateKey).
  */
 export const getMyKeyPair = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -105,8 +105,8 @@ export const getMyKeyPair = async (req: AuthRequest, res: Response): Promise<voi
  * POST /api/auth/keys/rotate
  * Body: { publicKey, encryptedPrivateKey }
  *
- * ⚠️ 輪替 keypair 會讓所有既有 wrappedSek 失效。
- *    PR 1 階段先暴露此 endpoint，但客戶端應在呼叫前 / 後處理資料重新加密。
+ * Warning: rotating the keypair invalidates all existing wrappedSek.
+ *    PR 1 exposes this endpoint; client should re-encrypt data before/after calling.
  */
 export const rotateKeyPair = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -130,12 +130,12 @@ export const rotateKeyPair = async (req: AuthRequest, res: Response): Promise<vo
 /**
  * POST /api/auth/keys/reset
  *
- * 換裝置 / 換 Passkey：砍掉整個 E2EE 加密層（passkey + keypair + 加密快取），
- * 回到「未設定」狀態。之後客戶端走一次全新的 keypair setup + passkey 註冊，
- * 並重新同步被保護的資料（Plaid / 交易所 / DeBank 快取）。
+ * New device / replace Passkey: wipe the E2EE layer (passkey + keypair + encrypted caches),
+ * back to unconfigured. Client then runs fresh keypair setup + passkey registration,
+ * and re-syncs protected data (Plaid / exchange / DeBank caches).
  *
- * 會撤銷所有 Plaid Item（需重新 Link）；交易所連線（ExchangeAccount）仍保留。
- * 僅需 Privy 登入授權，不要求舊 passkey assertion（用戶正是遺失了 passkey）。
+ * Revokes all Plaid Items (must re-Link); exchange connections (ExchangeAccount) are kept.
+ * Requires Privy login only — no old passkey assertion (user lost the passkey).
  */
 export const resetE2EE = async (req: AuthRequest, res: Response): Promise<void> => {
   try {

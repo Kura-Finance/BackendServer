@@ -3,25 +3,22 @@ import { logDebug, logError } from '../../logger';
 import { AuditLogger } from '../../logger/auditLog';
 
 /**
- * 資料加密工具類別
- * 用於加密與解密敏感資料（API Key、Secret、Token 等）
+ * Server-side encryption for secrets the backend must use
+ * (API keys, tokens, etc.) — not user E2EE payloads.
  */
-
 export class EncryptionUtil {
   private static readonly ALGORITHM = 'aes-256-gcm';
   private static readonly ENCODING = 'hex';
   private static readonly AUTH_TAG_LENGTH = 16;
   private static readonly IV_LENGTH = 12;
 
-  /**
-   * 初始化加密金鑰
-   */
+  /** Load ENCRYPTION_KEY (64 hex chars = 32 bytes for AES-256). */
   private static getEncryptionKey(): Buffer {
     const key = process.env.ENCRYPTION_KEY;
     if (!key) {
       throw new Error('ENCRYPTION_KEY environment variable is not set');
     }
-    // Key 應為 32 位元組的十六進位字串（用於 AES-256）
+    // Key must be a 32-byte hex string (AES-256)
     if (key.length !== 64) {
       throw new Error('ENCRYPTION_KEY must be 64 hex characters (32 bytes)');
     }
@@ -29,9 +26,9 @@ export class EncryptionUtil {
   }
 
   /**
-   * 加密敏感資料
-   * @param plaintext 要加密的明文字串
-   * @returns 加密後的字串（格式：iv:authTag:encryptedData）
+   * Encrypt sensitive data.
+   * @param plaintext Plaintext string
+   * @returns Encrypted string as `iv:authTag:encryptedData`
    */
   static encrypt(plaintext: string): string {
     const startTime = Date.now();
@@ -46,7 +43,7 @@ export class EncryptionUtil {
 
       const authTag = cipher.getAuthTag();
 
-      // 格式：iv:authTag:encryptedData
+      // Format: iv:authTag:encryptedData
       const result = `${iv.toString(this.ENCODING)}:${authTag.toString(this.ENCODING)}:${encrypted}`;
 
       const duration = Date.now() - startTime;
@@ -56,7 +53,6 @@ export class EncryptionUtil {
         duration,
       });
 
-      // 記錄稽核日誌（成功）
       AuditLogger.logKeyAccess('SUCCESS', 'ENCRYPT', {
         algorithm: this.ALGORITHM,
         dataLength: plaintext.length,
@@ -67,34 +63,32 @@ export class EncryptionUtil {
       const duration = Date.now() - startTime;
       const errorMsg = error instanceof Error ? error.message : String(error);
       logError('Encryption failed', error);
-      
-      // 記錄稽核日誌（失敗）
+
       AuditLogger.logKeyAccess('FAILURE', 'ENCRYPT', {
         algorithm: this.ALGORITHM,
         dataLength: plaintext.length,
       }, errorMsg);
-      
+
       throw new Error('Failed to encrypt data');
     }
   }
 
   /**
-   * 解密敏感資料
-   * @param encrypted 加密後的字串（格式：iv:authTag:encryptedData）
-   * @returns 解密後的明文字串
+   * Decrypt sensitive data.
+   * @param encrypted Ciphertext as `iv:authTag:encryptedData`
+   * @returns Plaintext string
    */
   static decrypt(encrypted: string): string {
     const startTime = Date.now();
     try {
       const key = this.getEncryptionKey();
 
-      // 解析格式：iv:authTag:encryptedData
+      // Parse format: iv:authTag:encryptedData
       const parts = encrypted.split(':');
-      
-      // 向後相容：檢查是否為舊版未加密資料（沒有冒號分隔符）
+
+      // Backward compat: legacy unencrypted values have no colon separators
       if (parts.length !== 3) {
-        // 假設這是未加密的舊資料，回傳原始值
-        // 並記錄警告日誌以利稽核
+        // Treat as legacy plaintext; return as-is and audit
         logDebug('Legacy unencrypted data detected - returning as-is', {
           dataLength: encrypted.length,
           note: 'Please migrate this data by re-encrypting',
@@ -105,7 +99,7 @@ export class EncryptionUtil {
           dataLength: encrypted.length,
         }, 'Legacy data - not encrypted');
 
-        return encrypted; // 回傳原始值
+        return encrypted;
       }
 
       const ivHex = parts[0];
@@ -140,7 +134,6 @@ export class EncryptionUtil {
         duration,
       });
 
-      // 記錄稽核日誌（成功）
       AuditLogger.logKeyAccess('SUCCESS', 'DECRYPT', {
         algorithm: this.ALGORITHM,
       }, undefined);
@@ -150,28 +143,25 @@ export class EncryptionUtil {
       const duration = Date.now() - startTime;
       const errorMsg = error instanceof Error ? error.message : String(error);
       logError('Decryption failed', error);
-      
-      // 記錄稽核日誌（失敗）
+
       AuditLogger.logKeyAccess('FAILURE', 'DECRYPT', {
         algorithm: this.ALGORITHM,
       }, errorMsg);
-      
+
       throw new Error('Failed to decrypt data');
     }
   }
 
   /**
-   * 生成隨機加密金鑰（用於初始化）
-   * 回傳 32 位元組金鑰（以 64 字元十六進位字串表示）
+   * Generate a random encryption key for setup.
+   * Returns a 32-byte key as a 64-char hex string.
    */
   static generateEncryptionKey(): string {
     const key = crypto.randomBytes(32);
     return key.toString('hex');
   }
 
-  /**
-   * 驗證加密金鑰格式是否正確
-   */
+  /** Validate encryption key format (64 hex chars). */
   static validateEncryptionKey(key: string): boolean {
     if (!key || typeof key !== 'string') {
       return false;

@@ -1,6 +1,5 @@
 /**
- * Plaid 帳戶服務
- * 處理帳戶相關操作：讀取、排序與斷線
+ * Plaid account service — fetch (with APY), disconnect, and revoke Items.
  */
 
 import { createPlaidClientForUser } from '../lib/plaidClientFactory';
@@ -23,7 +22,7 @@ type PlaidItemRef = {
   institutionName: string;
 };
 
-/** disconnect 時找不到 accountId 對應的 Plaid Item。 */
+/** No Plaid Item matched the given accountId during disconnect. */
 export class PlaidAccountNotFoundError extends Error {
   constructor(public readonly accountId: string) {
     super(`No linked Plaid account matched accountId: ${accountId}`);
@@ -32,9 +31,7 @@ export class PlaidAccountNotFoundError extends Error {
 }
 
 export class PlaidAccountService {
-  /**
-   * 斷開 Plaid Item 連接（會移除整個 Item 及其底下所有帳戶）
-   */
+  /** Disconnect a Plaid Item (removes the Item and all accounts under it). */
   static async disconnectItemByAccountId(
     userId: string,
     accountId: string
@@ -90,8 +87,8 @@ export class PlaidAccountService {
   }
 
   /**
-   * 撤銷使用者所有 Plaid Item（呼叫 itemRemove + 刪除本地紀錄）。
-   * 用於 E2EE reset、帳號刪除等需完全斷開銀行連線的場景。
+   * Revoke all Plaid Items for a user (itemRemove + delete local rows).
+   * Used for E2EE reset, account deletion, etc.
    */
   static async revokeAllItemsForUser(userId: string): Promise<{ revoked: number }> {
     const items = await prisma.plaidItem.findMany({
@@ -110,7 +107,7 @@ export class PlaidAccountService {
     return { revoked: items.length };
   }
 
-  /** 先查本地快取（accountId → plaidItemId），失敗再 fallback 至 Plaid API。 */
+  /** Resolve Item via local cache (accountId → plaidItemId), then Plaid API fallback. */
   private static async resolvePlaidItemByAccountId(
     userId: string,
     accountId: string,
@@ -172,7 +169,7 @@ export class PlaidAccountService {
     return null;
   }
 
-  /** 呼叫 itemRemove（best-effort）並刪除本地 PlaidItem（快取 cascade）。 */
+  /** Best-effort itemRemove, then delete local PlaidItem (cache cascades). */
   private static async revokePlaidItem(
     userId: string,
     item: PlaidItemRef,
@@ -227,9 +224,7 @@ export class PlaidAccountService {
     return plaidRequestId ? { plaidRequestId } : {};
   }
 
-  /**
-   * 取得帳戶（包括 APY 信息）
-   */
+  /** Fetch accounts and attach APY from liabilities when available. */
   static async fetchAccountsWithAPY(
     userPlaidClient: any,
     item: { institutionName: string },
@@ -244,13 +239,12 @@ export class PlaidAccountService {
 
     const apyByAccountId = new Map<string, number>();
 
-      // 取得 Liabilities 資料以提取 APY 資訊
+    // Pull liabilities for APY / interest rates
     try {
       const liabilitiesResponse = await userPlaidClient.liabilitiesGet({
         access_token: decryptedAccessToken,
       });
 
-      // 從 Plaid 的 liabilities 回應中提取 APY 資訊
       if (liabilitiesResponse.data.liabilities?.credit) {
         for (const creditAccount of liabilitiesResponse.data.liabilities.credit) {
           if (creditAccount.account_id && creditAccount.aprs && creditAccount.aprs.length > 0) {
@@ -262,7 +256,7 @@ export class PlaidAccountService {
         }
       }
 
-      // 學生貸款利率
+      // Student loan rates
       if (liabilitiesResponse.data.liabilities?.student) {
         for (const studentAccount of liabilitiesResponse.data.liabilities.student) {
           if (studentAccount.account_id && studentAccount.interest_rate_percentage !== undefined) {
@@ -271,7 +265,7 @@ export class PlaidAccountService {
         }
       }
 
-      // 抵押貸款帳戶利率
+      // Mortgage rates
       if (liabilitiesResponse.data.liabilities?.mortgage) {
         for (const mortgageAccount of liabilitiesResponse.data.liabilities.mortgage) {
           if (
@@ -284,13 +278,12 @@ export class PlaidAccountService {
         }
       }
     } catch (error: any) {
-      // Liabilities 呼叫可能失敗，記錄但不中斷流程
+      // Liabilities may be unavailable; log and continue
       logDebug('Fetch Plaid liabilities (APY data) failed or not available', {
         error: error.response?.data?.error_code || error.message || error,
       });
     }
 
-    // 處理帳戶
     for (const account of accountsResponse.data.accounts) {
       const bucket = classifyPlaidAccountBucket(account.type, account.subtype);
 
@@ -314,12 +307,11 @@ export class PlaidAccountService {
         balance: Number(account.balances.current || 0),
         type: mapPlaidAccountType(account.type, account.subtype),
         logo: getInstitutionLogoUrl(item.institutionName),
-        ...(account.mask ? { mask: account.mask } : {}), // 帳號末 4 碼（部分機構不提供）
+        ...(account.mask ? { mask: account.mask } : {}), // Last 4 digits (optional)
       };
       if ((account as any).logo) {
         bankingAccount.plaidLogo = (account as any).logo;
       }
-      // 加入 APY（如果有）
       const apy = apyByAccountId.get(account.account_id);
       if (apy !== undefined) {
         bankingAccount.apy = apy;

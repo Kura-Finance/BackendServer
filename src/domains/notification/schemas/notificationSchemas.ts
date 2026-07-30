@@ -1,3 +1,5 @@
+/** Zod schemas for notification send, list, preferences, and id params. */
+
 import { z } from 'zod';
 
 const notificationCategorySchema = z.enum([

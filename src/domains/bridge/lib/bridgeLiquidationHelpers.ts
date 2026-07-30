@@ -1,3 +1,7 @@
+/**
+ * Helpers for matching and creating Bridge liquidation / payout addresses.
+ */
+
 import type { BridgeLiquidationAddressResponse } from '../models/types';
 import {
   LIQUIDATION_ADDRESS_TRON_USDT_TO_BASE_USDC,

@@ -1,3 +1,7 @@
+/**
+ * Customer access helpers: KYC gates, endorsements, stale-customer repair.
+ */
+
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../shared/lib/prisma';
 import { appLogger, logError } from '../../logger';
@@ -16,17 +20,17 @@ export function shouldUseCustomerNamedPayout(): boolean {
   return process.env.BRIDGE_CUSTOMER_NAMED_PAYOUT !== 'false';
 }
 
-/** 判斷 customer 是否至少有一個 approved 的 endorsement（可交易）。 */
+/** True if KYC is approved and at least one endorsement is approved (or none returned). */
 export function canTransact(kycStatus: string, endorsements: BridgeEndorsement[]): boolean {
   if (!APPROVED_KYC_STATUSES.has(kycStatus)) return false;
-  if (endorsements.length === 0) return true; // 沒回傳 endorsement 時以 KYC 狀態為準
+  if (endorsements.length === 0) return true; // no endorsements in response → trust KYC status
   return endorsements.some((e) => e.status === 'approved');
 }
 
 /**
- * 判斷 Bridge 是否回報「資源不存在」（customer / kyc_link 已被刪除或 sandbox 重置）。
- * 偵測條件：HTTP 404 且 body 的 code === 'not_found'（message 常見為 "Customer not found"）。
- * 以 code 為主、message 為後備（較穩定）。
+ * Whether Bridge reported the resource as missing (customer/kyc_link deleted or sandbox reset).
+ * Detects HTTP 404 with body code === 'not_found' (message often "Customer not found").
+ * Prefer `code`; fall back to message matching.
  */
 export function isBridgeNotFound(error: unknown): boolean {
   if (!(error instanceof BridgeError) || error.statusCode !== 404) return false;
@@ -34,14 +38,14 @@ export function isBridgeNotFound(error: unknown): boolean {
     const parsed = JSON.parse(error.bridgeBody) as { code?: string };
     if (parsed.code === 'not_found') return true;
   } catch {
-    // body 非 JSON，落到 message 後備比對
+    // non-JSON body → fall back to message match
   }
   return /not[_\s]?found|customer not found/i.test(error.bridgeBody);
 }
 
 /**
- * 清除本地失效的 Bridge customer 參照（Bridge 端已不存在時呼叫）。
- * 將 customer / kyc_link ids 與狀態歸零，讓下一次建立以「無 customer」乾淨開始。
+ * Clear local Bridge customer refs when the remote customer no longer exists.
+ * Resets ids/status so the next create starts with a clean "no customer" state.
  */
 export async function clearStaleCustomer(userId: string): Promise<void> {
   await prisma.bridgeCustomer.update({
@@ -61,8 +65,8 @@ export async function clearStaleCustomer(userId: string): Promise<void> {
 }
 
 /**
- * 向 Bridge 設定 customer-named fiat payout（出金顯示用戶法定姓名）。
- * 目前僅 usd.wire 支援 customer；需 Bridge 帳戶開通 premium。
+ * Configure Bridge customer-named fiat payout (bank statement shows legal name).
+ * Currently usd.wire only; requires Bridge account premium.
  * @see https://apidocs.bridge.xyz/platform/orchestration/more/fiat-payout-configuration
  */
 export async function ensureCustomerNamedPayout(userId: string): Promise<void> {
@@ -108,7 +112,7 @@ export async function ensureCustomerNamedPayout(userId: string): Promise<void> {
   }
 }
 
-/** 取得已通過 KYC、可建立 transfer 的 bridgeCustomerId，否則丟出清楚錯誤。 */
+/** Return bridgeCustomerId if KYC-approved and ready to transact; otherwise throw. */
 export async function requireTransactableCustomer(userId: string): Promise<string> {
   const record = await prisma.bridgeCustomer.findUnique({ where: { userId } });
   if (!record?.bridgeCustomerId) {
@@ -129,11 +133,11 @@ export async function requireTransactableCustomer(userId: string): Promise<strin
 }
 
 /**
- * 確認 customer 已具備「該入金幣別所需」且 approved 的 endorsement。
+ * Ensure the customer has an approved endorsement required for the deposit currency.
  *
- * 先向 Bridge 刷新最新狀態（避免本地 endorsements 過時），再判定。
- * 缺少時丟出結構化 409（code=endorsement_required），讓前端引導用戶
- * 透過 POST /api/bridge/endorsement-link 取得 hosted flow URL。
+ * Refreshes status from Bridge first (local endorsements may be stale).
+ * On missing endorsement, throws structured 409 (code=endorsement_required) so the
+ * client can open POST /api/bridge/endorsement-link for the hosted flow URL.
  */
 export async function assertEndorsementForCurrency(
   userId: string,
@@ -142,7 +146,7 @@ export async function assertEndorsementForCurrency(
   const required = resolveEndorsementForCurrency(currency);
   if (!required) return;
 
-  // 向 Bridge 拉最新 customer 狀態（同時同步本地 endorsements）
+  // Refresh customer from Bridge (also syncs local endorsements)
   const { BridgeCustomerService } = await import('../services/bridgeCustomerService');
   const status = await BridgeCustomerService.getCustomerStatus(userId);
   const approved = status.endorsements.some(
@@ -166,9 +170,8 @@ export async function assertEndorsementForCurrency(
 }
 
 /**
- * 包裝會用到 bridgeCustomerId 的 Bridge 呼叫（transfer / external account）。
- * 若 Bridge 回報 customer 已不存在（404 not_found），清除 stale 參照並要求重新 KYC，
- * 與 kyc-link / customer 查詢採同一套自我修復邏輯，避免使用者卡關。
+ * Wrap Bridge calls that use bridgeCustomerId (transfer / external account).
+ * On 404 not_found, clear stale refs and require re-KYC — same self-heal as kyc-link/customer.
  */
 export async function withStaleCustomerGuard<T>(
   userId: string,
@@ -207,7 +210,7 @@ export async function resolveUserWalletAddress(userId: string): Promise<string |
   return user?.scaAddress ?? user?.walletAddress ?? null;
 }
 
-/** 僅回傳 ERC-4337 SCA（crypto-to-crypto 出金到 Base 用）。 */
+/** ERC-4337 SCA only (crypto-to-crypto payouts to Base). */
 export async function resolveUserScaAddress(userId: string): Promise<string | null> {
   const user = await prisma.user.findUnique({
     where: { id: userId },

@@ -1,3 +1,7 @@
+/**
+ * Crypto deposit liquidation addresses (Tron USDT → Base USDC) and drain sync.
+ */
+
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../shared/lib/prisma';
 import { appLogger, logError } from '../../logger';

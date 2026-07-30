@@ -1,3 +1,7 @@
+/**
+ * Public exports for the platform-insights domain.
+ */
+
 export { PlatformRecordService, PlatformRevenueService } from './services/platformRevenueService';
 export { platformInsightsRouter } from './router';
 export type {

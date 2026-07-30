@@ -1,5 +1,5 @@
 /**
- * 資產領域模型型別
+ * Asset domain model types (legacy history shapes retained for typing).
  */
 
 export interface AssetHistoryPoint {

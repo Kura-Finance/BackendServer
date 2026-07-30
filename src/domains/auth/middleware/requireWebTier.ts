@@ -1,3 +1,5 @@
+/** Soft web-tier gate middleware (Pro / Ultimate vs Basic allowlist). */
+
 import { Response, NextFunction } from 'express';
 import { getUserTier } from '../../shared/lib/apiRateLimitUtil';
 import { sendError } from '../../shared/lib/apiResponse';
@@ -9,8 +11,8 @@ import {
 import { AuthRequest, resolveRequestAuth } from './auth';
 
 /**
- * Soft gate：Web 客戶端僅 Pro / Ultimate 可使用完整 API。
- * Basic 用戶可登入並存取白名單路徑（profile、Stripe 付費），其餘回 403。
+ * Soft gate: web clients need Pro / Ultimate for the full API.
+ * Basic users may log in and hit allowlisted paths (profile, Stripe); others get 403.
  */
 export async function webTierGate(
   req: AuthRequest,

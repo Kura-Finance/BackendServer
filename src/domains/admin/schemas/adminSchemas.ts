@@ -1,3 +1,7 @@
+/**
+ * Zod schemas for admin Bridge funds-request APIs.
+ */
+
 import { z } from 'zod';
 import { lazyUpdateQuerySchema } from '../../platform-insights/schemas/platformInsightsSchemas';
 

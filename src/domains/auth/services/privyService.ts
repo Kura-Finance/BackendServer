@@ -1,12 +1,14 @@
 /**
- * Privy 認證服務
+ * Privy auth service.
  *
- * 取代 SRP：前端用 Privy SDK 完成登入後，把 Privy 簽發的 token 交給後端驗證。
- *   - accessToken（必填）：驗證後取得使用者 DID，是登入的權威證明
- *   - identityToken（選填）：含 linked accounts，可解析 email 與 embedded wallet
- *   - 若 identity token 缺 email，後端會用 Privy Server API 依 DID 補拉完整 user
+ * Replaces SRP: after the client logs in with the Privy SDK, it sends Privy-issued
+ * tokens here for verification.
+ *   - accessToken (required): verifies to the user DID — authoritative login proof
+ *   - identityToken (optional): linked accounts → email + embedded wallet
+ *   - If the identity token lacks email, backend fetches the full user via Privy Server API by DID
  *
- * 後端僅驗證 Privy token、解析身分，再由 AuthService 對應到內部 user 並核發自有 JWT。
+ * Backend only verifies Privy tokens and resolves identity; AuthService maps to an
+ * internal user and issues our own JWT.
  */
 
 import {
@@ -243,7 +245,7 @@ export interface PrivyUserMetrics {
   syncedAt: Date;
 }
 
-/** 從 Privy 列出所有用戶，統計期間內有 latest_verified_at 的活躍用戶。 */
+/** List Privy users and count those with latest_verified_at in the window. */
 export async function fetchPrivyUserMetrics(periodFrom: Date, periodTo: Date): Promise<PrivyUserMetrics> {
   const fromSec = Math.floor(periodFrom.getTime() / 1000);
   const toSec = Math.floor(periodTo.getTime() / 1000);

@@ -1,3 +1,5 @@
+/** Notification service — multi-channel delivery and user preferences. */
+
 import { prisma } from '../../shared/lib/prisma';
 import { appLogger, logDebug, logError, logBusinessEvent, logDatabaseOperation } from '../../logger';
 import { AuditLogger } from '../../logger/auditLog';
@@ -12,11 +14,11 @@ import type {
 const DEFAULT_NOTIFICATION_TYPES = ['email', 'in_app'] as const;
 
 /**
- * 通知服務 - 業務層
+ * Notification service — business logic for delivery and preferences.
  */
 export class NotificationService {
   /**
-   * 發送通知（支援多種類型）
+   * Send a notification across one or more channels.
    */
   static async sendNotification(payload: CreateNotificationPayload): Promise<NotificationRecord[]> {
     const startTime = Date.now();
@@ -28,16 +30,16 @@ export class NotificationService {
         types: payload.types || DEFAULT_NOTIFICATION_TYPES,
       });
 
-      // 取得使用者通知偏好設定
+      // Load user notification preferences
       const preferences = await this.getNotificationPreferences(payload.userId);
       
-      // 檢查使用者是否取消訂閱
+      // Bail if user unsubscribed from all
       if (preferences.unsubscribeAll) {
         logDebug('User unsubscribed from notifications', { userId: payload.userId });
         return [];
       }
 
-      // 依據 category 檢查是否啟用
+      // Check category is enabled
       if (!this.isCategoryEnabled(payload.category, preferences)) {
         logDebug('Notification category disabled for user', {
           userId: payload.userId,
@@ -46,11 +48,11 @@ export class NotificationService {
         return [];
       }
 
-      // 決定要發送的通知類型
+      // Resolve channels to send
       const notificationTypes = payload.types || DEFAULT_NOTIFICATION_TYPES;
       const results: NotificationRecord[] = [];
 
-      // 平行發送各類型通知
+      // Send channels in parallel
       const notificationPromises = notificationTypes.map(type => 
         this.sendNotificationByType(type as any, payload)
       );
@@ -68,7 +70,7 @@ export class NotificationService {
         }
       });
 
-      // 記錄審計日誌
+      // Audit log
       AuditLogger.logNotificationEvent('NOTIFICATION_SENT', payload.userId, {
         category: payload.category,
         types: notificationTypes,
@@ -94,7 +96,7 @@ export class NotificationService {
   }
 
   /**
-   * 依類型發送通知
+   * Deliver a notification for a single channel type.
    */
   private static async sendNotificationByType(
     type: 'email' | 'push' | 'in_app',
@@ -103,7 +105,7 @@ export class NotificationService {
     const startTime = Date.now();
     
     try {
-      // 建立通知紀錄
+      // Create notification record
       const notification = await prisma.notification.create({
         data: {
           userId: payload.userId,
@@ -121,20 +123,20 @@ export class NotificationService {
 
       logDatabaseOperation('CREATE', 'notifications', Date.now() - startTime, true);
 
-      // 依類型發送
+      // Dispatch by channel
       if (type === 'email') {
         await this.sendEmailNotification(notification, payload);
       } else if (type === 'push') {
         await this.sendPushNotification(notification, payload);
       } else if (type === 'in_app') {
-        // in_app 通知直接儲存，不需要額外發送
+        // in_app: persist only, no external send
         await prisma.notification.update({
           where: { id: notification.id },
           data: { status: 'delivered', deliveredAt: new Date() },
         });
       }
 
-      // 回傳通知紀錄
+      // Return notification record
       return await prisma.notification.findUnique({
         where: { id: notification.id },
       }) as NotificationRecord;
@@ -147,14 +149,14 @@ export class NotificationService {
   }
 
   /**
-   * 發送郵件通知
+   * Send email notification.
    */
   private static async sendEmailNotification(
     notification: any,
     payload: CreateNotificationPayload
   ): Promise<void> {
     try {
-      // 在此整合郵件服務（Resend API）
+      // Integrate email provider here (Resend API)
       const user = await prisma.user.findUnique({
         where: { id: payload.userId },
         select: { email: true },
@@ -164,14 +166,14 @@ export class NotificationService {
         throw new Error('User not found');
       }
 
-      // 呼叫郵件服務發送
+      // Call email service
     //   const result = await emailService.send({
     //     to: user.email,
     //     subject: payload.subject,
     //     html: payload.message,
     //   });
 
-      // 更新通知狀態
+      // Update notification status
       await prisma.notification.update({
         where: { id: notification.id },
         data: {
@@ -194,14 +196,14 @@ export class NotificationService {
   }
 
   /**
-   * 發送推播通知
+   * Send push notification.
    */
   private static async sendPushNotification(
     notification: any,
     payload: CreateNotificationPayload
   ): Promise<void> {
     try {
-      // 在此整合推播服務（如 Firebase Messaging）
+      // Integrate push provider here (e.g. Firebase Messaging)
       // const result = await pushService.send({
       //   userId: payload.userId,
       //   title: payload.title,
@@ -231,7 +233,7 @@ export class NotificationService {
   }
 
   /**
- * 取得使用者通知列表
+   * List notifications for a user.
    */
   static async getNotifications(
     userId: string,
@@ -278,7 +280,7 @@ export class NotificationService {
   }
 
   /**
- * 標記通知為已讀
+   * Mark a notification as read.
    */
   static async markAsRead(notificationId: string, userId: string): Promise<NotificationRecord> {
     try {
@@ -309,7 +311,7 @@ export class NotificationService {
   }
 
   /**
- * 刪除通知
+   * Delete a notification.
    */
   static async deleteNotification(notificationId: string, userId: string): Promise<void> {
     try {
@@ -339,7 +341,7 @@ export class NotificationService {
   }
 
   /**
- * 取得使用者通知偏好設定
+   * Get user notification preferences (creates defaults if missing).
    */
   static async getNotificationPreferences(userId: string): Promise<NotificationPreferences> {
     try {
@@ -347,7 +349,7 @@ export class NotificationService {
         where: { userId },
       });
 
-      // 若不存在，建立預設偏好設定
+      // Create default preferences if missing
       if (!prefs) {
         prefs = await prisma.notificationPreferences.create({
           data: {
@@ -395,14 +397,14 @@ export class NotificationService {
   }
 
   /**
-   * 更新使用者通知偏好設定
+   * Update user notification preferences.
    */
   static async updateNotificationPreferences(
     userId: string,
     preferences: Partial<NotificationPreferences>
   ): Promise<NotificationPreferences> {
     try {
-      // 檢查 preferences 是否存在，若不存在則建立
+      // Ensure preferences row exists
       let existing = await prisma.notificationPreferences.findUnique({
         where: { userId },
       });
@@ -452,7 +454,7 @@ export class NotificationService {
   }
 
   /**
-   * 檢查 category 是否啟用
+   * Whether a notification category is enabled for the user.
    */
   private static isCategoryEnabled(
     category: string,

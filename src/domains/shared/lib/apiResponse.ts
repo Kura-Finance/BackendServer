@@ -1,3 +1,7 @@
+/**
+ * Standard JSON success/error response helpers for Express handlers.
+ */
+
 import { Response } from 'express';
 
 type ErrorPayload = {
@@ -6,6 +10,7 @@ type ErrorPayload = {
   details?: unknown;
 };
 
+/** Send `{ success: true, data, meta? }`. */
 export function sendSuccess<T>(
   res: Response,
   data: T,
@@ -19,6 +24,7 @@ export function sendSuccess<T>(
   });
 }
 
+/** Send `{ success: false, error }`. */
 export function sendError(
   res: Response,
   status: number,

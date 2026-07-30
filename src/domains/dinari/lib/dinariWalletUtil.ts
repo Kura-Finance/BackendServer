@@ -1,6 +1,8 @@
+/** Dinari wallet helpers: chain IDs, address normalization, connect-target checks. */
+
 import type { WalletChainID } from '@dinari/api-sdk/resources/v2/accounts/wallet/external';
 
-/** Dinari Connect Wallet API 允許的 chain_id（見 docs.dinari.com Connect Wallet）。 */
+/** Chain IDs accepted by Dinari Connect Wallet API (see docs.dinari.com). */
 export const DINARI_WALLET_CONNECT_CHAIN_IDS = new Set<string>([
   'eip155:0',
   'eip155:1',
@@ -13,14 +15,14 @@ export const DINARI_WALLET_CONNECT_CHAIN_IDS = new Set<string>([
   'eip155:202110',
 ]);
 
-/** SDK 型別上支援、但 Connect Wallet enterprise API 不接受的 testnet（會 422）。 */
+/** SDK-typed testnets rejected by Connect Wallet enterprise API (422). */
 const WALLET_CONNECT_UNSUPPORTED_CHAIN_IDS = new Set<string>([
   'eip155:84532',
   'eip155:11155111',
   'eip155:421614',
 ]);
 
-/** Dinari SDK 型別上支援的其他 chain id（非 wallet connect 路徑用）。 */
+/** Additional chain IDs typed by the Dinari SDK (non–wallet-connect paths). */
 const DINARI_WALLET_CHAIN_IDS = new Set<string>([
   ...DINARI_WALLET_CONNECT_CHAIN_IDS,
   ...WALLET_CONNECT_UNSUPPORTED_CHAIN_IDS,
@@ -61,7 +63,7 @@ export function defaultDinariChainId(): WalletChainID {
   return 'eip155:8453';
 }
 
-/** 正規化 EVM 地址為 lowercase `0x` + 40 hex。 */
+/** Normalize an EVM address to lowercase `0x` + 40 hex. */
 export function normalizeEvmAddress(address: string): string {
   const trimmed = address.trim();
   if (!/^0x[0-9a-fA-F]{40}$/.test(trimmed)) {
@@ -70,7 +72,7 @@ export function normalizeEvmAddress(address: string): string {
   return trimmed.toLowerCase();
 }
 
-/** 將輸入轉成 Dinari Connect Wallet 接受的 CAIP-2 chain id。 */
+/** Normalize input to a CAIP-2 chain id accepted by Dinari Connect Wallet. */
 export function normalizeWalletConnectChainId(chainId: string): WalletChainID {
   const raw = chainId.trim();
   let resolved: WalletChainID;
@@ -99,7 +101,7 @@ export function normalizeWalletConnectChainId(chainId: string): WalletChainID {
   return resolved;
 }
 
-/** 將 `84532` / `eip155:84532` 等輸入轉成 CAIP-2（含 SDK-only testnet）。 */
+/** Normalize `84532` / `eip155:84532` etc. to CAIP-2 (includes SDK-only testnets). */
 export function normalizeChainId(chainId: string): WalletChainID {
   const raw = chainId.trim();
 
@@ -118,13 +120,13 @@ export function normalizeChainId(chainId: string): WalletChainID {
 }
 
 /**
- * 取得 wallet nonce 時要依序嘗試的 chain_id 候選清單。
+ * Ordered chain_id candidates to try when fetching a wallet nonce.
  *
- * Dinari sandbox / production Connect Wallet 皆使用 Base 主網（eip155:8453）。
- * 某些 422 不會回 field_errors，由 getWalletNonce 逐一嘗試。
+ * Dinari sandbox / production Connect Wallet both use Base mainnet (eip155:8453).
+ * Some 422s omit field_errors; getWalletNonce tries candidates in order.
  *
- * - 有明確傳入 chainId → 放第一個優先嘗試（Connect 不支援的 testnet 仍可能 422）。
- * - 預設 → Base 主網，再 Ethereum / Arbitrum / EOA。
+ * - Explicit chainId → tried first (unsupported testnets may still 422).
+ * - Default → Base mainnet, then Ethereum / Arbitrum / EOA.
  */
 export function walletNonceChainCandidates(explicitChainId?: string | null): WalletChainID[] {
   const defaults: WalletChainID[] = [
@@ -141,9 +143,9 @@ export function walletNonceChainCandidates(explicitChainId?: string | null): Wal
 }
 
 /**
- * 推斷 wallet connect 用的 chain_id。
- * - 用戶 SCA → eip155:8453（Dinari sandbox / production）
- * - 用戶 EOA → eip155:0（Dinari 慣例）
+ * Infer chain_id for wallet connect.
+ * - User SCA → eip155:8453 (Dinari sandbox / production)
+ * - User EOA → eip155:0 (Dinari convention)
  */
 export function resolveWalletChainId(
   walletAddress: string,
@@ -198,7 +200,7 @@ export function formatDinariFieldErrors(error: unknown): string | undefined {
 
 export type WalletConnectTarget = 'eoa' | 'sca';
 
-/** 確認要連接的地址屬於此使用者；否則在呼叫 Dinari 前先回 400。 */
+/** Ensure the address belongs to this user; fail before calling Dinari otherwise. */
 export function classifyWalletConnectTarget(
   normalizedAddress: string,
   user: { walletAddress?: string | null | undefined; scaAddress?: string | null | undefined },

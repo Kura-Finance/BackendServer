@@ -1,3 +1,5 @@
+/** Stripe service — subscriptions, checkout, webhooks, and referral cashback hooks. */
+
 import Stripe from 'stripe';
 import { Prisma } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
@@ -288,7 +290,7 @@ export class StripeService {
       return;
     }
 
-    // 每次 webhook 先嘗試結算已到期的 pending 返現
+    // Settle due pending referral cashback before handling each webhook
     await ReferralCashbackService.settlePending();
 
     switch (event.type) {
@@ -454,7 +456,7 @@ export class StripeService {
   }
 
   private static async handleDisputeClosed(dispute: Stripe.Dispute, eventId: string): Promise<void> {
-    // 僅在爭議最終輸掉時失效返現
+    // Invalidate cashback only when the dispute is finally lost
     if (dispute.status === 'won') {
       return;
     }

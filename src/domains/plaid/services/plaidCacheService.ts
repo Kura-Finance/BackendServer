@@ -1,6 +1,5 @@
 /**
- * Plaid 快取服務
- * 協調快取、同步與財務快照相關操作
+ * Plaid cache service — cache, sync, and finance snapshot orchestration.
  */
 
 import { Prisma } from '@prisma/client';
@@ -52,9 +51,8 @@ import {
 } from '../lib/plaidPayloadBuilder';
 
 /**
- * Phase 3 Zero-Access E2EE 加密形式快照
- *
- * 後端只回傳 metadata + ciphertext，前端用 privateKey unwrap payloadKeys 後解密 row payload。
+ * Phase 3 Zero-Access E2EE encrypted snapshot.
+ * Backend returns metadata + ciphertext only; client unwraps payloadKeys and decrypts rows.
  */
 export interface EncryptedFinanceSnapshot {
   payloadKeys: Array<{ id: string; scope: string; wrappedSek: string; algorithm: string }>;
@@ -111,7 +109,7 @@ export interface EncryptedFinanceSnapshot {
   failedItemIds: string[];
 }
 
-// 後端 sync 時暫態持有的明文 plaintext（API → SEK 加密 → DB）
+// Transient plaintext held during sync (API → SEK encrypt → DB)
 type PlaintextFinanceSnapshot = FinanceSnapshot;
 
 interface FetchPlaintextResult {
@@ -131,13 +129,13 @@ interface FetchPlaintextResult {
 
 export class PlaidCacheService {
   /**
-   * 取得「加密形式」財務快照（優化版－支持快取）。
+   * Optimized encrypted finance snapshot (cache-aware).
    *
-   * Phase 3 Zero-Access E2EE only：
-   *   - 快取未過期 → 直接從 cache 撈加密 row（後端不解密）
-   *   - 快取過期或 isManualRefresh → 從 Plaid API 抓明文 → 加密寫 cache → 從 cache 撈加密 row 回傳
+   * Phase 3 Zero-Access E2EE only:
+   *   - Fresh cache → return encrypted rows (backend never decrypts)
+   *   - Stale or isManualRefresh → fetch plaintext from Plaid → encrypt to cache → re-read encrypted rows
    *
-   * 後端在第二條路徑中**只在記憶體**短暫持有明文，立即 SEK 加密寫 DB 後 zeroize SEK。
+   * On the refresh path, plaintext exists **only in memory** briefly, then SEK-encrypt to DB and zeroize.
    */
   static async getFinanceSnapshotOptimized(
     userId: string,
@@ -145,7 +143,7 @@ export class PlaidCacheService {
   ): Promise<EncryptedFinanceSnapshot> {
     const cacheStartTime = Date.now();
 
-    // 只有手動刷新才檢查限制，自動刷新不受限制
+    // Rate limits apply to manual refresh only
     if (isManualRefresh) {
       const refreshCheck = await checkApiLimit(userId, 'plaid_refresh');
 
@@ -168,7 +166,7 @@ export class PlaidCacheService {
 
     const forceRefresh = isManualRefresh;
 
-    // 檢查快取狀態
+    // Check cache freshness
     const shouldRefreshAccounts = forceRefresh || (await shouldRefreshAccountsCache(userId));
     const shouldRefreshTransactions = forceRefresh || (await shouldRefreshTransactionsCache(userId));
     const shouldRefreshInvestments = forceRefresh || (await shouldRefreshInvestmentsCache(userId));
@@ -186,7 +184,7 @@ export class PlaidCacheService {
       return this.getEncryptedSnapshotFromCache(userId);
     }
 
-    // 從 Plaid API 取得明文 → 加密寫 cache
+    // Fetch plaintext from Plaid → encrypt into cache
     logDebug('Fetching fresh data from Plaid API', { userId, forceRefresh });
 
     let fetchResult: FetchPlaintextResult;
@@ -237,8 +235,8 @@ export class PlaidCacheService {
       failedItemCount: fetchResult.failedItemIds.length,
     });
 
-    // 加密寫入完成後，從 cache 撈出最新加密 snapshot；附上本輪失敗的 item ids，
-    // 讓 controller / 前端可以區分「真的全成功」與「部分 item 失敗、其餘照舊」。
+    // After encrypt-write, re-read encrypted snapshot; attach failed item ids so
+    // controller/client can tell full success vs partial failure.
     const encrypted = await this.getEncryptedSnapshotFromCache(userId);
     return {
       ...encrypted,
@@ -248,9 +246,10 @@ export class PlaidCacheService {
   }
 
   /**
-   * 若已有加密投資快取卻從來沒寫過 plaidInvestment AssetSnapshot，
-   * 把 investmentsSyncedAt 清掉，迫使下一次 optimized 讀取走 Plaid 刷新並寫入歷史。
-   * （修復 mobile 只打 cache-only encrypted endpoint 導致 Broker「No performance data yet」）
+   * If encrypted investment cache exists but no plaidInvestment AssetSnapshot was
+   * ever written, clear investmentsSyncedAt so the next optimized read refreshes
+   * from Plaid and seeds history (fixes mobile cache-only encrypted reads showing
+   * Broker "No performance data yet").
    */
   static async ensureInvestmentHistorySeeded(userId: string): Promise<void> {
     const investmentCount = await prisma.plaidInvestmentCache.count({
@@ -282,18 +281,14 @@ export class PlaidCacheService {
   }
 
   /**
-   * 從緩存取得「加密形式」財務快照（Phase 3 Zero-Access E2EE）
+   * Read encrypted finance snapshot from cache (Phase 3 Zero-Access E2EE).
    *
-   * 與 `getSnapshotFromCache` 不同：
-   *   - 後端不解密任何 payload，只 select metadata + payloadCiphertext + payloadKeyId
-   *   - 額外回傳 payloadKeys（去重後的 wrappedSek 清單）
+   * Unlike plaintext cache reads:
+   *   - Backend never decrypts; selects metadata + payloadCiphertext + payloadKeyId
+   *   - Also returns deduped payloadKeys (wrappedSek list)
    *
-   * 前端流程：
-   *   1. 用 privateKey 對每個 payloadKey 做 sealed-box-open → 拿到 SEK
-   *   2. 對每個 row 用對應 SEK 解 payloadCiphertext → 拿到 sensitive payload
-   *   3. 與 metadata 合併 → 渲染
-   *
-   * 沒有 payloadCiphertext 的 row（PR 2 之前未 setup keypair 時寫入的）會被跳過。
+   * Client: sealed-box-open each wrappedSek → decrypt each row → merge with metadata.
+   * Rows without payloadCiphertext (pre-keypair legacy) are skipped.
    */
   static async getEncryptedSnapshotFromCache(userId: string): Promise<EncryptedFinanceSnapshot> {
     const cacheStartTime = Date.now();
@@ -439,11 +434,11 @@ export class PlaidCacheService {
   }
 
   /**
-   * 從 Plaid API 取得明文增量快照（內部用）。
+   * Fetch plaintext incremental snapshot from Plaid (internal).
    *
-   * 此回傳值僅在 `saveFinanceSnapshotToCache` 內被加密寫入 DB；caller 不應外洩到 controller。
-   * transactionsSync 為增量 API，回傳是「上次 cursor 之後新增/修改的 transactions」。
-   * 既有 transactions 保留在 DB 加密表內，**不在此回傳值中**——caller 不需要 merge。
+   * Encrypted into DB only inside `saveFinanceSnapshotToCache`; do not leak to controllers.
+   * transactionsSync returns added/modified since last cursor; existing encrypted
+   * transactions stay in DB and are **not** in this return — no merge needed.
    *
    * `failedItemIds` records `PlaidItem.id` values whose per-item fetch threw.
    * Callers can surface this so the front-end knows the snapshot is partial.
@@ -491,12 +486,12 @@ export class PlaidCacheService {
     const failedItemIds: string[] = [];
     const pendingCursorUpdates: Array<{ plaidItemId: string; nextCursor: string }> = [];
 
-    // 並行處理每個 Plaid 項目（Item）
+    // Process each Plaid Item in parallel
     for (const item of plaidItems) {
       try {
         const { decryptedAccessToken } = PlaidAuthService.decryptPlaidItem({ accessToken: item.accessToken, itemId: item.itemId });
 
-        // 並行獲取帳戶、交易、投資數據
+        // Fetch accounts, transactions, and investments in parallel
         const [accountData, transactionData, investmentData] = await Promise.all([
           PlaidAccountService.fetchAccountsWithAPY(userPlaidClient, item, decryptedAccessToken),
           PlaidTransactionService.fetchTransactions(
@@ -507,8 +502,8 @@ export class PlaidCacheService {
           PlaidInvestmentService.fetchInvestmentHoldings(userPlaidClient, item, decryptedAccessToken),
         ]);
 
-        // Tag每筆 account / transaction 的來源 Plaid Item，讓加密 cache row 能寫入
-        // 正確的 plaidItemId（供前端把 account 與 item join；避免空字串 fallback）。
+        // Tag each account/transaction with its Plaid Item so encrypted cache rows
+        // get the correct plaidItemId (client joins account↔item; avoid empty fallback).
         accounts.push(...accountData.bankingAccounts.map((a) => ({ ...a, plaidItemId: item.id })));
         transactions.push(...transactionData.transactions.map((t) => ({ ...t, plaidItemId: item.id })));
         transactionData.removedTransactionIds.forEach((id) => removedTransactionIds.add(id));
@@ -546,7 +541,7 @@ export class PlaidCacheService {
       }
     }
 
-    // 處理已刪除的交易 — 直接從加密 cache 移除（不依賴明文欄位）
+    // Remove deleted transactions from encrypted cache (no plaintext fields needed)
     if (removedTransactionIds.size > 0) {
       try {
         await prisma.plaidTransactionCache.deleteMany({
@@ -560,7 +555,7 @@ export class PlaidCacheService {
       }
     }
 
-    // 去重（同一 user 跨 item 不會有同 id，但保險起見）
+    // Dedupe (ids should be unique per user across items; defensive)
     const dedupedAccounts = Array.from(new Map(accounts.map((acc) => [acc.id, acc])).values());
     const dedupedInvestmentAccounts = Array.from(new Map(investmentAccounts.map((acc) => [acc.id, acc])).values());
     const dedupedInvestments = Array.from(new Map(investments.map((inv) => [inv.id, inv])).values());
@@ -611,15 +606,15 @@ export class PlaidCacheService {
   }
 
   /**
-   * 將明文財務快照加密寫入快取（Phase 3 Zero-Access E2EE only）。
+   * Encrypt plaintext finance snapshot into cache (Phase 3 Zero-Access E2EE only).
    *
-   * 流程：
-   *   1. 必須能取得使用者的 publicKey；否則拋 KeyPairNotConfiguredError
-   *      （PR 5 已移除 legacy 寫入路徑，使用者必須先 setup keypair）
-   *   2. 為這次 sync 建立 4 把 SEK（accounts / transactions / investmentAccounts / investments）
-   *   3. 每個 row 把 sensitive 欄位整包 AES-256-GCM 加密成 payloadCiphertext
-   *   4. 同步寫 cashFlow + plaidInvestment 加密 AssetSnapshot（趁明文還在記憶體）
-   *   5. finally 立即 zeroize 所有 SEK
+   * Flow:
+   *   1. Require user publicKey or throw KeyPairNotConfiguredError
+   *      (PR 5 removed legacy writes — keypair setup required)
+   *   2. Create 4 SEKs for this sync (accounts / transactions / investmentAccounts / investments)
+   *   3. AES-256-GCM encrypt each row's sensitive fields into payloadCiphertext
+   *   4. Write cashFlow + plaidInvestment encrypted AssetSnapshots while plaintext is in memory
+   *   5. finally zeroize all SEKs
    */
   private static async saveFinanceSnapshotToCache(
     userId: string,
@@ -649,13 +644,12 @@ export class PlaidCacheService {
         async (tx: Prisma.TransactionClient) => {
         await getOrCreateSyncLog(userId, tx);
 
-        // 快取表的 plaidItemId 已是 FK（onDelete: Cascade）。snapshot 是在交易外
-        // 從 Plaid 抓的，若使用者在「抓取 → 寫入」之間斷線（disconnect / ITEM_REMOVE
-        // webhook / token rotation 等），對應的 PlaidItem 已被刪除，此時若仍以該
-        // plaidItemId 寫入會觸發外鍵違反並讓整個 sync 失敗。
-        // 故在交易內重新讀取仍存在的 Item，過濾掉指向已刪除 Item 的 row（plaidItemId
-        // 為 null 的 row 仍保留，FK 允許 null）。已刪除 Item 的舊 cache 已由 cascade 清除，
-        // 此處丟棄其新資料即為正確語意。
+        // Cache plaidItemId is an FK (onDelete: Cascade). Snapshot was fetched outside
+        // the transaction; if the user disconnects between fetch and write (disconnect /
+        // ITEM_REMOVE / token rotation), writing the stale plaidItemId would FK-fail
+        // the whole sync. Re-read live Items inside the transaction and drop rows for
+        // deleted Items (null plaidItemId rows are kept). Cascade already cleared old
+        // cache for deleted Items — discarding their new rows is correct.
         const liveItems = await tx.plaidItem.findMany({ where: { userId }, select: { id: true } });
         const validItemIds = new Set(liveItems.map((i) => i.id));
         const hasValidItemRef = (pid: string | null | undefined): boolean => pid == null || validItemIds.has(pid);
@@ -712,7 +706,7 @@ export class PlaidCacheService {
           throw error;
         }
 
-        // ── 1. 帳戶 ──
+        // ── 1. Accounts ──
         if (accountsForCache.length > 0) {
           const accountsToCache = accountsForCache.map((acc) => {
             const split = splitAccount(acc, acc.plaidItemId ?? null, 'banking');
@@ -730,7 +724,7 @@ export class PlaidCacheService {
           await updateSyncTimestamp(userId, 'accounts', { total: accountsToCache.length }, tx);
         }
 
-        // ── 2. 交易 ──
+        // ── 2. Transactions ──
         if (transactionsForCache.length > 0) {
           const transactionsToCache = transactionsForCache.map((tx2) => {
             const split = splitTransaction(tx2, tx2.plaidItemId ?? null);
@@ -752,7 +746,7 @@ export class PlaidCacheService {
           await updateSyncTimestamp(userId, 'transactions', { total: transactionsToCache.length }, tx);
         }
 
-        // ── 3. 投資帳戶 ──
+        // ── 3. Investment accounts ──
         if (investmentAccountsForCache.length > 0) {
           const investmentAccountsToCache = investmentAccountsForCache.map((acc) => {
             const split = splitInvestmentAccount(acc, acc.plaidItemId ?? null);
@@ -767,7 +761,7 @@ export class PlaidCacheService {
           await upsertInvestmentAccountsCache(userId, investmentAccountsToCache, tx);
         }
 
-        // ── 4. 投資持倉 ──
+        // ── 4. Investment holdings ──
         if (investmentsForCache.length > 0) {
           const investmentsToCache = investmentsForCache.map((inv) => {
             const split = splitInvestment(inv, inv.plaidItemId ?? null);
@@ -810,8 +804,8 @@ export class PlaidCacheService {
         investments: snapshot.investments.length,
       });
 
-      // ── Phase 3: 在還持有明文時直接算 cashFlow + plaidInvestment 並加密寫入 ──
-      // exchange / debank 的 cryptoSpot / defiProtocol 由各自的 sync 自己更新。
+      // ── Phase 3: compute cashFlow + plaidInvestment while plaintext is still held ──
+      // cryptoSpot / defiProtocol are updated by exchange / debank syncs.
       // Best-effort: failures here are logged in recordSnapshotFromPlaintext;
       // a missing snapshot just means the asset-history chart misses a point
       // for this metric, not that the Plaid cache is invalid.
@@ -828,8 +822,8 @@ export class PlaidCacheService {
         });
       }
 
-      // ── Best-effort GC：清掉本輪 snapshot 模式換下來的孤兒 EncryptedPayloadKey ──
-      // 失敗不影響已寫入的 cache；下一輪 sync 會再嘗試。
+      // ── Best-effort GC: drop orphan EncryptedPayloadKeys from this snapshot replace ──
+      // Failure does not affect written cache; next sync will retry.
       try {
         await PayloadKeyService.deleteOrphanedKeys(userId);
       } catch (gcError) {

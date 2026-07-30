@@ -31,17 +31,18 @@ import {
 import { getExchangeIcon } from '../shared/lib/symbolsAndExchangesUtil';
 
 /**
- * Demo Mode（App Store 審核專用）
+ * Demo Mode (App Store review).
  *
- * 背景：本 App 的儀表板資料走 zero-access E2EE，且 Plaid / 交易所 / DeBank / Bridge 都需要
- * 真實帳戶才有資料。Apple 審核員在全新裝置上登入 demo 帳號後，無法連真實銀行 /
- * 交易所或 Bridge，dashboard 會是空的 → 觸發 Guideline 2.1(a) 駁回。
+ * Dashboard data is zero-access E2EE, and Plaid / exchanges / DeBank / Bridge need real
+ * accounts. Apple reviewers on a fresh device cannot link those services, so the dashboard
+ * would be empty and fail Guideline 2.1(a).
  *
- * 解法：對 demo 帳號回傳「樣本資料」，但仍用該帳號**真實的 publicKey** 把資料 seal +
- * 加密成與正式端點完全相同的結構。前端照常用 privateKey 解密渲染，**完全不需改前端**。
+ * Fix: return sample payloads for demo accounts, sealed + encrypted with that account's
+ * real publicKey into the same shape as production endpoints. The client decrypts with its
+ * privateKey as usual — no frontend changes.
  *
- * demo 帳號判定：email 為 Privy 測試帳號網域（@privy.io，真實用戶無法註冊），
- * 或列在 DEMO_USER_EMAILS env（逗號分隔）。非 demo 帳號完全不受影響。
+ * Demo accounts: email on Privy's test domain (@privy.io; real users cannot register), or
+ * listed in DEMO_USER_EMAILS (comma-separated). Non-demo accounts are unaffected.
  */
 
 const ALGORITHM = 'x25519-sealedbox+aes-256-gcm';
@@ -57,7 +58,7 @@ const DEMO_CRYPTO_FEE_PERCENT = '0.85';
 const DEMO_PAYOUT_FEE_PERCENT = '0.85';
 const DEMO_TRON_DEPOSIT_ADDRESS = 'TDemoBridgeTronUsdtDepositAddress000001';
 
-/** Cash Deposit 支援的全部法幣入金（對應 Bridge VA on-ramp UI） */
+/** All Cash Deposit fiat currencies shown in the Bridge VA on-ramp UI. */
 const DEMO_ONRAMP_CURRENCIES = ['usd', 'eur', 'gbp', 'mxn', 'brl', 'cop'] as const;
 type DemoOnrampCurrency = (typeof DEMO_ONRAMP_CURRENCIES)[number];
 
@@ -307,7 +308,7 @@ function demoDepositPayer(currency: DemoOnrampCurrency): DepositPayerInfo {
 }
 
 export class DemoService {
-  /** 由 email 判定是否 demo 帳號（不查 DB）。 */
+  /** Whether email is a demo account (no DB lookup). */
   static isDemoEmail(email: string | null | undefined): boolean {
     if (!email) return false;
     const e = email.trim().toLowerCase();
@@ -319,7 +320,7 @@ export class DemoService {
     return allow.includes(e);
   }
 
-  /** 查 DB 判定 userId 是否 demo 帳號。 */
+  /** Whether userId is a demo account (loads email from DB). */
   static async isDemoUser(userId: string): Promise<boolean> {
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -336,7 +337,7 @@ export class DemoService {
     return DEMO_TRANSFER_ONRAMP_ID;
   }
 
-  /** @deprecated 使用 bridgeExternalAccountId('usd') */
+  /** @deprecated Prefer bridgeExternalAccountIdFor('usd'). */
   static get bridgeExternalAccountId(): string {
     return demoExternalConfig('usd').bridgeExternalAccountId;
   }
@@ -353,7 +354,7 @@ export class DemoService {
     return DemoService.bridgeExternalAccountIds().includes(externalAccountId);
   }
 
-  /** 取得 demo 用戶 publicKey；未 setup keypair 回 null（caller 回空資料）。 */
+  /** Demo user publicKey; null if keypair not set up (caller should return empty data). */
   private static async getPublicKey(userId: string): Promise<string | null> {
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -390,7 +391,7 @@ export class DemoService {
     return { id: s.payloadKeyId, scope: s.scope, wrappedSek: s.wrappedSek, algorithm: ALGORITHM };
   }
 
-  // ── Plaid 財務快照 ────────────────────────────────────────────────
+  // ── Plaid finance snapshot ────────────────────────────────────────
   static async plaidSnapshot(userId: string): Promise<EncryptedFinanceSnapshot> {
     const publicKey = await DemoService.getPublicKey(userId);
     const empty: EncryptedFinanceSnapshot = {
@@ -552,7 +553,7 @@ export class DemoService {
     }
   }
 
-  // ── 交易所帳戶列表 ────────────────────────────────────────────────
+  // ── Exchange account list ─────────────────────────────────────────
   static exchangeAccounts(): Array<{
     id: string;
     exchange: string;
@@ -578,7 +579,7 @@ export class DemoService {
     ];
   }
 
-  // ── 交易所餘額 + 資產 ─────────────────────────────────────────────
+  // ── Exchange balances + assets ────────────────────────────────────
   static async exchangeSnapshot(userId: string): Promise<EncryptedExchangeSnapshot> {
     const publicKey = await DemoService.getPublicKey(userId);
     const account = {
@@ -630,7 +631,7 @@ export class DemoService {
     }
   }
 
-  // ── 資產歷史（淨值曲線）──────────────────────────────────────────
+  // ── Asset history (net-worth curve) ───────────────────────────────
   static async assetHistory(userId: string, days: number): Promise<EncryptedAssetHistoryResponse> {
     const publicKey = await DemoService.getPublicKey(userId);
     if (!publicKey) {
@@ -642,7 +643,7 @@ export class DemoService {
     try {
       const enc = (value: number) => encryptPayload(key.sek, { value });
 
-      // 兩條 metric：Plaid 投資、交易所現貨。帶緩升趨勢 + 微噪。
+      // Two metrics: Plaid investments + exchange spot; gentle uptrend + light noise.
       const metrics: Array<{ metric: string; base: number; growth: number; amp: number }> = [
         { metric: 'plaidInvestment', base: 15000, growth: 18, amp: 350 },
         { metric: `cryptoSpot:exchange:${DEMO_EXCHANGE_ACCOUNT_ID}`, base: 60000, growth: 55, amp: 1800 },
@@ -675,7 +676,7 @@ export class DemoService {
     }
   }
 
-  // ── Bridge On/Off Ramp（App Store 審核：無真實 Bridge 帳戶時仍顯示完整 UI）────
+  // ── Bridge on/off-ramp (full UI without a real Bridge account) ────
 
   static bridgeKycLink(customerType: BridgeCustomerType = 'individual'): KycLinkResult {
     return {
@@ -823,7 +824,7 @@ export class DemoService {
       });
     }
 
-    // USD 額外一筆處理中入金
+    // Extra in-progress USD deposit for UI coverage.
     const pendingPayer = demoDepositPayer('usd');
     deposits.unshift({
       depositId: 'demo-deposit-usd-pending',

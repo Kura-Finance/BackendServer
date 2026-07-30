@@ -1,3 +1,7 @@
+/**
+ * Platform insights domain types — Investor summary, PlatformRecord I/O, revenue products.
+ */
+
 export type PlatformRecordCategory = 'revenue' | 'waitlist' | 'active_users';
 
 export type PlatformRevenueSource =
@@ -13,7 +17,7 @@ export type PlatformRevenueSource =
   | 'waitlist'
   | 'privy';
 
-/** 可計入 Refer 分潤的營收來源（寫入 PlatformRecord.metadata.referrable）。 */
+/** Revenue sources eligible for Refer cashback (`PlatformRecord.metadata.referrable`). */
 export const REFERRABLE_REVENUE_SOURCES = new Set<string>([
   'stripe',
   'bridge_va',
@@ -40,11 +44,11 @@ export interface RecordPlatformRecordInput {
   depositId?: string | null;
   scaAddress?: string | null;
   occurredAt: Date;
-  /** 是否為可分 Refer 營收；revenue 類別且來源在 REFERRABLE_REVENUE_SOURCES 時預設 true。 */
+  /** Eligible for Refer cashback; defaults true for revenue + REFERRABLE_REVENUE_SOURCES. */
   referrable?: boolean;
-  /** 被邀請人的邀請人；未提供且 referrable 時由 userId 查 User.referredByUserId。 */
+  /** Invitee's inviter; if omitted and referrable, resolved from User.referredByUserId. */
   inviterUserId?: string | null;
-  /** Stripe 等來源專用，寫入 ReferralCashback 供退款/爭議沖銷。 */
+  /** Stripe-only context written to ReferralCashback for refund/dispute clawbacks. */
   referralContext?: {
     stripeInvoiceId?: string | null;
     stripeChargeId?: string | null;
@@ -116,7 +120,7 @@ export interface PlatformRevenueSummary {
   };
 }
 
-/** GET /api/platform-insights/summary 回應資料 */
+/** GET /api/platform-insights/summary response body. */
 export interface InvestorSummary {
   period: { from: string; to: string };
   process: InvestorProcessSummary;
@@ -161,7 +165,7 @@ export interface InvestorSummary {
   };
 }
 
-/** GET /api/platform-insights/records、/process-events 單筆紀錄 */
+/** Single row for GET /api/platform-insights/records and /process-events. */
 export interface PlatformRecordResponse {
   id: string;
   category: string;
@@ -183,14 +187,14 @@ export interface PlatformRecordResponse {
   createdAt: string;
 }
 
-/** GET /api/platform-insights/records 回應資料 */
+/** GET /api/platform-insights/records response body. */
 export interface PlatformRecordsListResponse {
   records: PlatformRecordResponse[];
   total: number;
   count: number;
 }
 
-/** GET /api/platform-insights/process-events 回應資料 */
+/** GET /api/platform-insights/process-events response body. */
 export interface ProcessEventsListResponse {
   events: PlatformRecordResponse[];
   count: number;

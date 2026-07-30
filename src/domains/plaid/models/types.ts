@@ -1,5 +1,5 @@
 /**
- * Plaid 領域模型型別
+ * Plaid domain model types for accounts, transactions, and investments.
  */
 
 export type BankingAccountType = 'checking' | 'saving' | 'credit' | 'crypto';
@@ -13,11 +13,11 @@ export interface PlaidAccountPayload {
   name: string;
   balance: number;
   type: BankingAccountType;
-  logo: string; // 優先使用我們生成的 logo（Logo.dev），如果 Plaid 返回則使用 Plaid 的
-  plaidLogo?: string; // Plaid 原生返回的 logo (SVG URL)
-  apy?: number; // 年化報酬率 (APY) - 儲蓄/支票帳戶
-  mask?: string; // 帳號末 4 碼（部分機構不提供時為 undefined）
-  plaidItemId?: string; // 所屬 Plaid Item（aggregation 流程於 fetch 時帶入）
+  logo: string; // Prefer our Logo.dev logo; fall back to Plaid when present
+  plaidLogo?: string; // Plaid-native logo (SVG URL)
+  apy?: number; // Annual percentage yield for savings/checking
+  mask?: string; // Last 4 digits (undefined when institution omits)
+  plaidItemId?: string; // Owning Plaid Item (set during aggregation fetch)
 }
 
 export interface PlaidTransactionPayload {
@@ -30,27 +30,27 @@ export interface PlaidTransactionPayload {
   merchant: string;
   category: string;
   type: TransactionType;
-  
-  // ===== 進階交易信息 =====
-  personalFinanceCategory?: string; // Plaid PFC 分類
-  isRecurring?: boolean; // 是否為定期交易
-  recurringFrequency?: string; // 重複頻率 (WEEKLY, MONTHLY, YEARLY 等)
-  isSubscription?: boolean; // 是否為訂閱交易
-  enrichedMerchantName?: string; // 商家正式名稱
-  merchantLogo?: string; // 商家 LOGO URL（來自 Plaid）
-  plaidMerchantLogo?: string; // Plaid 原生返回的商家 logo (如果有)
-  merchantCategory?: string; // 商家分類
-  isPending?: boolean; // 是否為待處理交易
-  plaidItemId?: string; // 所屬 Plaid Item（aggregation 流程於 fetch 時帶入）
+
+  // ===== Enriched transaction fields =====
+  personalFinanceCategory?: string; // Plaid PFC category
+  isRecurring?: boolean;
+  recurringFrequency?: string; // WEEKLY, MONTHLY, YEARLY, etc.
+  isSubscription?: boolean;
+  enrichedMerchantName?: string;
+  merchantLogo?: string; // Merchant logo URL from Plaid
+  plaidMerchantLogo?: string; // Plaid-native merchant logo when present
+  merchantCategory?: string;
+  isPending?: boolean;
+  plaidItemId?: string; // Owning Plaid Item (set during aggregation fetch)
 }
 
 export interface PlaidInvestmentAccountPayload {
   id: string;
   name: string;
   type: InvestmentAccountType;
-  logo: string; // 我們生成的 logo
-  plaidLogo?: string; // Plaid 原生返回的 logo (如果有)
-  plaidItemId?: string; // 所屬 Plaid Item（fetch 時帶入，供快取建立 cascade relation）
+  logo: string; // Our generated logo
+  plaidLogo?: string; // Plaid-native logo when present
+  plaidItemId?: string; // Owning Plaid Item (for cache cascade relation)
 }
 
 export interface PlaidInvestmentPayload {
@@ -63,7 +63,7 @@ export interface PlaidInvestmentPayload {
   change24h: number;
   type: InvestmentType;
   logo: string;
-  plaidItemId?: string; // 所屬 Plaid Item（fetch 時帶入，供快取建立 cascade relation）
+  plaidItemId?: string; // Owning Plaid Item (for cache cascade relation)
 }
 
 export interface FinanceSnapshot {

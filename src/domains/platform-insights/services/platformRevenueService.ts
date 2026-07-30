@@ -1,3 +1,8 @@
+/**
+ * PlatformRecord write path + Investor summary aggregation.
+ * Idempotent ingest from Stripe, Bridge, Dinari, LI.FI, Privy, waitlist, etc.
+ */
+
 import { Prisma } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import type Stripe from 'stripe';
@@ -90,7 +95,7 @@ function emptyProductLine(
   };
 }
 
-/** Dinari on-chain / order-request 成交態（大小寫不敏感）。 */
+/** Dinari on-chain / order-request filled statuses (case-insensitive). */
 const DINARI_FILLED_STATUSES = new Set([
   'filled',
   'completed',
@@ -99,7 +104,7 @@ const DINARI_FILLED_STATUSES = new Set([
   'done',
 ]);
 
-/** Dinari 訂單取消／失效態（大小寫不敏感）。 */
+/** Dinari cancelled / terminal failure statuses (case-insensitive). */
 const DINARI_CANCELLED_STATUSES = new Set([
   'cancelled',
   'canceled',
@@ -111,11 +116,13 @@ const DINARI_CANCELLED_STATUSES = new Set([
   'refunded',
 ]);
 
+/** True if Dinari status is a filled/settled terminal state. */
 export function isDinariOrderFilled(status: string | null | undefined): boolean {
   if (!status) return false;
   return DINARI_FILLED_STATUSES.has(status.trim().toLowerCase());
 }
 
+/** True if Dinari status is cancelled or otherwise terminal-failed. */
 export function isDinariOrderCancelled(status: string | null | undefined): boolean {
   if (!status) return false;
   return DINARI_CANCELLED_STATUSES.has(status.trim().toLowerCase());
@@ -158,7 +165,7 @@ function buildRecordMetadata(
 }
 
 export class PlatformRecordService {
-  /** 冪等寫入 PlatformRecord（統一投資人 DB）。 */
+  /** Idempotent PlatformRecord write (unified Investor DB). */
   static async record(input: RecordPlatformRecordInput): Promise<void> {
     const referrable = resolveReferrable(input);
     const inviterUserId = referrable
@@ -189,7 +196,7 @@ export class PlatformRecordService {
       await prisma.platformRecord.create({ data });
     } catch (error) {
       if (error instanceof PrismaClientKnownRequestError && error.code === 'P2002') {
-        // 冪等重試 / backfill：更新金額欄位，不重發 Refer 分潤
+        // Idempotent retry / backfill: refresh amounts; do not re-award Refer cashback.
         await prisma.platformRecord.update({
           where: { idempotencyKey: input.idempotencyKey },
           data: {
@@ -413,7 +420,7 @@ export class PlatformRecordService {
     });
   }
 
-  /** LI.FI DONE transfer → Investor 處理量；平台營收固定 process × 0.25%。 */
+  /** LI.FI DONE transfer → Investor process volume; platform fee = process × 0.25%. */
   static async recordFromLifiTransfer(params: {
     userId: string | null;
     scaAddress: string | null;
@@ -797,7 +804,7 @@ export class PlatformRecordService {
     const revenueEvents = await prisma.platformRecord.findMany({
       where: {
         category: 'revenue',
-        // 排除 LI.FI sync checkpoint（無處理量，不應進 Investor count）
+        // Exclude LI.FI sync checkpoint (no process volume; omit from Investor counts).
         eventType: { not: 'lifi_transfers_synced' },
         occurredAt: { gte: period.from, lte: period.to },
       },

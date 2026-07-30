@@ -1,16 +1,16 @@
 /**
  * E2EE Key Pair Service
  *
- * 管理使用者的 X25519 keypair：
- *   publicKey            — 後端用來 wrap SEK（明文存放）
- *   encryptedPrivateKey  — 用 KEK 加密後的 privateKey，後端永遠無法解
+ * Manages the user's X25519 keypair:
+ *   publicKey            — used by backend to wrap SEK (stored in plaintext)
+ *   encryptedPrivateKey  — privateKey encrypted with KEK; backend can never decrypt
  *
- * 流程：
- *   1. 使用者登入後（KEK 在 client 記憶體裡）
- *   2. 客戶端呼叫 GET  /api/auth/keys/me 看自己有沒有 keypair
- *   3. 若沒有：客戶端生成 X25519 keypair → 用 KEK encrypt privateKey →
- *      呼叫 POST /api/auth/keys/setup 上傳 { publicKey, encryptedPrivateKey }
- *   4. 若有：客戶端讀回 encryptedPrivateKey，本地用 KEK 解開 privateKey
+ * Flow:
+ *   1. After login (KEK in client memory)
+ *   2. Client GET /api/auth/keys/me to check for an existing keypair
+ *   3. If none: client generates X25519 keypair → encrypts privateKey with KEK →
+ *      POST /api/auth/keys/setup with { publicKey, encryptedPrivateKey }
+ *   4. If present: client reads encryptedPrivateKey and unwraps with KEK locally
  */
 
 import { prisma } from '../../shared/lib/prisma';
@@ -43,7 +43,7 @@ export class InvalidKeyPairError extends Error {
 export interface KeyPairPayload {
   publicKey: string;            // base64(X25519 public key, 32 bytes)
   encryptedPrivateKey: string;  // base64(KEK-wrapped private key)
-  kekSalt?: string;             // Passkey PRF salt (hex) — 後端僅儲存，永不參與推導
+  kekSalt?: string;             // Passkey PRF salt (hex) — stored only; never used in derivation
 }
 
 export interface KeyPairView {
@@ -56,10 +56,10 @@ export interface KeyPairView {
 
 export class KeyPairService {
   /**
-   * 首次設定 keypair。
+   * First-time keypair setup.
    *
-   * 拒絕覆寫：若已有 keypair，丟 KeyPairAlreadyConfiguredError；
-   * 想換 keypair 改用 `rotate` 並警告會讓既有 wrappedSek 全部失效。
+   * Refuses overwrite: throws KeyPairAlreadyConfiguredError if already set;
+   * to replace, use `rotate` (invalidates all existing wrappedSek).
    */
   static async setup(userId: string, payload: KeyPairPayload): Promise<KeyPairView> {
     this.validatePayload(payload);
@@ -99,7 +99,7 @@ export class KeyPairService {
   }
 
   /**
-   * 取得自己的 keypair（含 encryptedPrivateKey）— 客戶端用 KEK 解開後使用。
+   * Fetch own keypair (incl. encryptedPrivateKey) — client unwraps with KEK.
    */
   static async getMine(userId: string): Promise<KeyPairView> {
     const user = await prisma.user.findUnique({
@@ -121,7 +121,7 @@ export class KeyPairService {
   }
 
   /**
-   * 取得僅 publicKey（給後端內部 / 其他 service 用，永遠不會回傳 privateKey）。
+   * Fetch publicKey only (internal / other services; never returns privateKey).
    */
   static async getPublicKey(userId: string): Promise<string> {
     const user = await prisma.user.findUnique({
@@ -137,15 +137,15 @@ export class KeyPairService {
   }
 
   /**
-   * 輪替 keypair。
+   * Rotate keypair.
    *
-   * ⚠️ 警告：所有現有的 EncryptedPayloadKey.wrappedSek 都會無法解開，
-   * 因為它們是用舊的 publicKey wrap 的。
-   * 呼叫前 caller 必須做以下其中一件事：
-   *   (a) 先把所有業務資料重新加密（用客戶端解出明文 → 用新 publicKey 重新 wrap）
-   *   (b) 接受所有業務 cache 失效，等下次 sync 自動重建
+   * Warning: all existing EncryptedPayloadKey.wrappedSek become unreadable,
+   * because they were wrapped with the old publicKey.
+   * Before calling, the caller must either:
+   *   (a) Re-encrypt all business data (client decrypts → re-wrap with new publicKey)
+   *   (b) Accept that all business caches are invalid until the next sync rebuilds them
    *
-   * PR 1 階段先暴露 API、預設拒絕當 user 已有資料 — 等之後 rotate 工具實作後放行。
+   * PR 1 exposes the API but rejects when the user already has data — unlock after rotate tooling ships.
    */
   static async rotate(userId: string, payload: KeyPairPayload): Promise<KeyPairView> {
     this.validatePayload(payload);
@@ -195,7 +195,7 @@ export class KeyPairService {
     if (!isValidPublicKeyB64(payload.publicKey)) {
       throw new InvalidKeyPairError('publicKey must be a base64 string of 32 bytes (X25519)');
     }
-    // encryptedPrivateKey 是 client 自由格式，後端只檢非空 + 上限長度
+    // encryptedPrivateKey is client-defined; backend only checks non-empty + max length
     if (payload.encryptedPrivateKey.length < 16 || payload.encryptedPrivateKey.length > 2048) {
       throw new InvalidKeyPairError('encryptedPrivateKey length is out of range');
     }

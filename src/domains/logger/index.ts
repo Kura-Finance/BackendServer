@@ -1,3 +1,7 @@
+/**
+ * Logger domain public exports (winston logger, helpers, HTTP middleware).
+ */
+
 export { appLogger } from './logger';
 export {
   logHttpRequest,

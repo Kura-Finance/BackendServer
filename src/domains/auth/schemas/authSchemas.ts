@@ -1,3 +1,7 @@
+/**
+ * Zod request schemas for auth routes (login, passkey, keypair, profile).
+ */
+
 import { z } from 'zod';
 
 const base64String = z
@@ -11,10 +15,10 @@ const hexString = z
   .regex(/^(?:[a-fA-F0-9]{2})+$/, 'must be an even-length hex string')
   .transform((value) => value.toLowerCase());
 
-// ── Privy 登入 ───────────────────────────────────────────────────────
-// accessToken：Privy access token（必填，登入權威證明）
-// identityToken：Privy identity token（選填；缺 email 時後端會用 Privy Server API 補拉）
-// referralCode：首次登入即註冊時可帶邀請碼
+// ── Privy login ─────────────────────────────────────────────────────
+// accessToken: Privy access token (required; authoritative login proof)
+// identityToken: Privy identity token (optional; backend fetches via Privy API if email missing)
+// referralCode: optional invite code on first-login registration
 export const privyLoginBodySchema = z.object({
   accessToken: z.string().trim().min(1, 'accessToken is required'),
   identityToken: z.string().trim().min(1).optional(),
@@ -27,8 +31,8 @@ export const privyLoginBodySchema = z.object({
 });
 
 // ── Passkey / WebAuthn ───────────────────────────────────────────────
-// response：WebAuthn 客戶端回傳的 JSON（結構由瀏覽器/SDK 決定，這裡只確認是物件）
-// encryptedDek：用 passkey PRF 推導的金鑰包裝的 DEK，hex(32 bytes) = 64 hex chars
+// response: WebAuthn client JSON (browser/SDK-shaped; we only require an object)
+// encryptedDek: DEK wrapped with passkey-PRF key; hex(32 bytes) = 64 hex chars
 export const passkeyRegisterBodySchema = z.object({
   response: z.object({}).passthrough(),
   encryptedDek: z
@@ -86,10 +90,10 @@ export const updateProfileBodySchema = z
     { message: 'At least one field is required', path: ['body'] },
   );
 
-// ── Phase 3 E2EE Key Pair（Zero Access Encryption）────────────────────
-// publicKey: base64(X25519 pubkey, 32 bytes) → 編碼後固定 44 字元（含 padding）
-// encryptedPrivateKey: client 自由 base64 字串（KEK-wrapped private key）
-// kekSalt: 選填，Passkey PRF 推導 KEK 用的 salt（hex）；後端僅儲存
+// ── Phase 3 E2EE key pair (zero-access encryption) ──────────────────
+// publicKey: base64(X25519 pubkey, 32 bytes) → fixed 44 chars with padding
+// encryptedPrivateKey: client-defined base64 (KEK-wrapped private key)
+// kekSalt: optional Passkey PRF salt for KEK (hex); stored only
 export const keyPairBodySchema = z.object({
   publicKey: base64String
     .length(44, 'publicKey must be 44 base64 chars (32-byte X25519 key)'),

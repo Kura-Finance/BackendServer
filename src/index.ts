@@ -31,7 +31,7 @@ import { rateLimiter, authRateLimiter } from './domains/shared/middleware/rateLi
 import { webTierGate } from './domains/auth/middleware/requireWebTier';
 
 // ========================================
-// 1. 初始化環境變數和數據庫 URL
+// 1. Environment + database URL
 // ========================================
 initializeEnv();
 
@@ -39,11 +39,11 @@ const app = express();
 const PORT = Number(process.env.PORT || 8080);
 
 // ========================================
-// 1.5 信任代理設置 (用於獲取真實客戶端 IP)
+// 1.5 Trust proxy (real client IP behind Cloud Run / Nginx)
 // ========================================
-app.set('trust proxy', 1); // 信任第一層代理 (適用於 Cloud Run、Nginx 等)
+app.set('trust proxy', 1); // trust first hop
 
-// Stripe webhook 必須使用原始請求內容做簽章驗證
+// Stripe webhook must receive the raw body for signature verification.
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
 
 // Bridge webhook: RSA signature over "{timestamp}.{rawBody}".
@@ -59,7 +59,7 @@ app.use('/api/bridge/webhook', (req: Request, _res: Response, next: NextFunction
 });
 
 // ========================================
-// 2. 設置 CORS
+// 2. CORS
 // ========================================
 const developmentOrigins = [
   'http://localhost:3000',
@@ -71,8 +71,8 @@ const developmentOrigins = [
   'https://localhost:3001',
   'https://127.0.0.1:3001',
 ];
-const fallbackOrigins = process.env.NODE_ENV === 'production' 
-  ? [] // 生產環境必須通過環境變數設定
+const fallbackOrigins = process.env.NODE_ENV === 'production'
+  ? [] // production must set ALLOWED_ORIGINS
   : developmentOrigins;
 
 const corsOptions = {
@@ -84,11 +84,11 @@ const corsOptions = {
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Type'],
   exposedHeaders: ['X-Total-Count', 'X-Page-Number'],
-  maxAge: 86400, // 24 小時的預檢快取
+  maxAge: 86400, // 24h preflight cache
 };
 
 // ========================================
-// 3. 中間件
+// 3. Middleware
 // ========================================
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
@@ -97,7 +97,7 @@ app.use(cookieParser());
 app.use(requestBodyLogger);
 app.use(httpLogger);
 
-// Cookie 調試中間件（開發環境）
+// Cookie debug middleware (development).
 if (process.env.DEBUG_COOKIES === 'true') {
   app.use((req: Request, res: Response, next: NextFunction) => {
     const authCookie = req.cookies.authToken;
@@ -112,13 +112,13 @@ if (process.env.DEBUG_COOKIES === 'true') {
   });
 }
 
-// 為認證路由應用寬鬆的速率限制
+// Looser rate limit for auth routes.
 app.use('/api/auth', authRateLimiter);
 
-// 為其他 API 應用一般的速率限制
-app.use('/api/', rateLimiter); // 速率限制中間件 - 防止 API 被攻擊
+// General API rate limit.
+app.use('/api/', rateLimiter);
 
-// Web soft gate：Basic 用戶可登入／付費，其餘 Web API 需 Pro / Ultimate
+// Web soft gate: Basic may log in / pay; other Web APIs need Pro / Ultimate.
 app.use('/api', webTierGate);
 
 // ========================================
@@ -205,7 +205,7 @@ app.get('/.well-known/assetlinks.json', (_req: Request, res: Response) => {
 });
 
 // ========================================
-// 4. Health Check 端點
+// 4. Health check
 // ========================================
 app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({
@@ -217,7 +217,7 @@ app.get('/health', (req: Request, res: Response) => {
 });
 
 // ========================================
-// 5. API 路由
+// 5. API routes
 // ========================================
 app.use('/api/auth', authRouter);
 app.use('/api/plaid', plaidRouter);
@@ -237,7 +237,7 @@ app.use('/api/lifi-analytics', lifiAnalyticsRouter);
 app.use('/api/admin', adminRouter);
 
 // ========================================
-// 6. 錯誤處理中間件
+// 6. Error middleware
 // ========================================
 app.use(errorLogger);
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
@@ -252,7 +252,7 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 });
 
 // ========================================
-// 7. 全局錯誤處理
+// 7. Process-level error handlers
 // ========================================
 process.on('uncaughtException', (error) => {
   console.error('❌ Uncaught exception:', error);
@@ -267,19 +267,17 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 // ========================================
-// 8. 啟動服務器
+// 8. Start server
 // ========================================
 async function startServer() {
   try {
-    // 初始化數據庫連接
     await initializeDatabase();
 
-    // 啟動 Express 服務器
     const server = app.listen(PORT, '0.0.0.0', () => {
       logStartup('Kura Backend', '1.0.0', PORT, 'HTTP');
     });
 
-    // 優雅關閉
+    // Graceful shutdown on SIGTERM (e.g. Cloud Run).
     process.on('SIGTERM', async () => {
       console.log('💤 Received SIGTERM signal, shutting down...');
       server.close(async () => {

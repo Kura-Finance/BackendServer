@@ -1,6 +1,5 @@
 /**
- * Plaid Webhook 同步服務
- * 處理由 webhook 觸發的交易與投資資料同步
+ * Plaid webhook sync service — transaction and investment sync from webhooks.
  */
 
 import { Prisma } from '@prisma/client';
@@ -32,12 +31,11 @@ import {
 const PLAID_FALLBACK_LOGO = 'https://www.google.com/s2/favicons?domain=kura-finance.com&sz=128';
 
 /**
- * 嘗試為一個 scope 建立 payloadKey。
- * Phase 3 Zero-Access only：使用者沒 keypair → 直接拋（caller 會 skip sync）。
+ * Create a payloadKey for a scope.
+ * Phase 3 Zero-Access only: no keypair → throw (caller skips sync).
  *
- * 傳入 `db`（outer transaction 的 client）讓 EncryptedPayloadKey row 與引用它的
- * cache row 在同一個 transaction 內 commit / rollback，避免「key 已建但 cache 寫入
- * 失敗」留下孤兒、以及 GC 在兩者之間誤刪的 race。
+ * Pass `db` (outer transaction client) so EncryptedPayloadKey and referencing
+ * cache rows commit/rollback together — avoids orphan keys and GC races.
  */
 async function createPayloadKey(
   userId: string,
@@ -62,7 +60,7 @@ async function createPayloadKey(
 
 export class PlaidWebhookSyncService {
   /**
-   * 從 Webhook 觸發的交易同步
+   * Transaction sync triggered by a webhook.
    */
   static async syncTransactionsFromWebhook(userId: string, itemId: string): Promise<void> {
     const startTime = Date.now();
@@ -89,23 +87,23 @@ export class PlaidWebhookSyncService {
         plaidItem.transactionsCursor ?? undefined
       );
 
-      // 過濾投資相關的交易，只保留 banking
+      // Keep banking transactions only (drop investment-related)
       const bankingTransactions = transactionSync.transactions.filter((tx) => {
         const accountMeta = transactionSync.accountsMetadata.get(tx.accountId);
         if (!accountMeta) return false;
         return classifyPlaidAccountBucket(accountMeta.type, accountMeta.subtype) === 'banking';
       });
 
-      // ── SEK 建立 + 所有寫入包進單一 transaction（Phase 3：必須有 keypair）──
-      // key row 與引用它的 cache row、cursor 推進一起 commit / rollback：cursor 永遠
-      // 不會超前已寫入的 row，且 key 不會在寫入失敗時變孤兒。
+      // ── SEK create + all writes in one transaction (Phase 3: keypair required) ──
+      // Key row, cache rows, and cursor advance commit/rollback together so the
+      // cursor never races ahead of written rows and keys do not become orphans.
       const sekHandles: PayloadKeyHandle[] = [];
       let transactionCount = 0;
       try {
         await prisma.$transaction(
           async (tx: Prisma.TransactionClient) => {
-            // Item 可能在 webhook 處理期間被斷線刪除；快取的 plaidItemId 為 FK，
-            // 若 Item 已不存在仍寫入會觸發外鍵違反。於交易內再確認一次後再寫。
+            // Item may be disconnected during webhook handling; cached plaidItemId
+            // is an FK — re-check inside the transaction before writing.
             const stillExists = await tx.plaidItem.findUnique({ where: { id: plaidItem.id }, select: { id: true } });
             if (!stillExists) {
               appLogger.warn('Plaid item removed during webhook tx sync — skipping cache write', { userId, itemId });
@@ -191,7 +189,7 @@ export class PlaidWebhookSyncService {
   }
 
   /**
-   * 從 Webhook 觸發的投資數據同步
+   * Investment sync triggered by a webhook.
    */
   static async syncInvestmentsFromWebhook(userId: string, itemId: string): Promise<void> {
     const startTime = Date.now();
@@ -230,16 +228,16 @@ export class PlaidWebhookSyncService {
       const holdings = holdingsResponse.data.holdings;
       const securities = holdingsResponse.data.securities;
 
-      // ── SEK 建立 + 所有寫入包進單一 transaction ──
-      // investmentAccounts / investments / syncTimestamp 一起 commit / rollback，
-      // 避免部分寫入導致前端讀到 account 與 holding 數量不一致的 snapshot。
+      // ── SEK create + all writes in one transaction ──
+      // investmentAccounts / investments / syncTimestamp commit together so the
+      // client never sees mismatched account vs holding counts.
       const sekHandles: PayloadKeyHandle[] = [];
       let investmentCount = 0;
       try {
         await prisma.$transaction(
           async (tx: Prisma.TransactionClient) => {
-            // Item 可能在 webhook 處理期間被斷線刪除；快取的 plaidItemId 為 FK，
-            // 若 Item 已不存在仍寫入會觸發外鍵違反。於交易內再確認一次後再寫。
+            // Item may be disconnected during webhook handling; cached plaidItemId
+            // is an FK — re-check inside the transaction before writing.
             const stillExists = await tx.plaidItem.findUnique({ where: { id: plaidItem.id }, select: { id: true } });
             if (!stillExists) {
               appLogger.warn('Plaid item removed during webhook investment sync — skipping cache write', { userId, itemId });
@@ -316,8 +314,8 @@ export class PlaidWebhookSyncService {
           investmentCount,
         });
 
-        // Webhook 只更新 holdings cache，不會寫 AssetSnapshot。
-        // 清掉 investmentsSyncedAt，讓下次 encrypted/optimized 讀取刷新並補歷史點。
+        // Webhook updates holdings cache only (no AssetSnapshot).
+        // Clear investmentsSyncedAt so the next encrypted/optimized read refreshes history.
         try {
           await prisma.plaidSyncLog.updateMany({
             where: { userId },

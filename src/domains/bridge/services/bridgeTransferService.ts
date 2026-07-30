@@ -1,3 +1,7 @@
+/**
+ * Bridge transfer fetch, list, and webhook sync.
+ */
+
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../shared/lib/prisma';
 import { appLogger, logDebug, logError } from '../../logger';

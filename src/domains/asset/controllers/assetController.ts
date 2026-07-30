@@ -1,3 +1,11 @@
+/**
+ * Asset HTTP handlers (Phase 3 Zero-Access E2EE only).
+ *
+ * Since PR 5, legacy plaintext history paths are removed. All history uses:
+ *   - `/api/assets/history/encrypted` (canonical)
+ *   - `/api/assets/history`           (legacy-compatible alias)
+ * Client unwraps payloadKeys with privateKey, then decrypts each snapshot row.
+ */
 import { Response } from 'express';
 import { AuthRequest } from '../../auth/middleware/auth';
 import { AssetService } from '../services/assetService';
@@ -5,32 +13,15 @@ import { logError } from '../../logger';
 import { sendError, sendSuccess } from '../../shared/lib/apiResponse';
 
 /**
- * Asset Controller (Phase 3 Zero-Access E2EE only)
+ * GET /api/assets/history/encrypted?days=30 (alias: /api/assets/history).
+ * Basic: max 30 days; Pro / Ultimate: max 365.
  *
- * 自 PR 5 起：legacy 明文歷史路徑已移除。所有資產歷史一律走加密路徑：
- *   - `/api/assets/history/encrypted` (canonical)
- *   - `/api/assets/history`           (legacy-compatible alias)
- * 前端用 privateKey 解 payloadKeys → 解每個 snapshot row 後組合曲線。
- */
-
-/**
- * 取得「加密形式」資產歷史
+ * Backend does not decrypt. Returns payloadKeys + encrypted snapshot rows;
+ * client builds the plaidInvestment / cryptoSpot time series.
  *
- * 路由：GET /api/assets/history/encrypted?days=30  (與 /api/assets/history 別名等價)
- * Basic 會員最多 30 天；Pro / Ultimate 最多 365 天。
- *
- * 後端不解密，回傳：
- *   {
- *     userId,
- *     payloadKeys: [{ id, scope, wrappedSek, algorithm }, ...],
- *     snapshots:   [{ id, metric, recordedAt, payloadCiphertext, payloadKeyId }, ...]
- *   }
- *
- * 前端用 privateKey unwrap payloadKeys → 解每個 snapshot row 的 payloadCiphertext，
- * 自行組成 2-metric 時間序列（plaidInvestment / cryptoSpot）。
- *
- * - metric 字串：可能是 base 或 sub-scoped（{base}:{source}:{id}）
- * - 同 sub-scoped key 同一天取 recordedAt 最大者；同 base 跨 sub-scope 加總
+ * Aggregation hints for the client:
+ * - metric may be base or sub-scoped (`{base}:{source}:{id}`)
+ * - same sub-scoped key, same day → keep latest recordedAt; sum across sub-scopes by base
  */
 export const getEncryptedAssetHistory = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -49,11 +40,8 @@ export const getEncryptedAssetHistory = async (req: AuthRequest, res: Response):
 };
 
 /**
- * 獲取所有記錄日期（用於前端日期選擇器）
- *
- * 路由：GET /api/assets/dates
- *
- * 只回傳 metadata（recordedAt），不涉及任何 payload 解密。
+ * GET /api/assets/dates — distinct recordedAt values for the date picker.
+ * Metadata only; no payload decryption.
  */
 export const getRecordDates = async (req: AuthRequest, res: Response): Promise<void> => {
   try {

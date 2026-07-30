@@ -1,16 +1,11 @@
 /**
- * 通知領域
- * 通知系統主入口
- * 
- * 組件：
- * - 模型：型別定義 (types.ts)
- * - 服務：業務邏輯 (notificationService.ts)
- * - 控制器：HTTP 處理 (notificationController.ts)
- * - 路由：路由定義 (router.ts)
+ * Notification domain — preferences, delivery, and in-app notification records.
+ *
+ * Components: models/types, notificationService, notificationController, router.
  */
 
 export { NotificationService } from './services/notificationService';
 export { notificationRouter } from './router';
 
-// 重新匯出型別，方便外部使用
+// Re-export types for consumers
 export * from './models/types';

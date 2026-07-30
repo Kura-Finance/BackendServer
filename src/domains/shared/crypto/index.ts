@@ -1,11 +1,12 @@
 /**
- * Phase 3 Zero-Access E2EE 加密工具集。
+ * Phase 3 zero-access E2EE crypto helpers.
  *
- * 邊界：
- *   - 本資料夾的工具僅服務於「使用者業務資料」端對端加密
- *     （Plaid 交易 / 帳戶 / 持倉、Exchange 餘額 / 資產、DeBank token / protocol、AssetSnapshot）
- *   - 後端**自己要呼叫第三方**用的 secret（Plaid accessToken、Exchange API keys、SRP verifier、
- *     Webhook signing）仍由 `shared/lib/encryption.ts` 的 `EncryptionUtil` 處理，不在此範圍。
+ * Scope:
+ *   - User business-data E2EE only (Plaid tx / accounts / holdings,
+ *     Exchange balances / assets, DeBank token / protocol, AssetSnapshot)
+ *   - Backend secrets for third-party calls (Plaid accessToken, Exchange API
+ *     keys, SRP verifier, webhook signing) stay in `shared/lib/encryption.ts`
+ *     (`EncryptionUtil`) — out of scope here.
  */
 
 export { getSodium, toBase64, fromBase64, toHex, fromHex, zeroize } from './sodium';

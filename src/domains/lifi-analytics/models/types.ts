@@ -1,4 +1,7 @@
-/** LI.FI StatusResponse（analytics transfers 精簡型別） */
+/**
+ * LI.FI analytics transfer types (trimmed StatusResponse for Investor accounting).
+ */
+
 export interface LifiFeeCost {
   name?: string;
   description?: string;
@@ -39,7 +42,7 @@ export interface LifiTransfersSyncResult {
   transferred: number;
   periodFrom: string;
   periodTo: string;
-  /** 本次拉取使用的 integrator 列表 */
+  /** Integrators used for this fetch. */
   integrators: string[];
 }
 

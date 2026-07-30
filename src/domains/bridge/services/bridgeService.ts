@@ -37,7 +37,7 @@ export class BridgeService {
   static syncKycLinkFromWebhook =
     BridgeCustomerService.syncKycLinkFromWebhook.bind(BridgeCustomerService);
 
-  // ── On-ramp：Virtual Accounts ───────────────────────────────────────
+  // ── On-ramp: Virtual Accounts ───────────────────────────────────────
   static getOrCreateVirtualAccount =
     BridgeVirtualAccountService.getOrCreateVirtualAccount.bind(BridgeVirtualAccountService);
   static listVirtualAccounts =
@@ -48,7 +48,7 @@ export class BridgeService {
   static syncVirtualAccountActivity =
     BridgeVirtualAccountService.syncVirtualAccountActivity.bind(BridgeVirtualAccountService);
 
-  // ── Off-ramp：Payout Liquidation Address ─────────────────────────────
+  // ── Off-ramp: Payout Liquidation Address ─────────────────────────────
   static listPayoutOptions = BridgePayoutService.listPayoutOptions.bind(BridgePayoutService);
   static getOrCreatePayoutAddress =
     BridgePayoutService.getOrCreatePayoutAddress.bind(BridgePayoutService);
@@ -56,7 +56,7 @@ export class BridgeService {
     BridgePayoutService.listPayoutAddresses.bind(BridgePayoutService);
   static listPayoutDrains = BridgePayoutService.listPayoutDrains.bind(BridgePayoutService);
 
-  // ── Crypto 入金：Liquidation Address ────────────────────────────────
+  // ── Crypto deposit: Liquidation Address ────────────────────────────
   static getOrCreateLiquidationAddress =
     BridgeLiquidationService.getOrCreateLiquidationAddress.bind(BridgeLiquidationService);
   static listLiquidationAddresses =
@@ -93,7 +93,7 @@ export class BridgeService {
     BridgeFundsRequestService.markFundsRequestReturnedByDeposit.bind(BridgeFundsRequestService);
 }
 
-/** webhook 事件去重：寫入成功回傳 true；重複（P2002）回傳 false。 */
+/** Deduplicate webhook events: true on insert; false on duplicate (P2002). */
 export async function recordWebhookEvent(
   eventId: string,
   eventCategory: string,

@@ -1,8 +1,8 @@
 /**
- * LI.FI analytics HTTP client
+ * LI.FI analytics HTTP client.
  * Docs: https://docs.li.fi/api-reference/get-a-paginated-list-of-filtered-transfers
  *
- * LIFI_INTEGRATOR 支援逗號分隔多個 integrator（與前端各端 SDK integrator 對齊），例如：
+ * LIFI_INTEGRATOR accepts comma-separated integrators (aligned with client SDK names), e.g.:
  *   LIFI_INTEGRATOR=kura-ios,kura-android,kura-web
  */
 
@@ -22,7 +22,7 @@ export class LifiApiError extends Error {
   }
 }
 
-/** 解析 LIFI_INTEGRATOR（逗號 / 空白分隔），去重並保序。 */
+/** Parse LIFI_INTEGRATOR (comma/whitespace-separated); dedupe, preserve order. */
 export function getIntegrators(): string[] {
   const raw = process.env.LIFI_INTEGRATOR?.trim();
   if (!raw) {
@@ -60,9 +60,9 @@ interface PaginatedTransfersResponse {
 }
 
 /**
- * 拉取期間內所有 DONE transfers（v2 分頁，避免 v1 1000 上限）。
- * fromTimestamp / toTimestamp 為 unix seconds。
- * 多個 integrator 以重複 query key 傳入（LI.FI 支援 string | string[]）。
+ * Fetch all DONE transfers in the window (v2 pagination; avoids v1 1000 cap).
+ * fromTimestamp / toTimestamp are unix seconds.
+ * Multiple integrators are passed as repeated query keys (LI.FI accepts string | string[]).
  */
 export async function fetchDoneTransfers(params: {
   fromTimestamp: number;

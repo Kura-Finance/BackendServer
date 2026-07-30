@@ -1,11 +1,11 @@
 /**
- * Dinari（tokenized stocks / dShares）Service
+ * Dinari (tokenized stocks / dShares) service.
  *
- * 使用官方 SDK `@dinari/api-sdk`。
- * Auth：X-API-Key-Id / X-API-Secret-Key（由 SDK 以 apiKeyID / apiSecretKey 帶上）。
+ * Uses official SDK `@dinari/api-sdk`.
+ * Auth: X-API-Key-Id / X-API-Secret-Key (SDK fields apiKeyID / apiSecretKey).
  *
- * 模型：User → DinariEntity → DinariAccount（連用戶 SCA）→ DinariOrder
- * 下單為自管錢包模式，走鏈上 EIP155 permit（prepare → 用戶簽 → submit）。
+ * Model: User → DinariEntity → DinariAccount (linked user SCA) → DinariOrder.
+ * Orders use self-custodial EIP-155 permit (prepare → user signs → submit).
  */
 
 import Dinari from '@dinari/api-sdk';
@@ -64,7 +64,7 @@ function paymentTokenAddress(): string {
   if (process.env.DINARI_PAYMENT_TOKEN_ADDRESS) {
     return process.env.DINARI_PAYMENT_TOKEN_ADDRESS;
   }
-  // Sandbox mockUSD 與 production 皆在 Base 主網（eip155:8453）
+  // Sandbox mockUSD and production both use Base mainnet (eip155:8453)
   return '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 }
 
@@ -72,7 +72,7 @@ function isSandbox(): boolean {
   return process.env.DINARI_ENVIRONMENT !== 'production';
 }
 
-// KYC 為 PASS 才可交易
+// Trading allowed only when KYC status is PASS
 function canTransact(kycStatus: string): boolean {
   return kycStatus === 'PASS';
 }
@@ -89,7 +89,7 @@ function dinariApiErrorMessage(error: APIError, fallback: string): string {
 export class DinariService {
   // ── Entity / KYC ────────────────────────────────────────────────────
 
-  /** 取得或建立使用者對應的 Dinari customer Entity。 */
+  /** Get or create the user's Dinari customer Entity. */
   static async getOrCreateEntity(userId: string, name?: string): Promise<string> {
     const existing = await prisma.dinariEntity.findUnique({ where: { userId } });
     if (existing) return existing.entityId;
@@ -105,7 +105,7 @@ export class DinariService {
     return entity.id;
   }
 
-  /** 建立 Dinari 託管 KYC 連結（hosted KYC URL）。 */
+  /** Create a Dinari hosted KYC link URL. */
   static async createKycEmbed(userId: string, name?: string): Promise<KycEmbedResult> {
     const entityId = await this.getOrCreateEntity(userId, name);
     const client = getClient();
@@ -113,7 +113,7 @@ export class DinariService {
     return { embedUrl: embed.embed_url, expiresAt: embed.expiration_dt };
   }
 
-  /** 查詢並同步 KYC 狀態。 */
+  /** Fetch and sync KYC status. */
   static async getEntityStatus(userId: string, name?: string): Promise<DinariEntityStatus> {
     const entityId = await this.getOrCreateEntity(userId, name);
     const client = getClient();
@@ -123,7 +123,7 @@ export class DinariService {
       const info = await client.v2.entities.kyc.retrieve(entityId);
       kycStatus = info.status ?? 'not_started';
     } catch (error) {
-      // 尚無 KYC check 時 Dinari 可能回 404；視為 not_started
+      // Dinari may 404 when no KYC check exists yet; treat as not_started
       logDebug('[DinariService] KYC retrieve returned no data', {
         entityId,
         error: error instanceof Error ? error.message : String(error),
@@ -140,7 +140,7 @@ export class DinariService {
 
   // ── Account / Wallet ────────────────────────────────────────────────
 
-  /** 取得或建立使用者的 Dinari 交易帳戶。 */
+  /** Get or create the user's Dinari trading account. */
   static async getOrCreateAccount(userId: string): Promise<DinariAccountResult> {
     const existing = await prisma.dinariAccount.findFirst({
       where: { userId, isActive: true },
@@ -172,7 +172,7 @@ export class DinariService {
     };
   }
 
-  /** 取得錢包連接用的 nonce 與待簽訊息。 */
+  /** Get wallet-connect nonce and message to sign. */
   static async getWalletNonce(
     userId: string,
     walletAddress: string,
@@ -248,7 +248,7 @@ export class DinariService {
           try {
             kycStatus = (await client.v2.entities.kyc.retrieve(ent.id)).status;
           } catch {
-            /* 尚無 KYC check */
+            /* no KYC check yet */
           }
           appLogger.info('[DinariService] this entity KYC', {
             entityId: ent.id,
@@ -266,11 +266,11 @@ export class DinariService {
                 foundAt = { entityId: ent.id, accountId: acc.id, chainId: w.chain_id };
               }
             } catch {
-              /* 該 account 沒連 wallet */
+              /* account has no linked wallet */
             }
           }
         } catch {
-          /* 該 entity 列 account 失敗 */
+          /* failed to list accounts for entity */
         }
       }
 
@@ -399,7 +399,7 @@ export class DinariService {
     throw lastError;
   }
 
-  /** 用簽名連接用戶 SCA 到 Dinari 帳戶。 */
+  /** Connect the user SCA to the Dinari account with a signature. */
   static async connectWallet(
     userId: string,
     params: { walletAddress: string; chainId?: string; nonce: string; signature: string },
@@ -440,7 +440,7 @@ export class DinariService {
     };
   }
 
-  // ── 行情（market data 代理）─────────────────────────────────────────
+  // ── Market data (proxy) ──
 
   static async listStocks(query: {
     symbols?: string;
@@ -463,9 +463,9 @@ export class DinariService {
     return getClient().v2.marketData.stocks.retrieveCurrentQuote(stockId);
   }
 
-  // ── 下單（市價，EIP155 自管錢包）────────────────────────────────────
+  // ── Orders (market, EIP-155 self-custodial wallet) ──
 
-  /** 第一步：產生 permit 讓用戶 SCA 簽章。 */
+  /** Step 1: build permit for the user SCA to sign. */
   static async prepareMarketOrder(
     userId: string,
     params: PrepareMarketOrderParams,
@@ -522,7 +522,7 @@ export class DinariService {
     return { orderRequestId: result.order_request_id, permit: result.permit };
   }
 
-  /** 第二步：用簽名送出 order request。 */
+  /** Step 2: submit the order request with the permit signature. */
   static async submitOrder(
     userId: string,
     orderRequestId: string,
@@ -559,7 +559,7 @@ export class DinariService {
     return this.toOrderResult(updated);
   }
 
-  /** 同步 order request 狀態（送出後、on-chain order 尚未產生前用）。 */
+  /** Sync order-request status (after submit, before on-chain order exists). */
   static async syncOrderRequest(userId: string, orderRequestId: string): Promise<DinariOrderResult> {
     const order = await prisma.dinariOrder.findUnique({ where: { orderRequestId } });
     if (!order || order.userId !== userId) {
@@ -580,7 +580,7 @@ export class DinariService {
     return this.toOrderResult(updated);
   }
 
-  /** 同步 on-chain order 狀態。 */
+  /** Sync on-chain order status. */
   static async syncOrder(userId: string, orderId: string): Promise<DinariOrderResult> {
     const order = await prisma.dinariOrder.findFirst({ where: { userId, orderId } });
     if (!order) {
@@ -602,7 +602,7 @@ export class DinariService {
     return this.toOrderResult(updated);
   }
 
-  /** 列出使用者的 dShare 訂單。 */
+  /** List the user's dShare orders. */
   static async listOrders(userId: string): Promise<DinariOrderResult[]> {
     const records = await prisma.dinariOrder.findMany({
       where: { userId },
@@ -612,7 +612,7 @@ export class DinariService {
     return records.map((r) => this.toOrderResult(r));
   }
 
-  // ── 持倉 / 現金 ─────────────────────────────────────────────────────
+  // ── Portfolio / cash ──
 
   static async getPortfolio(userId: string): Promise<unknown> {
     const { accountId } = await this.getOrCreateAccount(userId);
@@ -624,7 +624,7 @@ export class DinariService {
     return getClient().v2.accounts.getCashBalances(accountId);
   }
 
-  /** Sandbox：鑄造測試用 mockUSD 到帳戶錢包。 */
+  /** Sandbox: mint test mockUSD to the account wallet. */
   static async mintSandboxTokens(userId: string): Promise<void> {
     if (!isSandbox()) {
       throw new DinariError(400, 'Sandbox faucet is only available in sandbox environment.', 'faucet');
@@ -637,7 +637,7 @@ export class DinariService {
     appLogger.info('[DinariService] Sandbox tokens minted', { userId, accountId: account.accountId });
   }
 
-  // ── 私有 helpers ────────────────────────────────────────────────────
+  // ── Private helpers ──
 
   private static async syncReferrableRevenueForOrder(order: {
     userId: string;
@@ -686,7 +686,7 @@ export class DinariService {
     });
   }
 
-  /** 確認帳戶可交易：KYC PASS + 已連接錢包。 */
+  /** Ensure account can trade: KYC PASS + wallet connected. */
   private static async requireTradableAccount(userId: string): Promise<DinariAccountResult> {
     const status = await this.getEntityStatus(userId);
     if (!status.canTransact) {
@@ -732,8 +732,8 @@ export class DinariService {
   }
 
   /**
-   * 帳號刪除時停用所有 Dinari account（best-effort；失敗不阻擋 DB 刪除）。
-   * Dinari 無 entity delete API，僅能 deactivate account。
+   * On account deletion, deactivate all Dinari accounts (best-effort; failures do not block DB delete).
+   * Dinari has no entity delete API — only account deactivation.
    */
   static async deactivateAccountsForUser(userId: string): Promise<void> {
     if (!process.env.DINARI_API_KEY_ID || !process.env.DINARI_API_SECRET_KEY) {

@@ -1,3 +1,8 @@
+/**
+ * Admin APIs — requireAuth + requireAdmin (ADMIN_EMAILS / ADMIN_EMAIL).
+ * Base path: /api/admin
+ */
+
 import { Router } from 'express';
 import { requireAuth } from '../auth/middleware/auth';
 import { validateRequest } from '../shared/middleware/validateRequest';
@@ -13,10 +18,6 @@ import {
   listFundsRequestsQuerySchema,
 } from './schemas/adminSchemas';
 
-/**
- * Admin APIs — requireAuth + requireAdmin (ADMIN_EMAILS / ADMIN_EMAIL).
- * Base path: /api/admin
- */
 const router = Router();
 
 router.use(requireAuth, requireAdmin);

@@ -1,5 +1,5 @@
 /**
- * 郵件領域匯出
+ * Email domain exports.
  */
 
 export { EmailService } from './emailService';

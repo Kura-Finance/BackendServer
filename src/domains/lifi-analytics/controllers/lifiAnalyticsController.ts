@@ -1,8 +1,13 @@
+/**
+ * HTTP handlers for LI.FI transfer sync and Investor summary.
+ */
+
 import { Request, Response } from 'express';
 import { logError } from '../../logger';
 import { sendError, sendSuccess } from '../../shared/lib/apiResponse';
 import { LifiAnalyticsService } from '../services/lifiAnalyticsService';
 
+/** POST /sync — lazy sync of DONE transfers into PlatformRecord. */
 export const syncTransfers = async (req: Request, res: Response): Promise<void> => {
   try {
     const { force, from, to } = req.query as { force?: boolean; from?: string; to?: string };
@@ -23,6 +28,7 @@ export const syncTransfers = async (req: Request, res: Response): Promise<void> 
   }
 };
 
+/** GET /summary — LI.FI process + platform fee totals for a period. */
 export const getTransfersSummary = async (req: Request, res: Response): Promise<void> => {
   try {
     const { from, to } = req.query as { from?: string; to?: string };

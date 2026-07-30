@@ -1,12 +1,12 @@
 /**
- * Passkey / WebAuthn 服務
+ * Passkey / WebAuthn service.
  *
- * 用途：使用者透過 Privy 登入後，用 Passkey（WebAuthn）解鎖 E2EE 資料層。
- *   - 註冊：標準 WebAuthn registration，並儲存前端用 passkey PRF 包裝的 DEK（encryptedDek）
- *   - 驗證：標準 WebAuthn assertion，成功後回傳該裝置的 encryptedDek
+ * After Privy login, unlock the E2EE data layer with a Passkey (WebAuthn):
+ *   - Register: standard WebAuthn registration; store DEK wrapped with passkey PRF (encryptedDek)
+ *   - Authenticate: standard WebAuthn assertion; return that device's encryptedDek
  *
- * 所有流程都在已登入（requireAuth）的前提下進行；challenge 以 userId 為主鍵存 DB，
- * 因此在多個 Cloud Run 實例間也能正確驗證。
+ * All flows require login (requireAuth). Challenges are keyed by userId in the DB
+ * so verification works across multiple Cloud Run instances.
  */
 
 import {
@@ -25,7 +25,7 @@ import type {
 import { prisma } from '../../shared/lib/prisma';
 import { appLogger, logBusinessEvent } from '../../logger';
 
-const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 分鐘
+const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /** Shared RP ID for web + mobile (api.kura-finance.com). Web uses Related Origin Requests. */
 function getRpId(): string {
@@ -38,7 +38,7 @@ function getRpName(): string {
   return process.env.WEBAUTHN_RP_NAME || 'Kura';
 }
 
-// 允許的 origin（逗號分隔）；WebAuthn 驗證可接受多個（web + 原生 app）
+// Allowed origins (comma-separated); WebAuthn may accept several (web + native app)
 function getExpectedOrigins(): string[] {
   const raw = process.env.WEBAUTHN_ORIGIN;
   if (!raw) throw new Error('WEBAUTHN_ORIGIN is not configured');
@@ -81,7 +81,7 @@ export async function getStatus(userId: string): Promise<{ registered: boolean }
   return { registered: count > 0 };
 }
 
-// ── Management（列出 / 撤銷）─────────────────────────────────────────────────
+// ── Management (list / revoke) ─────────────────────────────────────────────
 
 export interface PasskeySummary {
   id: string;
@@ -92,7 +92,7 @@ export interface PasskeySummary {
   lastUsedAt: Date | null;
 }
 
-/** 列出使用者已註冊的 passkey（不含敏感欄位：publicKey / encryptedDek）。 */
+/** List the user's registered passkeys (omits publicKey / encryptedDek). */
 export async function listPasskeys(userId: string): Promise<PasskeySummary[]> {
   const creds = await prisma.passkeyCredential.findMany({
     where: { userId },
@@ -116,7 +116,7 @@ export async function listPasskeys(userId: string): Promise<PasskeySummary[]> {
   }));
 }
 
-/** 找不到 passkey（或不屬於該使用者）。 */
+/** Passkey not found (or not owned by this user). */
 export class PasskeyNotFoundError extends Error {
   constructor() {
     super('Passkey not found for this account');
@@ -124,7 +124,7 @@ export class PasskeyNotFoundError extends Error {
   }
 }
 
-/** 嘗試刪除最後一個 passkey（會導致永久無法解鎖 E2EE 資料）。 */
+/** Attempted to delete the last passkey (would permanently lock E2EE data). */
 export class LastPasskeyError extends Error {
   constructor() {
     super('Cannot remove the last passkey. Register a new passkey before removing this one.');
@@ -133,11 +133,11 @@ export class LastPasskeyError extends Error {
 }
 
 /**
- * 撤銷一個 passkey（依 PasskeyCredential.id）。
+ * Revoke a passkey by PasskeyCredential.id.
  *
- * 保護：不允許刪除最後一個 passkey —— 否則該帳號將永久失去解鎖 E2EE 資料層的能力。
- * 「換 passkey」的正確流程是：先註冊新 passkey（前端用新 PRF 重新包裝同一把 DEK），
- * 再呼叫本端點刪除舊的。
+ * Guard: the last passkey cannot be deleted — that would permanently lock the
+ * E2EE data layer. To replace a passkey: register the new one first (client
+ * re-wraps the same DEK with the new PRF), then call this endpoint to delete the old.
  */
 export async function deletePasskey(
   userId: string,
@@ -176,7 +176,7 @@ export async function createRegistrationOptions(
     }),
   ]);
 
-  // WebAuthn userName 僅作顯示用途；email → wallet → userId 為後備
+  // WebAuthn userName is display-only; fallback email → wallet → userId
   const userName = user?.email || user?.name || user?.walletAddress || userId;
 
   const options = await generateRegistrationOptions({
@@ -295,7 +295,7 @@ export async function verifyAuthentication(
     return { verified: false, encryptedDek: null };
   }
 
-  // 更新 counter（防 replay）+ lastUsedAt
+  // Update counter (anti-replay) + lastUsedAt
   await prisma.passkeyCredential.update({
     where: { id: credential.id },
     data: {

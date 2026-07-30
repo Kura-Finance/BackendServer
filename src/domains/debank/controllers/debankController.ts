@@ -1,3 +1,5 @@
+/** DeBank HTTP controllers for encrypted protocol/token snapshots and unlink. */
+
 import { Response } from 'express';
 import { AuthRequest } from '../../auth/middleware/auth';
 import { DeBankService } from '../services/debankService';
@@ -11,7 +13,7 @@ import {
 } from '../../shared/lib/cacheResponseUtil';
 
 /**
- * 將 DeBank 服務錯誤統一映射為 HTTP 回應。
+ * Map DeBank service errors to HTTP responses.
  */
 function sendDeBankError(
   res: Response,
@@ -65,12 +67,12 @@ function sendDeBankError(
 }
 
 /**
- * 取得使用者在 DeBank 的協議資料（Phase 3 Zero-Access E2EE only）
- * 路由：GET /api/debank/protocols?address=0x...&refresh=true|false
+ * Get user DeBank protocol data (Phase 3 Zero-Access E2EE only).
+ * Route: GET /api/debank/protocols?address=0x...&refresh=true|false
  *
- * 回傳：{ address, payloadKeys[], protocols: encryptedRows[], total, _cacheSource, ... }
+ * Returns: { address, payloadKeys[], protocols: encryptedRows[], total, _cacheSource, ... }
  * - _cacheSource: 'From cache' | 'Forced refresh from DeBank API' | 'Daily refresh limit reached, showing last synced data'
- * - 後端不解密；前端用 privateKey unwrap payloadKeys 後解每個 row 的 payloadCiphertext
+ * - Backend never decrypts; client unwraps payloadKeys then decrypts each row.
  */
 export const getUserProtocolPositions = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -125,10 +127,10 @@ export const getUserProtocolPositions = async (req: AuthRequest, res: Response):
 };
 
 /**
- * 取得使用者在 DeBank 的 EVM Token 持倉（Phase 3 Zero-Access E2EE only）
- * 路由：GET /api/debank/tokens?address=0x...&refresh=true|false
+ * Get user DeBank EVM token holdings (Phase 3 Zero-Access E2EE only).
+ * Route: GET /api/debank/tokens?address=0x...&refresh=true|false
  *
- * 回傳：{ address, payloadKeys[], tokens: encryptedRows[], total, _cacheSource, ... }
+ * Returns: { address, payloadKeys[], tokens: encryptedRows[], total, _cacheSource, ... }
  */
 export const getUserTokenPositions = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -184,8 +186,8 @@ export const getUserTokenPositions = async (req: AuthRequest, res: Response): Pr
 };
 
 /**
- * 解除 DeBank 錢包地址連結（刪除該地址的快取資料）
- * 路由：DELETE /api/debank/addresses/:address
+ * Unlink a DeBank wallet address (clear cached data for that address).
+ * Route: DELETE /api/debank/addresses/:address
  */
 export const unlinkDeBankAddress = async (req: AuthRequest, res: Response): Promise<void> => {
   try {

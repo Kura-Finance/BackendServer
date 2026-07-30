@@ -1,17 +1,17 @@
 /**
- * Bridge (api.bridge.xyz) On/Off Ramp 型別定義
+ * Bridge (api.bridge.xyz) on/off-ramp type definitions.
  *
- * 命名對應 Bridge API：
- *   - Customer / KYC Link：用戶 onboarding（KYC + TOS）
- *   - Transfer：on-ramp（fiat → crypto）、off-ramp（crypto → fiat）、crypto-to-crypto
- *   - External Account：off-ramp 的法幣出金銀行帳戶
+ * Names mirror the Bridge API:
+ *   - Customer / KYC Link: user onboarding (KYC + TOS)
+ *   - Transfer: on-ramp (fiat → crypto), off-ramp (crypto → fiat), crypto-to-crypto
+ *   - External Account: off-ramp fiat payout bank account
  */
 
 export type BridgeCustomerType = 'individual' | 'business';
 
 export type BridgeTransferDirection = 'onramp' | 'offramp' | 'crypto';
 
-// Bridge endorsement（可在建立 KYC/KYB link 時預先申請所需 rail）
+// Bridge endorsement (can pre-request rails when creating KYC/KYB link)
 export type BridgeEndorsementType =
   | 'base'
   | 'cards'
@@ -21,22 +21,22 @@ export type BridgeEndorsementType =
   | 'sepa'
   | 'spei';
 
-// 建立 KYC（individual）/ KYB（business）link 的參數
+// Params to create a KYC (individual) / KYB (business) link
 export interface CreateKycLinkParams {
   type: BridgeCustomerType;
-  // individual：個人全名；business：公司法定名稱（legal name）
+  // individual: full personal name; business: company legal name
   fullName: string;
   email?: string;
   endorsements?: BridgeEndorsementType[];
   redirectUri?: string;
-  // 含非 Latin-1 字元時 Bridge 要求提供羅馬化名稱
+  // Bridge requires romanized names when non-Latin-1 characters are present
   transliteratedFirstName?: string;
   transliteratedMiddleName?: string;
   transliteratedLastName?: string;
   transliteratedBusinessLegalName?: string;
 }
 
-// ── Bridge API 原始回應（僅取用到的欄位）──────────────────────────────
+// ── Bridge API raw responses (fields we use) ────────────────────────
 
 export interface BridgeRejectionReason {
   developer_reason?: string;
@@ -44,7 +44,7 @@ export interface BridgeRejectionReason {
   created_at?: string | null;
 }
 
-/** 回給前端的拒件／暫停原因（僅顧客可看的 reason，不含 developer_reason）。 */
+/** Customer-facing rejection/pause reasons (reason only; no developer_reason). */
 export interface BridgeRejectionReasonPublic {
   reason: string;
   createdAt: string | null;
@@ -167,17 +167,17 @@ export const CUSTOMER_NAMED_PAYOUT_CONFIGURATION: BridgeFiatPayoutConfiguration 
   usd: { wire: 'customer' },
 };
 
-// ── Virtual Accounts（持久法幣入金帳戶）─────────────────────────────────
+// ── Virtual Accounts (persistent fiat deposit accounts) ─────────────
 
-// 單一 rail 的 developer fee 設定（fee_config，Bridge Beta 功能）
+// Per-rail developer fee settings (fee_config; Bridge Beta)
 export interface BridgeFeeParams {
-  fee_amount?: string; // 固定費（以入金法幣計），先扣
-  fee_percent?: string; // 百分比（base 100，例如 "0.1" = 0.1%），對扣除固定費後的餘額計算
+  fee_amount?: string; // Fixed fee in deposit fiat; deducted first
+  fee_percent?: string; // Percent (base 100, e.g. "0.1" = 0.1%) on remainder after fixed fee
   minimum_fee?: string;
   maximum_fee?: string;
 }
 
-// fee_config：source 端依 payment rail（或 default）設定費用
+// fee_config: source-side fees by payment rail (or default)
 export interface BridgeFeeConfig {
   source: Record<string, BridgeFeeParams>; // key: 'default' | 'ach_push' | 'wire' | 'sepa' | 'spei' | ...
 }
@@ -202,7 +202,7 @@ export interface BridgeVirtualAccountListResponse {
   data?: BridgeVirtualAccountResponse[];
 }
 
-// VA 活動事件（webhook event_object / history item）
+// VA activity event (webhook event_object / history item)
 export interface BridgeVirtualAccountEventResponse {
   id: string;
   type?: string; // funds_received | payment_submitted | payment_processed | refunded | ...
@@ -270,7 +270,7 @@ export interface BridgeDrainListResponse {
   data?: BridgeDrainResponse[];
 }
 
-/** Base USDC → 法幣銀行（off-ramp LA）固定 source。 */
+/** Fixed source for Base USDC → fiat bank (off-ramp LA). */
 export const PAYOUT_LIQUIDATION_SOURCE = {
   sourceChain: 'base',
   sourceCurrency: 'usdc',
@@ -299,7 +299,7 @@ export interface PayoutLiquidationAddressResult {
   bridgeExternalAccountId: string;
   depositAddress: string;
   blockchainMemo: string | null;
-  /** @deprecated 請改用 payoutFee.developerFeePercent */
+  /** @deprecated Prefer payoutFee.developerFeePercent */
   developerFeePercent: string;
   payoutFee: PayoutDeveloperFee;
   minDeposit: MinDeposit;
@@ -317,7 +317,7 @@ export interface PayoutDrainResult {
   createdAt: string | null;
 }
 
-// ── 對外（controller → client）回傳型別 ───────────────────────────────
+// ── Public response types (controller → client) ─────────────────────
 
 export interface KycLinkResult {
   bridgeCustomerId: string | null;
@@ -327,7 +327,7 @@ export interface KycLinkResult {
   tosLink: string | null;
   kycStatus: string;
   tosStatus: string;
-  /** 既有 customer 申請額外 rail endorsement 時回傳（例如 brl→pix、cop→cop）。 */
+  /** Returned when an existing customer requests an extra rail endorsement (e.g. brl→pix). */
   requestedEndorsement?: BridgeEndorsementType;
 }
 
@@ -335,7 +335,7 @@ export interface EndorsementLinkResult {
   bridgeCustomerId: string;
   endorsement: BridgeEndorsementType;
   kycLink: string;
-  /** 由 currency 參數解析時回傳（例如 brl、cop）。 */
+  /** Returned when resolved from a currency param (e.g. brl, cop). */
   currency?: string;
 }
 
@@ -346,11 +346,11 @@ export interface CustomerStatusResult {
   tosStatus: string;
   endorsements: BridgeEndorsement[];
   canTransact: boolean;
-  /** 是否已向 Bridge 設定 customer-named fiat payout（目前僅 USD wire）。 */
+  /** Whether customer-named fiat payout is configured on Bridge (USD wire only today). */
   customerNamedPayoutConfigured: boolean;
   /**
-   * rejected / paused 等狀態的顧客可讀原因（來自 Bridge rejection_reasons.reason）。
-   * 不含 developer_reason。
+   * Customer-readable reasons for rejected/paused (from Bridge rejection_reasons.reason).
+   * Excludes developer_reason.
    */
   rejectionReasons: BridgeRejectionReasonPublic[];
 }
@@ -379,7 +379,7 @@ export interface ExternalAccountResult {
   active: boolean;
 }
 
-/** Pay Out（off-ramp）支援的 payment rail 與對應法幣 / 銀行帳戶類型。 */
+/** Supported Pay Out (off-ramp) payment rails with fiat / bank account types. */
 export interface PayoutOption {
   rail: string;
   currency: string;
@@ -450,19 +450,19 @@ export const PAYOUT_OPTION_BASES: PayoutOptionBase[] = [
   },
 ];
 
-// 建立 / 取得入金 Virtual Account 的參數
-// 注意：費率（developer fee）不由 client 提供，一律由後端依入金幣別查表套用。
+// Params to get/create a deposit Virtual Account.
+// Developer fee is never client-supplied; backend applies by deposit currency.
 export interface CreateVirtualAccountParams {
   sourceCurrency: string; // usd | eur | mxn
   destinationRail: string; // ethereum | base | polygon | solana ...
   destinationCurrency: string; // usdc | usdb ...
-  toAddress?: string; // 未提供時回退到使用者錢包（scaAddress / walletAddress）
+  toAddress?: string; // Falls back to user wallet (scaAddress / walletAddress) if omitted
 }
 
-/** Tron USDT → Base USDC Liquidation Address（收款 SCA 預設為使用者 scaAddress）。 */
+/** Tron USDT → Base USDC Liquidation Address (default dest SCA = user scaAddress). */
 export interface CreateLiquidationAddressParams {
-  toAddress?: string; // Base USDC 收款地址；省略時使用 scaAddress
-  returnAddress?: string; // Tron 退款地址（建議提供，用於失敗退回）
+  toAddress?: string; // Base USDC receive address; defaults to scaAddress
+  returnAddress?: string; // Tron refund address (recommended for failed returns)
 }
 
 export const LIQUIDATION_ADDRESS_TRON_USDT_TO_BASE_USDC = {
@@ -481,13 +481,13 @@ export const CRYPTO_TRANSFER_TRON_USDT_TO_BASE_USDC = {
 } as const;
 
 export interface DepositDeveloperFee {
-  /** 平台 developer fee（base 100："0.85" = 入金金額的 0.85%），一律由後端計算。 */
+  /** Platform developer fee (base 100: "0.85" = 0.85% of deposit); always server-computed. */
   developerFeePercent: string;
-  /** 費率適用的入金幣別（顯示用，例如 usdt / usd）。 */
+  /** Deposit currency the fee applies to (display; e.g. usdt / usd). */
   feeCurrency: string;
 }
 
-/** Bridge 最低入金額（已含 developer fee；使用者須打入此毛額，扣費後淨額仍達 Bridge 門檻）。 */
+/** Bridge min deposit including developer fee (gross; net after fee must still meet Bridge floor). */
 export interface MinDeposit {
   amount: string;
   currency: string;
@@ -501,7 +501,7 @@ function trimMinDepositDecimal(s: string): string {
   return s.includes('.') ? s.replace(/0+$/, '').replace(/\.$/, '') : s;
 }
 
-/** 將 Bridge 淨額門檻換算為含手續費的毛額（向上取兩位小數）。 */
+/** Convert Bridge net threshold to gross including fee (ceil 2dp). */
 export function grossMinDeposit(
   netAmount: string,
   currency: string,
@@ -524,7 +524,7 @@ export function grossMinDeposit(
   return { amount: trimMinDepositDecimal(gross.toFixed(2)), currency: cur };
 }
 
-// Bridge 法幣 VA on-ramp 淨額門檻（扣 developer fee 後須達標；來源法幣計）。
+// Bridge fiat VA on-ramp net threshold (after developer fee; in source fiat).
 export const ONRAMP_MIN_DEPOSIT_NET: Record<string, string> = {
   usd: '1',
   gbp: '2',
@@ -533,7 +533,7 @@ export const ONRAMP_MIN_DEPOSIT_NET: Record<string, string> = {
   mxn: '50',
 };
 
-// Bridge USDC@Base → 法幣 off-ramp 淨額門檻（使用者打入 USDC，扣費後須達標）。
+// Bridge USDC@Base → fiat off-ramp net threshold (user sends USDC; net after fee).
 export const PAYOUT_MIN_DEPOSIT_NET_BY_RAIL: Record<string, string> = {
   ach: '1',
   ach_push: '1',
@@ -588,7 +588,7 @@ export interface LiquidationAddressResult {
   destinationAddress: string;
   depositAddress: string;
   blockchainMemo: string | null;
-  /** @deprecated 請改用 depositFee.developerFeePercent */
+  /** @deprecated Prefer depositFee.developerFeePercent */
   developerFeePercent: string;
   depositFee: DepositDeveloperFee;
   minDeposit: MinDeposit;
@@ -602,16 +602,16 @@ export interface VirtualAccountResult {
   destinationRail: string;
   destinationCurrency: string;
   destinationAddress: string;
-  /** @deprecated 請改用 depositFee.developerFeePercent */
+  /** @deprecated Prefer depositFee.developerFeePercent */
   developerFeePercent: string;
   depositFee: DepositDeveloperFee;
   minDeposit: MinDeposit;
-  // 給用戶的法幣入金銀行資訊（持久、免 memo）
+  // Fiat deposit bank details for the user (persistent; no memo)
   depositInstructions: BridgeDepositInstructions | null;
   createdAt: string;
 }
 
-// 單一入金事件（VA activity 帳本中的一筆）
+// Single deposit event (one row in VA activity ledger)
 export interface DepositPayerInfo {
   paymentRail: string | null;
   senderName: string | null;
@@ -684,31 +684,31 @@ export interface DepositEvent {
   senderDescription: string | null;
 }
 
-// 一筆入金（依 depositId 聚合多個事件），供前端輪詢顯示狀態
+// One deposit (events aggregated by depositId) for client status polling
 export interface DepositResult {
   depositId: string | null;
   bridgeVirtualAccountId: string;
-  // 最新事件類型，前端可據此顯示狀態（processing / completed / refunded …）
+  // Latest event type for client status (processing / completed / refunded …)
   status: string;
-  completed: boolean; // 是否已 payment_processed（穩定幣已到帳）
-  amount: string | null; // 入金總額（手續費前）
+  completed: boolean; // true once payment_processed (stablecoin credited)
+  amount: string | null; // Gross deposit before fees
   currency: string | null;
-  netAmount: string | null; // 扣費後實際轉換金額（subtotal）
+  netAmount: string | null; // Converted amount after fees (subtotal)
   developerFeeAmount: string | null;
   exchangeFeeAmount: string | null;
   gasFee: string | null;
   destinationTxHash: string | null;
-  createdAt: string; // 最早事件時間
-  updatedAt: string; // 最新事件時間
+  createdAt: string; // Earliest event time
+  updatedAt: string; // Latest event time
   paymentRail: string | null;
   senderName: string | null;
   accountLast4: string | null;
   senderBankRoutingNumber: string | null;
   senderDescription: string | null;
-  events: DepositEvent[]; // 完整事件明細（時間升序）
+  events: DepositEvent[]; // Full event detail (ascending by time)
 }
 
-// ── Funds Requests（bank / fraud recalls）────────────────────────────
+// ── Funds Requests (bank / fraud recalls) ─────────────────────────────
 
 export interface BridgeFundsRequestResponse {
   id: string;

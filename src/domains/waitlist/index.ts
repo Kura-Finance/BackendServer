@@ -1,3 +1,7 @@
+/**
+ * Public exports for the waitlist domain.
+ */
+
 export { WaitlistService } from './services/waitlistService';
 export { waitlistRouter } from './router';
 export { WAITLIST_DEFAULT_PRODUCT } from './models/types';

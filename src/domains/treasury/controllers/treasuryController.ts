@@ -1,3 +1,6 @@
+/**
+ * Treasury HTTP handlers for workspace CRUD and active selection.
+ */
 import { Request, Response } from 'express';
 import { TreasuryService } from '../services/treasuryService';
 import { sendSuccess, sendError } from '../../shared/lib/apiResponse';
@@ -8,6 +11,7 @@ function userIdOf(req: Request): string {
   return (req as Request & { userId: string }).userId;
 }
 
+/** Map service errors with status/code to API responses; otherwise 500. */
 function serviceError(res: Response, error: unknown, fallback: string): void {
   const err = error as Error & { status?: number; code?: string };
   if (err.status && err.code) {
@@ -18,6 +22,7 @@ function serviceError(res: Response, error: unknown, fallback: string): void {
   sendError(res, 500, { code: 'INTERNAL_ERROR', message: fallback });
 }
 
+/** GET /api/treasuries — list workspace and active treasury. */
 export const listTreasuries = async (req: Request, res: Response): Promise<void> => {
   try {
     const workspace = await TreasuryService.getWorkspace(userIdOf(req));
@@ -27,6 +32,7 @@ export const listTreasuries = async (req: Request, res: Response): Promise<void>
   }
 };
 
+/** POST /api/treasuries — create (or activate existing by address). */
 export const createTreasury = async (req: Request, res: Response): Promise<void> => {
   try {
     const body = req.body as {
@@ -43,6 +49,7 @@ export const createTreasury = async (req: Request, res: Response): Promise<void>
   }
 };
 
+/** PATCH /api/treasuries/:id — rename. */
 export const patchTreasury = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params as { id: string };
@@ -54,6 +61,7 @@ export const patchTreasury = async (req: Request, res: Response): Promise<void> 
   }
 };
 
+/** DELETE /api/treasuries/:id — remove and return updated workspace. */
 export const deleteTreasury = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params as { id: string };
@@ -64,6 +72,7 @@ export const deleteTreasury = async (req: Request, res: Response): Promise<void>
   }
 };
 
+/** PUT /api/treasuries/active — set activeTreasuryId. */
 export const setActiveTreasury = async (req: Request, res: Response): Promise<void> => {
   try {
     const { activeTreasuryId } = req.body as { activeTreasuryId: string | null };
@@ -74,6 +83,7 @@ export const setActiveTreasury = async (req: Request, res: Response): Promise<vo
   }
 };
 
+/** PUT /api/treasuries — replace entire workspace (migration / bulk import). */
 export const replaceTreasuries = async (req: Request, res: Response): Promise<void> => {
   try {
     const body = req.body as {

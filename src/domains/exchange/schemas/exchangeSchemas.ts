@@ -1,3 +1,5 @@
+/** Zod schemas for exchange connect and account path params. */
+
 import { z } from 'zod';
 import { KURA_SUPPORTED_EXCHANGES } from '../../shared/lib/symbolsAndExchangesUtil';
 

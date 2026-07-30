@@ -1,14 +1,14 @@
 /**
- * Passkey / WebAuthn 控制器
+ * Passkey / WebAuthn controller.
  *
  * GET  /api/auth/passkey/status                  → { registered: boolean }
  * GET  /api/auth/passkey/register-challenge      → WebAuthn registration options
- * POST /api/auth/passkey/register                → 驗證 attestation + 儲存 encryptedDek
+ * POST /api/auth/passkey/register                → verify attestation + store encryptedDek
  * GET  /api/auth/passkey/authenticate-challenge  → WebAuthn authentication options
- * POST /api/auth/passkey/authenticate            → 驗證 assertion → { encryptedDek }
+ * POST /api/auth/passkey/authenticate            → verify assertion → { encryptedDek }
  *
- * 全部需登入（Privy JWT）；passkey 是登入後解鎖 E2EE 資料層的第二步。
- * Web + mobile 共用 WEBAUTHN_RP_ID=api.kura-finance.com（Related Origin Requests）。
+ * All require login (Privy JWT); passkey is the second step to unlock E2EE after login.
+ * Web + mobile share WEBAUTHN_RP_ID=api.kura-finance.com (Related Origin Requests).
  */
 
 import { Response } from 'express';

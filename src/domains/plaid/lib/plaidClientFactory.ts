@@ -1,10 +1,12 @@
+/**
+ * Plaid client factory — Sandbox vs Production by user allowlist.
+ *
+ * Users listed in `PLAID_SANDBOX_USER_IDS` (comma-separated UUIDs) use Sandbox;
+ * everyone else uses Production. When unset, all users use Production.
+ */
 import { Configuration, PlaidApi, PlaidEnvironments } from 'plaid';
 
-/**
- * 根據用戶 ID 決定使用 Sandbox 或 Production 環境。
- * 設定 `PLAID_SANDBOX_USER_IDS`（逗號分隔 UUID）的用戶走 Sandbox；其餘走 Production。
- * 未設定時全部使用 Production。
- */
+/** Resolve Sandbox or Production for a user id. */
 export function getPlaidEnvironmentByUserId(userId: string): 'sandbox' | 'production' {
   const sandboxUserIds = (process.env.PLAID_SANDBOX_USER_IDS ?? '')
     .split(',')
@@ -13,9 +15,7 @@ export function getPlaidEnvironmentByUserId(userId: string): 'sandbox' | 'produc
   return sandboxUserIds.includes(userId) ? 'sandbox' : 'production';
 }
 
-/**
- * 根據環境取得對應的 Plaid Secret
- */
+/** Plaid secret for the given environment. */
 function getPlaidSecret(environment: 'sandbox' | 'production'): string {
   if (environment === 'sandbox') {
     const secret = process.env.PLAID_SANDBOX_SECRET;
@@ -33,15 +33,16 @@ function getPlaidSecret(environment: 'sandbox' | 'production'): string {
 }
 
 /**
- * 為指定用戶創建 Plaid API Client
- * @param userId - 用戶的 ID
- * @returns 配置好的 PlaidApi 實例
+ * Build a PlaidApi client for the user's environment.
+ * @param userId - authenticated user id
+ * @returns configured PlaidApi instance
  */
 export function createPlaidClientForUser(userId: string): PlaidApi {
   const environment = getPlaidEnvironmentByUserId(userId);
   return createPlaidClient(environment);
 }
 
+/** Build a PlaidApi client for an explicit environment. */
 export function createPlaidClient(environment: 'sandbox' | 'production'): PlaidApi {
   const basePath = PlaidEnvironments[environment];
 
@@ -69,6 +70,7 @@ export function createPlaidClient(environment: 'sandbox' | 'production'): PlaidA
   return new PlaidApi(configuration);
 }
 
+/** Plaid client for webhook verification (uses PLAID_ENV, default sandbox). */
 export function createPlaidWebhookClient(): PlaidApi {
   const env = (process.env.PLAID_ENV || 'sandbox').toLowerCase();
   const environment: 'sandbox' | 'production' = env === 'production' ? 'production' : 'sandbox';

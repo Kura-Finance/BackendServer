@@ -1,31 +1,29 @@
 /**
- * X25519 Sealed Box (匿名加密)。
+ * X25519 sealed box (anonymous encryption).
  *
- * 用於用「使用者的 publicKey」加密一段內容（通常是 SEK）。
- * Sealed box 的特性：
- *   - 寄件人不需要自己的 keypair（一次性的 ephemeral key）
- *   - 收件人只需要 secretKey 就能解
- *   - 內含 authentication（XSalsa20-Poly1305）
+ * Encrypts a payload (usually an SEK) to the user's publicKey.
+ * Sealed-box properties:
+ *   - Sender needs no keypair (ephemeral key)
+ *   - Recipient needs only the secretKey
+ *   - Authenticated (XSalsa20-Poly1305)
  *
- * 後端用此函式 wrap SEK，前端用 crypto_box_seal_open 解開。
+ * Backend wraps SEKs with this; client opens with crypto_box_seal_open.
  *
- * 演算法 ID：`x25519-sealedbox+aes-256-gcm`
- *   - sealed box 本身是 X25519 + XSalsa20-Poly1305
- *   - 後綴 +aes-256-gcm 表示「被 wrap 的 SEK 是用來做 AES-256-GCM」
+ * Algorithm ID: `x25519-sealedbox+aes-256-gcm`
+ *   - sealed box itself is X25519 + XSalsa20-Poly1305
+ *   - `+aes-256-gcm` means the wrapped SEK is for AES-256-GCM
  */
 
 import { getSodium, toBase64, fromBase64 } from './sodium';
 
-/**
- * X25519 publicKey 的 base64 長度（32 bytes）。
- */
+/** X25519 publicKey size in bytes (32). */
 export const X25519_PUBLIC_KEY_BYTES = 32;
 
 /**
- * 用使用者的 publicKey 把 SEK 加密成 wrappedSek（base64）。
+ * Seal plaintext to the user's publicKey as wrappedSek (base64).
  *
- * @param plaintext   要被 seal 的內容（通常是 32 bytes 的 SEK）
- * @param userPublicKeyB64  使用者的 X25519 publicKey（base64）
+ * @param plaintext          Content to seal (usually a 32-byte SEK)
+ * @param userPublicKeyB64   User's X25519 publicKey (base64)
  * @returns base64(crypto_box_seal output)
  */
 export async function sealForPublicKey(
@@ -46,9 +44,8 @@ export async function sealForPublicKey(
 }
 
 /**
- * Sealed box 解封 — 後端**永遠不應該執行此函式**（後端沒有 privateKey）。
- *
- * 僅供測試 / 開發 / migration script 在持有 privateKey 的環境下使用。
+ * Open a sealed box — the backend must never call this in production
+ * (it has no privateKey). For tests / migration scripts that hold a privateKey.
  */
 export async function openSealedBox(
   sealedB64: string,
@@ -64,9 +61,7 @@ export async function openSealedBox(
   return opened;
 }
 
-/**
- * 簡單驗證 base64 publicKey 格式（不做密碼學驗證，僅檢查長度）。
- */
+/** Lightweight base64 publicKey format check (length only, not crypto validation). */
 export function isValidPublicKeyB64(value: string): boolean {
   try {
     const decoded = fromBase64(value);

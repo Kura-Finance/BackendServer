@@ -1,9 +1,9 @@
 /**
  * /api/wallet
  *
- * GET  /           → 取得目前錢包資訊 { walletAddress, scaAddress }
- * PUT  /sca        → 更新 SCA（ERC-4337 Smart Contract Account）地址
- * PUT  /eoa        → 更新 EOA（Privy embedded wallet）地址
+ * GET  /    → current wallet info { walletAddress, scaAddress }
+ * PUT  /sca → update SCA (ERC-4337 Smart Contract Account) address
+ * PUT  /eoa → update EOA (Privy embedded wallet) address
  */
 import { Router } from 'express';
 import { requireAuth } from '../auth/middleware/auth';

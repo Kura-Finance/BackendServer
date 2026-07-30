@@ -1,3 +1,7 @@
+/**
+ * Waitlist request/response DTOs and default product slug.
+ */
+
 export const WAITLIST_DEFAULT_PRODUCT = 'default';
 
 export interface JoinWaitlistParams {

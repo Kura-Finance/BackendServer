@@ -1,3 +1,7 @@
+/**
+ * Sync Privy active-user metrics into PlatformRecord for Investor insights.
+ */
+
 import { randomUUID } from 'crypto';
 import { fetchPrivyUserMetrics } from '../../auth/services/privyService';
 import { prisma } from '../../shared/lib/prisma';
@@ -45,7 +49,7 @@ function parseSnapshotMetadata(metadata: unknown): {
 }
 
 export class PrivyAnalyticsService {
-  /** 從 Privy 同步活躍用戶統計並寫入 PlatformRecord。 */
+  /** Fetch Privy active-user metrics and write a PlatformRecord snapshot. */
   static async syncActiveUsers(from?: string, to?: string): Promise<{
     syncRunId: string;
     totalUsers: number;

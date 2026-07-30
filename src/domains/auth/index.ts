@@ -1,3 +1,7 @@
+/**
+ * Auth domain public exports (controllers, middleware, services, router).
+ */
+
 export {
   me,
   updateProfile,

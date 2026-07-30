@@ -1,11 +1,13 @@
+/** Middleware: gate Dinari Entity / KYC routes to whitelisted users. */
+
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../../auth/middleware/auth';
 import { sendError } from '../../shared/lib/apiResponse';
 import { isDinariWhitelistedUser } from '../lib/dinariWhitelist';
 
 /**
- * Dinari Entity / KYC 白名單 gate。
- * 非白名單用戶回 403，避免前端觸發 Dinari entity 註冊與 KYC flow。
+ * Dinari Entity / KYC whitelist gate.
+ * Non-whitelisted users get 403 so the client cannot start entity registration / KYC.
  */
 export async function requireDinariWhitelist(
   req: AuthRequest,

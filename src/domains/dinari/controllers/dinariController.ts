@@ -1,3 +1,5 @@
+/** Dinari HTTP controllers for KYC, wallet, market data, orders, and portfolio. */
+
 import { Response } from 'express';
 import { APIError } from '@dinari/api-sdk';
 import { AuthRequest } from '../../auth/middleware/auth';
@@ -28,7 +30,7 @@ function getAuthenticatedUserId(req: AuthRequest, res: Response): string | null 
   return req.userId;
 }
 
-/** 將 DinariError / SDK APIError 對應到 HTTP 回應。 */
+/** Map DinariError / SDK APIError to an HTTP response. */
 function handleDinariError(res: Response, error: unknown, fallbackMessage: string): void {
   if (error instanceof DinariError) {
     const status = error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 502;
@@ -139,7 +141,7 @@ export const connectWallet = async (req: AuthRequest, res: Response): Promise<vo
   }
 };
 
-// ── 行情 ──────────────────────────────────────────────────────────────
+// ── Market data ──
 
 export const listStocks = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -181,7 +183,7 @@ export const getStockQuote = async (req: AuthRequest, res: Response): Promise<vo
   }
 };
 
-// ── 下單 ──────────────────────────────────────────────────────────────
+// ── Orders ──
 
 export const prepareOrder = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -253,7 +255,7 @@ export const getOrder = async (req: AuthRequest, res: Response): Promise<void> =
   }
 };
 
-// ── 持倉 / 現金 / Sandbox ────────────────────────────────────────────
+// ── Portfolio / cash / sandbox ──
 
 export const getPortfolio = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
