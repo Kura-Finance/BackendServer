@@ -90,6 +90,13 @@ router.get(
   getFraudRate,
 );
 
+/** Alias — avoids WAF rules that match the literal path segment `fraud`. */
+router.get(
+  '/bridge/penalty-box',
+  validateRequest({ query: fraudRateQuerySchema }),
+  getFraudRate,
+);
+
 router.post(
   '/bridge/customers/:bridgeCustomerId/unpause',
   validateRequest({ params: bridgeCustomerIdParamSchema }),

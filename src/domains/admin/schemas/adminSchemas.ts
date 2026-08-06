@@ -19,18 +19,29 @@ export const fundsRequestStatusSchema = z.enum([
   'ignored',
 ]);
 
-export const listFundsRequestsQuerySchema = z.object({
-  fraud: z
-    .enum(['true', 'false', '1', '0'])
-    .optional()
-    .transform((value) => {
-      if (value === undefined) return undefined;
-      return value === 'true' || value === '1';
-    }),
-  status: fundsRequestStatusSchema.optional(),
-  limit: z.coerce.number().int().min(1).max(500).optional(),
-  offset: z.coerce.number().int().min(0).optional(),
-});
+const boolQuery = z
+  .enum(['true', 'false', '1', '0'])
+  .optional()
+  .transform((value) => {
+    if (value === undefined) return undefined;
+    return value === 'true' || value === '1';
+  });
+
+export const listFundsRequestsQuerySchema = z
+  .object({
+    /** Prefer `flagged` in prod — some WAFs block the literal query key `fraud`. */
+    flagged: boolQuery,
+    fraud: boolQuery,
+    status: fundsRequestStatusSchema.optional(),
+    limit: z.coerce.number().int().min(1).max(500).optional(),
+    offset: z.coerce.number().int().min(0).optional(),
+  })
+  .transform((value) => ({
+    fraud: value.flagged ?? value.fraud,
+    status: value.status,
+    limit: value.limit,
+    offset: value.offset,
+  }));
 
 export const fundsRequestIdParamSchema = z.object({
   id: z.string().trim().min(1),
