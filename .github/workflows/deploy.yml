@@ -115,7 +115,7 @@ jobs:
             PLAID_REDIRECT_URI=${{ secrets.PLAID_REDIRECT_URI }}
             PLAID_WEBHOOK_URL=${{ secrets.PLAID_WEBHOOK_URL }}
             LOGO_DEV_TOKEN=${{ secrets.LOGO_DEV_PUBLISHABLE_KEY }}
-            ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}
+            ALLOWED_ORIGINS="https://app.kura-finance.com,https://www.kura-finance.com,https://kura-finance.com,https://admin.kura-finance.com,https://admin-642134687769.us-central1.run.app"
             RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
             RESEND_FROM_EMAIL=${{ secrets.RESEND_FROM_EMAIL }}
             APP_NAME=${{ secrets.APP_NAME }}
