@@ -118,10 +118,24 @@ export const login = async (req: Request, res: Response): Promise<void> => {
   } catch (error) {
     logError('Privy login failed', error);
     const message = error instanceof Error ? error.message : 'Login failed';
+    const code = (error as { code?: string }).code;
+    const statusCode = (error as { statusCode?: number }).statusCode;
+    if (code === 'FRAUD_SUSPENDED') {
+      // Clear any stale session cookie so the browser does not keep a prior JWT.
+      res.clearCookie('authToken', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+      });
+      sendError(res, 403, {
+        code: 'FRAUD_SUSPENDED',
+        message: message || '此帳號因欺詐警報已被停用，無法登入。',
+      });
+      return;
+    }
     const normalized = message.toLowerCase();
     const isConflict = normalized.includes('already linked');
-    const statusCode = isConflict ? 409 : 500;
-    sendError(res, statusCode, {
+    sendError(res, isConflict ? 409 : statusCode && statusCode >= 400 ? statusCode : 500, {
       code: isConflict ? 'ACCOUNT_CONFLICT' : 'LOGIN_FAILED',
       message: isConflict ? message : 'Login failed',
     });

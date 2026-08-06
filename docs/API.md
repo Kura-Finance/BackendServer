@@ -86,7 +86,7 @@ Auth: session + admin email allowlist. Read APIs for the Kura Admin console (`da
 
 Notes:
 
-- `walletBalanceUsd` / `totalWalletBalanceUsd` are always `0` (SCA balances are E2EE; server cannot decrypt).
+- `walletBalanceUsd` / `totalWalletBalanceUsd` come from a live DeBank fetch on each user's `scaAddress` (spot + DeFi; 5‑minute in-memory cache). Users without SCA stay `0`. Requires `DEBANK_ACCESS_KEY`.
 - FeeWarp `mau` / `feeWarpMauTotal` are always `0` until a deposit-MAU indexer exists; TVL is live from Morpho.
 - Revenue totals come from `PlatformRecord` (same ledger as Investor platform-insights).
 

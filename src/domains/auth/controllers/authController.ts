@@ -32,12 +32,28 @@ export const me = async (req: AuthRequest, res: Response): Promise<void> => {
     sendSuccess(res, { user: profile });
   } catch (error) {
     logError('Fetch current user profile failed', error, { userId: req.userId });
+    const code = (error as { code?: string }).code;
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    if (code === 'FRAUD_SUSPENDED') {
+      res.clearCookie('authToken', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+      });
+      sendError(res, 403, {
+        code: 'FRAUD_SUSPENDED',
+        message: message || '此帳號因欺詐警報已被停用，無法登入。',
+      });
+      return;
+    }
     // Missing user → 404; DB errors → 503; otherwise → 500
     const isNotFoundError = error instanceof Error && error.message.toLowerCase().includes('not found');
     const isDatabaseError = error instanceof PrismaClientKnownRequestError;
     const statusCode = isNotFoundError ? 404 : isDatabaseError ? 503 : 500;
-    const message = isNotFoundError && error instanceof Error ? error.message : 'Internal server error';
-    sendError(res, statusCode, { code: isNotFoundError ? 'NOT_FOUND' : isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR', message });
+    sendError(res, statusCode, {
+      code: isNotFoundError ? 'NOT_FOUND' : isDatabaseError ? 'DATABASE_ERROR' : 'INTERNAL_ERROR',
+      message: isNotFoundError ? message : 'Internal server error',
+    });
   }
 };
 

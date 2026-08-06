@@ -14,6 +14,7 @@ import {
   roundUsd,
 } from '../../platform-insights/lib/revenuePolicy';
 import { BridgeFraudRateService } from '../../bridge/services/bridgeFraudRateService';
+import { DeBankService } from '../../debank/services/debankService';
 import type {
   AdminUser,
   BridgeKycStatus,
@@ -112,6 +113,7 @@ function toAdminUser(
   user: UserRow,
   bridge: RevenueActivity,
   dinari: RevenueActivity,
+  walletBalanceUsd = 0,
 ): AdminUser {
   return {
     id: user.id,
@@ -122,7 +124,7 @@ function toAdminUser(
     scaAddress: user.scaAddress,
     bridgeKyc: normalizeBridgeKyc(user.bridgeCustomer?.kycStatus),
     dinariKyc: normalizeDinariKyc(user.dinariEntity?.kycStatus),
-    walletBalanceUsd: 0,
+    walletBalanceUsd: roundUsd(walletBalanceUsd),
     bridge,
     dinari,
     fraudSuspended: Boolean(user.fraudSuspendedAt),
@@ -278,11 +280,18 @@ export class AdminDashboardService {
       loadUserRevenueMaps(),
     ]);
 
+    const balances = await DeBankService.fetchPlaintextWalletUsdTotals(
+      users.map((u) => u.scaAddress),
+    );
+
     return users.map((user) =>
       toAdminUser(
         user,
         toRevenueActivity(bridgeByUser.get(user.id) ?? emptyBucket()),
         toRevenueActivity(dinariByUser.get(user.id) ?? emptyBucket()),
+        user.scaAddress
+          ? (balances.get(user.scaAddress.toLowerCase()) ?? 0)
+          : 0,
       ),
     );
   }
@@ -294,19 +303,22 @@ export class AdminDashboardService {
     });
     if (!user) return null;
 
-    const rows = await prisma.platformRecord.groupBy({
-      by: ['source'],
-      where: {
-        category: 'revenue',
-        userId: id,
-        OR: [
-          { source: { startsWith: 'bridge_' } },
-          { source: 'dinari' },
-        ],
-      },
-      _sum: { processAmount: true, platformFee: true },
-      _count: { _all: true },
-    });
+    const [rows, walletBalanceUsd] = await Promise.all([
+      prisma.platformRecord.groupBy({
+        by: ['source'],
+        where: {
+          category: 'revenue',
+          userId: id,
+          OR: [
+            { source: { startsWith: 'bridge_' } },
+            { source: 'dinari' },
+          ],
+        },
+        _sum: { processAmount: true, platformFee: true },
+        _count: { _all: true },
+      }),
+      DeBankService.fetchPlaintextWalletUsdTotal(user.scaAddress),
+    ]);
 
     const bridge = emptyBucket();
     const dinari = emptyBucket();
@@ -325,7 +337,12 @@ export class AdminDashboardService {
       }
     }
 
-    return toAdminUser(user, toRevenueActivity(bridge), toRevenueActivity(dinari));
+    return toAdminUser(
+      user,
+      toRevenueActivity(bridge),
+      toRevenueActivity(dinari),
+      walletBalanceUsd,
+    );
   }
 
   static async getFeeWarps(): Promise<FeeWarpVault[]> {
@@ -342,7 +359,7 @@ export class AdminDashboardService {
   }
 
   static async getOverview(): Promise<OverviewMetrics> {
-    const [totalUsers, usersWithKyc, platform, lifi, feeWarps, fraudRate] =
+    const [totalUsers, usersWithKyc, platform, lifi, feeWarps, fraudRate, scaRows] =
       await Promise.all([
         prisma.user.count(),
         prisma.user.findMany({
@@ -355,7 +372,18 @@ export class AdminDashboardService {
         loadLifiTransferTotals(),
         mapFeeWarps(),
         BridgeFraudRateService.getMonthSummary(),
+        prisma.user.findMany({
+          where: { scaAddress: { not: null } },
+          select: { scaAddress: true },
+        }),
       ]);
+
+    const walletBalances = await DeBankService.fetchPlaintextWalletUsdTotals(
+      scaRows.map((u) => u.scaAddress),
+    );
+    const totalWalletBalanceUsd = roundUsd(
+      [...walletBalances.values()].reduce((sum, v) => sum + v, 0),
+    );
 
     let bridgeKycApproved = 0;
     let bridgeKycPending = 0;
@@ -394,7 +422,7 @@ export class AdminDashboardService {
       lifiVolumeUsd: roundUsd(lifi.volumeUsd),
       lifiFeeUsd: roundUsd(lifi.feeUsd),
       lifiTransferCount: lifi.count,
-      totalWalletBalanceUsd: 0,
+      totalWalletBalanceUsd,
       feeWarpMauTotal: 0,
       feeWarpTvlUsd,
       bridgeFraud: {

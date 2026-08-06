@@ -56,6 +56,28 @@ export class AuthService {
     return inviter;
   }
 
+  /** Reject auth when the account is under a Bridge Fraud Alert suspend. */
+  private static assertNotFraudSuspended(
+    user: {
+      id: string;
+      fraudSuspendedAt: Date | null;
+      fraudSuspendReason?: string | null;
+    },
+    options?: { logFailedLogin?: boolean },
+  ): void {
+    if (!user.fraudSuspendedAt) return;
+    const error = new Error(
+      user.fraudSuspendReason?.trim()
+        || '此帳號因欺詐警報已被停用，無法登入。',
+    );
+    (error as Error & { statusCode?: number; code?: string }).statusCode = 403;
+    (error as Error & { statusCode?: number; code?: string }).code = 'FRAUD_SUSPENDED';
+    if (options?.logFailedLogin) {
+      logAuthEvent('failed_login', user.id, { method: 'privy', reason: 'fraud_suspended' });
+    }
+    throw error;
+  }
+
   /**
    * ============================================
    * Privy login
@@ -91,9 +113,16 @@ export class AuthService {
     // 1. Look up existing account by privyUserId
     const byPrivy = await prisma.user.findUnique({
       where: { privyUserId },
-      select: { id: true, publicKey: true, email: true },
+      select: {
+        id: true,
+        publicKey: true,
+        email: true,
+        fraudSuspendedAt: true,
+        fraudSuspendReason: true,
+      },
     });
     if (byPrivy) {
+      this.assertNotFraudSuspended(byPrivy, { logFailedLogin: true });
       resolved = byPrivy;
       if (!email) {
         email = resolveUserEmail(byPrivy.id, byPrivy.email);
@@ -110,9 +139,16 @@ export class AuthService {
     if (!resolved && email && !isPlaceholderEmail(email)) {
       const byEmail = await prisma.user.findUnique({
         where: { email },
-        select: { id: true, publicKey: true, privyUserId: true },
+        select: {
+          id: true,
+          publicKey: true,
+          privyUserId: true,
+          fraudSuspendedAt: true,
+          fraudSuspendReason: true,
+        },
       });
       if (byEmail) {
+        this.assertNotFraudSuspended(byEmail, { logFailedLogin: true });
         if (byEmail.privyUserId && byEmail.privyUserId !== privyUserId) {
           throw new Error('Email is already linked to another account');
         }
@@ -346,6 +382,14 @@ export class AuthService {
     if (!profile) {
       logError('User profile not found', new Error('User not found'), { userId });
       throw new Error('User not found');
+    }
+
+    if (profile.fraudSuspended) {
+      this.assertNotFraudSuspended({
+        id: userId,
+        fraudSuspendedAt: new Date(),
+        fraudSuspendReason: profile.fraudSuspendReason ?? null,
+      });
     }
 
     return profile;

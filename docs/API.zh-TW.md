@@ -86,7 +86,7 @@
 
 備註：
 
-- `walletBalanceUsd`／`totalWalletBalanceUsd` 目前固定為 `0`（SCA 餘額為 E2EE，後端無法解密）。
+- `walletBalanceUsd`／`totalWalletBalanceUsd` 以各用戶 `scaAddress` 即時查 DeBank（spot + DeFi；記憶體快取 5 分鐘）。無 SCA 為 `0`。需 `DEBANK_ACCESS_KEY`。
 - FeeWarp `mau`／`feeWarpMauTotal` 目前固定為 `0`（尚無 deposit MAU indexer）；TVL 來自 Morpho 即時查詢。
 - 營收合計來自 `PlatformRecord`（與 Investor platform-insights 同一帳本）。
 

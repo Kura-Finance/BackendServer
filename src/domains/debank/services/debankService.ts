@@ -48,6 +48,10 @@ export interface EncryptedDeBankTokenSnapshot {
   }>;
 }
 
+/** Short-lived plaintext wallet totals for admin (never persisted). */
+const adminWalletUsdCache = new Map<string, { usd: number; expiresAt: number }>();
+const ADMIN_WALLET_CACHE_TTL_MS = 5 * 60 * 1000;
+
 /**
  * DeBank service — fetch and cache user protocol / token data via DeBank OpenAPI.
  */
@@ -147,6 +151,128 @@ export class DeBankService {
     const amount = Number(token.amount || 0);
     const price = Number(token.price || 0);
     return amount * price;
+  }
+
+  private static roundUsd(value: number): number {
+    return Math.round(value * 100) / 100;
+  }
+
+  /**
+   * Admin-only: live DeBank spot + DeFi USD for an address (no E2EE / no user cache write).
+   * Results cached in-memory for 5 minutes per address.
+   */
+  static async fetchPlaintextWalletUsdTotal(address: string | null | undefined): Promise<number> {
+    if (!address || !/^0x[a-fA-F0-9]{40}$/.test(address)) return 0;
+    const normalized = address.toLowerCase();
+
+    const cached = adminWalletUsdCache.get(normalized);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.usd;
+    }
+
+    if (!process.env.DEBANK_ACCESS_KEY?.trim()) {
+      logDebug('[DeBank] Admin wallet total skipped — DEBANK_ACCESS_KEY not configured');
+      return 0;
+    }
+
+    try {
+      const accessKey = this.getAccessKey();
+      const baseUrl = this.getBaseUrl();
+      const headers = {
+        Accept: 'application/json',
+        AccessKey: accessKey,
+      };
+
+      const [tokenRes, protocolRes] = await Promise.all([
+        fetch(`${baseUrl}/user/all_token_list?id=${encodeURIComponent(normalized)}`, {
+          method: 'GET',
+          headers,
+        }),
+        fetch(
+          `${baseUrl}/user/all_complex_protocol_list?id=${encodeURIComponent(normalized)}`,
+          { method: 'GET', headers },
+        ),
+      ]);
+
+      let spot = 0;
+      let defi = 0;
+
+      if (tokenRes.ok) {
+        const data = (await tokenRes.json()) as unknown;
+        if (Array.isArray(data)) {
+          spot = (data as DeBankTokenPosition[]).reduce(
+            (sum, t) => sum + this.computeTokenUsdValue(t),
+            0,
+          );
+        }
+      } else {
+        logDebug('[DeBank] Admin token list failed', {
+          address: normalized,
+          status: tokenRes.status,
+        });
+      }
+
+      if (protocolRes.ok) {
+        const data = (await protocolRes.json()) as unknown;
+        if (Array.isArray(data)) {
+          defi = (data as DeBankProtocolPosition[]).reduce(
+            (sum, p) => sum + this.computeProtocolNetUsdValue(p),
+            0,
+          );
+        }
+      } else {
+        logDebug('[DeBank] Admin protocol list failed', {
+          address: normalized,
+          status: protocolRes.status,
+        });
+      }
+
+      const usd = this.roundUsd(spot + defi);
+      adminWalletUsdCache.set(normalized, {
+        usd,
+        expiresAt: Date.now() + ADMIN_WALLET_CACHE_TTL_MS,
+      });
+      return usd;
+    } catch (error) {
+      logDebug('[DeBank] Admin wallet total failed', {
+        address: normalized,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return 0;
+    }
+  }
+
+  /** Fetch wallet USD for many addresses with bounded concurrency (admin lists). */
+  static async fetchPlaintextWalletUsdTotals(
+    addresses: Array<string | null | undefined>,
+    concurrency = 5,
+  ): Promise<Map<string, number>> {
+    const unique = [
+      ...new Set(
+        addresses
+          .filter((a): a is string => Boolean(a && /^0x[a-fA-F0-9]{40}$/.test(a)))
+          .map((a) => a.toLowerCase()),
+      ),
+    ];
+    const result = new Map<string, number>();
+    let index = 0;
+
+    async function worker(): Promise<void> {
+      while (index < unique.length) {
+        const current = unique[index];
+        index += 1;
+        if (!current) continue;
+        const usd = await DeBankService.fetchPlaintextWalletUsdTotal(current);
+        result.set(current, usd);
+      }
+    }
+
+    const workers = Array.from(
+      { length: Math.min(concurrency, Math.max(unique.length, 1)) },
+      () => worker(),
+    );
+    await Promise.all(workers);
+    return result;
   }
 
   /**

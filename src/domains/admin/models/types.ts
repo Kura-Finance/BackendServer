@@ -37,7 +37,7 @@ export type AdminUser = {
   scaAddress: string | null;
   bridgeKyc: BridgeKycStatus;
   dinariKyc: DinariKycStatus;
-  /** Always 0 today — SCA balances are E2EE; server cannot decrypt. */
+  /** SCA spot + DeFi USD from live DeBank (admin plaintext fetch; not E2EE cache). */
   walletBalanceUsd: number;
   bridge: RevenueActivity;
   dinari: RevenueActivity;
