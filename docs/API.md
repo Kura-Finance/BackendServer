@@ -72,6 +72,24 @@ See domain code under `src/domains/treasury/`.
 
 Prefer `platformRevenue.totalUsd` / `byProduct` over legacy `process.totalNetUsd` (kept as a mirror).
 
+## Admin — Dashboard
+
+Auth: session + admin email allowlist. Read APIs for the Kura Admin console (`dashboard`).
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/admin/users` | All users: tier, EOA/SCA, Bridge/Dinari KYC, all-time Bridge/Dinari revenue |
+| GET | `/api/admin/users/:id` | Single user (`404 NOT_FOUND` if missing) |
+| GET | `/api/admin/overview` | Platform metrics (KYC funnel, Bridge/Dinari/Li.Fi totals, FeeWarp TVL) |
+| GET | `/api/admin/earn/fee-warps` | Morpho FeeWrapper vaults on Base (live TVL) |
+| GET | `/api/admin/lifi/summary` | Platform Li.Fi `{ volumeUsd, feeUsd, transferCount }` (all-time `transfer_done`) |
+
+Notes:
+
+- `walletBalanceUsd` / `totalWalletBalanceUsd` are always `0` (SCA balances are E2EE; server cannot decrypt).
+- FeeWarp `mau` / `feeWarpMauTotal` are always `0` until a deposit-MAU indexer exists; TVL is live from Morpho.
+- Revenue totals come from `PlatformRecord` (same ledger as Investor platform-insights).
+
 ## Admin — Bridge Funds Requests / Returns
 
 Auth: session + admin email allowlist. Returns are **manual** (not auto on sync). Funding: Bridge Wallet (`BRIDGE_WALLET_ID`).

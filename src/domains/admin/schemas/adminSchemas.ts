@@ -1,11 +1,15 @@
 /**
- * Zod schemas for admin Bridge funds-request APIs.
+ * Zod schemas for admin APIs (dashboard reads + Bridge funds-request ops).
  */
 
 import { z } from 'zod';
 import { lazyUpdateQuerySchema } from '../../platform-insights/schemas/platformInsightsSchemas';
 
 export { lazyUpdateQuerySchema };
+
+export const userIdParamSchema = z.object({
+  id: z.string().uuid(),
+});
 
 export const fundsRequestStatusSchema = z.enum([
   'open',

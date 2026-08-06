@@ -13,15 +13,35 @@ import {
   syncFundsRequests,
 } from './controllers/bridgeAdminController';
 import {
+  getFeeWarps,
+  getLifiSummary,
+  getOverview,
+  getUser,
+  listUsers,
+} from './controllers/dashboardAdminController';
+import {
   fundsRequestIdParamSchema,
   lazyUpdateQuerySchema,
   listFundsRequestsQuerySchema,
+  userIdParamSchema,
 } from './schemas/adminSchemas';
 
 const router = Router();
 
 router.use(requireAuth, requireAdmin);
 
+// ── Dashboard (Kura Admin console) ───────────────────────────
+router.get('/users', listUsers);
+router.get(
+  '/users/:id',
+  validateRequest({ params: userIdParamSchema }),
+  getUser,
+);
+router.get('/overview', getOverview);
+router.get('/earn/fee-warps', getFeeWarps);
+router.get('/lifi/summary', getLifiSummary);
+
+// ── Bridge funds-request ops ─────────────────────────────────
 router.post(
   '/bridge/funds-requests/sync',
   validateRequest({ query: lazyUpdateQuerySchema }),

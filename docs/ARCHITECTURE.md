@@ -26,6 +26,7 @@ src/
     platform-insights/  # Internal revenue / volume insights
     privy-analytics/    # Privy usage analytics
     lifi-analytics/     # LI.FI integrator volume
+    admin/              # Ops console: dashboard reads + Bridge funds-request returns
     email/              # Resend transactional mail
     logger/             # Winston logging
     shared/             # Prisma, rate limits, shared utils

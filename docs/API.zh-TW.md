@@ -72,6 +72,24 @@
 
 請優先使用 `platformRevenue.totalUsd` / `byProduct`；`process.totalNetUsd` 僅為相容鏡像。
 
+## Admin — Dashboard
+
+認證：session + admin email 白名單。供 Kura Admin console（`dashboard`）使用的讀取 API。
+
+| 方法 | 路徑 | 用途 |
+|------|------|------|
+| GET | `/api/admin/users` | 全部使用者：tier、EOA/SCA、Bridge/Dinari KYC、累計 Bridge/Dinari 營收 |
+| GET | `/api/admin/users/:id` | 單一使用者（不存在 → `404 NOT_FOUND`） |
+| GET | `/api/admin/overview` | 平台指標（KYC funnel、Bridge/Dinari/Li.Fi 合計、FeeWarp TVL） |
+| GET | `/api/admin/earn/fee-warps` | Base 上 Morpho FeeWrapper vault（即時 TVL） |
+| GET | `/api/admin/lifi/summary` | 平台 Li.Fi `{ volumeUsd, feeUsd, transferCount }`（累計 `transfer_done`） |
+
+備註：
+
+- `walletBalanceUsd`／`totalWalletBalanceUsd` 目前固定為 `0`（SCA 餘額為 E2EE，後端無法解密）。
+- FeeWarp `mau`／`feeWarpMauTotal` 目前固定為 `0`（尚無 deposit MAU indexer）；TVL 來自 Morpho 即時查詢。
+- 營收合計來自 `PlatformRecord`（與 Investor platform-insights 同一帳本）。
+
 ## Admin — Bridge Funds Requests／Returns
 
 認證：session + admin email 白名單。Return **手動**發起（sync 不會自動退款）。資金來源：Bridge Wallet（`BRIDGE_WALLET_ID`）。

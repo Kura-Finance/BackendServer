@@ -26,6 +26,7 @@ src/
     platform-insights/  # 內部營收／量能洞察
     privy-analytics/    # Privy 使用分析
     lifi-analytics/     # LI.FI integrator 量能
+    admin/              # 營運後台：dashboard 讀取 + Bridge funds-request 退款
     email/              # Resend 交易郵件
     logger/             # Winston 日誌
     shared/             # Prisma、速率限制、共用工具
