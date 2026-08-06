@@ -72,6 +72,8 @@ function normalizeTier(tier: string | null | undefined): UserTier {
 }
 
 function normalizeBridgeKyc(status: string | null | undefined): BridgeKycStatus {
+  // Bridge API uses `active` for KYC-approved / transactable customers.
+  if (status === 'active' || status === 'approved') return 'approved';
   if (status && BRIDGE_KYC_STATUSES.has(status)) {
     return status as BridgeKycStatus;
   }
