@@ -53,16 +53,28 @@ export const syncFundsRequests = async (req: AuthRequest, res: Response): Promis
 export const listFundsRequests = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const query = req.query as {
-      fraud?: boolean;
+      fraud?: boolean | string;
       status?: BridgeFundsRequestStatus;
-      limit?: number;
-      offset?: number;
+      limit?: number | string;
+      offset?: number | string;
     };
+    const fraud =
+      query.fraud === undefined
+        ? undefined
+        : query.fraud === true || query.fraud === 'true' || query.fraud === '1';
+    const limit =
+      query.limit === undefined || query.limit === ''
+        ? undefined
+        : Number(query.limit);
+    const offset =
+      query.offset === undefined || query.offset === ''
+        ? undefined
+        : Number(query.offset);
     const result = await BridgeService.listLocalFundsRequests({
-      ...(query.fraud != null ? { fraud: query.fraud } : {}),
+      ...(fraud != null ? { fraud } : {}),
       ...(query.status ? { status: query.status } : {}),
-      ...(query.limit != null ? { limit: query.limit } : {}),
-      ...(query.offset != null ? { offset: query.offset } : {}),
+      ...(limit != null && Number.isFinite(limit) ? { limit } : {}),
+      ...(offset != null && Number.isFinite(offset) ? { offset } : {}),
     });
     sendSuccess(res, result);
   } catch (error) {

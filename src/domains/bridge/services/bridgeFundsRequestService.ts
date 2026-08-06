@@ -221,11 +221,12 @@ export class BridgeFundsRequestService {
     offset?: number;
   }): Promise<{ items: FundsRequestListItem[]; total: number }> {
     const where: Prisma.BridgeFundsRequestWhereInput = {
-      ...(params?.fraud != null ? { fraud: params.fraud } : {}),
+      ...(params?.fraud != null ? { fraud: Boolean(params.fraud) } : {}),
       ...(params?.status ? { status: params.status } : {}),
     };
-    const limit = params?.limit ?? 100;
-    const offset = params?.offset ?? 0;
+    // Express req.query values are often strings even after Zod coerce — force ints for Prisma.
+    const limit = Math.min(500, Math.max(1, Number(params?.limit ?? 100) || 100));
+    const offset = Math.max(0, Number(params?.offset ?? 0) || 0);
 
     const [rows, total] = await Promise.all([
       prisma.bridgeFundsRequest.findMany({
