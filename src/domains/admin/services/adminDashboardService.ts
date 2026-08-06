@@ -13,6 +13,7 @@ import {
   isDinariRevenueSource,
   roundUsd,
 } from '../../platform-insights/lib/revenuePolicy';
+import { BridgeFraudRateService } from '../../bridge/services/bridgeFraudRateService';
 import type {
   AdminUser,
   BridgeKycStatus,
@@ -98,6 +99,8 @@ type UserRow = {
   tier: string;
   walletAddress: string | null;
   scaAddress: string | null;
+  fraudSuspendedAt: Date | null;
+  fraudSuspendReason: string | null;
   createdAt: Date;
   bridgeCustomer: { kycStatus: string } | null;
   dinariEntity: { kycStatus: string } | null;
@@ -120,6 +123,8 @@ function toAdminUser(
     walletBalanceUsd: 0,
     bridge,
     dinari,
+    fraudSuspended: Boolean(user.fraudSuspendedAt),
+    fraudSuspendReason: user.fraudSuspendReason,
     createdAt: user.createdAt.toISOString(),
   };
 }
@@ -131,6 +136,8 @@ const userSelect = {
   tier: true,
   walletAddress: true,
   scaAddress: true,
+  fraudSuspendedAt: true,
+  fraudSuspendReason: true,
   createdAt: true,
   bridgeCustomer: { select: { kycStatus: true } },
   dinariEntity: { select: { kycStatus: true } },
@@ -333,18 +340,20 @@ export class AdminDashboardService {
   }
 
   static async getOverview(): Promise<OverviewMetrics> {
-    const [totalUsers, usersWithKyc, platform, lifi, feeWarps] = await Promise.all([
-      prisma.user.count(),
-      prisma.user.findMany({
-        select: {
-          bridgeCustomer: { select: { kycStatus: true } },
-          dinariEntity: { select: { kycStatus: true } },
-        },
-      }),
-      loadPlatformRevenueTotals(),
-      loadLifiTransferTotals(),
-      mapFeeWarps(),
-    ]);
+    const [totalUsers, usersWithKyc, platform, lifi, feeWarps, fraudRate] =
+      await Promise.all([
+        prisma.user.count(),
+        prisma.user.findMany({
+          select: {
+            bridgeCustomer: { select: { kycStatus: true } },
+            dinariEntity: { select: { kycStatus: true } },
+          },
+        }),
+        loadPlatformRevenueTotals(),
+        loadLifiTransferTotals(),
+        mapFeeWarps(),
+        BridgeFraudRateService.getMonthSummary(),
+      ]);
 
     let bridgeKycApproved = 0;
     let bridgeKycPending = 0;
@@ -386,6 +395,14 @@ export class AdminDashboardService {
       totalWalletBalanceUsd: 0,
       feeWarpMauTotal: 0,
       feeWarpTvlUsd,
+      bridgeFraud: {
+        month: fraudRate.month,
+        openFraudAlerts: fraudRate.openFraudAlerts,
+        combinedCountRateBps: fraudRate.combined.countRateBps,
+        combinedVolumeRateBps: fraudRate.combined.volumeRateBps,
+        inPenaltyBoxRisk: fraudRate.inPenaltyBoxRisk,
+        inCriticalRisk: fraudRate.inCriticalRisk,
+      },
     };
   }
 }

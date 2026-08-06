@@ -80,7 +80,7 @@
 |------|------|------|
 | GET | `/api/admin/users` | 全部使用者：tier、EOA/SCA、Bridge/Dinari KYC、累計 Bridge/Dinari 營收 |
 | GET | `/api/admin/users/:id` | 單一使用者（不存在 → `404 NOT_FOUND`） |
-| GET | `/api/admin/overview` | 平台指標（KYC funnel、Bridge/Dinari/Li.Fi 合計、FeeWarp TVL） |
+| GET | `/api/admin/overview` | 平台指標（KYC funnel、Bridge/Dinari/Li.Fi、FeeWarp TVL、當月 `bridgeFraud`） |
 | GET | `/api/admin/earn/fee-warps` | Base 上 Morpho FeeWrapper vault（即時 TVL） |
 | GET | `/api/admin/lifi/summary` | 平台 Li.Fi `{ volumeUsd, feeUsd, transferCount }`（累計 `transfer_done`） |
 
@@ -90,14 +90,21 @@
 - FeeWarp `mau`／`feeWarpMauTotal` 目前固定為 `0`（尚無 deposit MAU indexer）；TVL 來自 Morpho 即時查詢。
 - 營收合計來自 `PlatformRecord`（與 Investor platform-insights 同一帳本）。
 
-## Admin — Bridge Funds Requests／Returns
+## Admin — Bridge Funds Requests／Fraud Alerts
 
-認證：session + admin email 白名單。Return **手動**發起（sync 不會自動退款）。資金來源：Bridge Wallet（`BRIDGE_WALLET_ID`）。
+認證：session + admin email 白名單。Return 資金來源：Bridge Wallet（`BRIDGE_WALLET_ID`）。
+
+Sync 時若出現**新的** `fraud=true`：會 `PUT` Bridge customer `status=paused`、寫入 `User.fraudSuspendedAt`，並寄 admin 信（`ADMIN_EMAIL`）。
 
 | 方法 | 路徑 | 用途 |
 |------|------|------|
-| POST | `/api/admin/bridge/funds-requests/sync?force=` | Poll Bridge `GET /funds_requests`，upsert 本地（懶更新） |
-| GET | `/api/admin/bridge/funds-requests?fraud=&status=&limit=&offset=` | 本地 recall 列表（含 `paymentProcessed`） |
+| POST | `/api/admin/bridge/funds-requests/sync?force=` | Poll Bridge `GET /funds_requests`；新 fraud 自動 pause |
+| GET | `/api/admin/bridge/funds-requests?fraud=&status=&limit=&offset=` | 本地 recall（`fraud=true` = Fraud Alerts） |
+| POST | `/api/admin/bridge/funds-requests/:id/pause` | Pause Bridge customer + 平台停權 |
 | POST | `/api/admin/bridge/funds-requests/:id/return` | 以 Bridge Wallet 建立 `fiat_deposit_return` |
+| POST | `/api/admin/bridge/funds-requests/:id/remediate` | 一鍵：pause + return（return 失敗仍保留 pause） |
+| GET | `/api/admin/bridge/fraud-rate?month=YYYY-MM` | 月詐欺率（US=存款月、EUR=recall 月；50 bps Penalty Box／7% critical） |
+| POST | `/api/admin/bridge/customers/:bridgeCustomerId/unpause` | Sender 撤回 claim 後解除 Bridge pause |
+| POST | `/api/admin/users/:id/clear-fraud-suspend` | 清除平台停權（不會自動 unpause Bridge） |
 
-VA webhook `refunded` 會把對應 funds request 標成 `returned`。
+VA webhook `refunded` 會把對應 funds request 標成 `returned`。Fraud 停權使用者無法 `DELETE /api/auth/me` 或新建 Bridge KYC。

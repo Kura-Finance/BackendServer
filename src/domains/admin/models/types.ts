@@ -41,6 +41,9 @@ export type AdminUser = {
   walletBalanceUsd: number;
   bridge: RevenueActivity;
   dinari: RevenueActivity;
+  /** Platform suspend after Bridge Fraud Alert. */
+  fraudSuspended: boolean;
+  fraudSuspendReason: string | null;
   createdAt: string;
 };
 
@@ -74,6 +77,15 @@ export type OverviewMetrics = {
   totalWalletBalanceUsd: number;
   feeWarpMauTotal: number;
   feeWarpTvlUsd: number;
+  /** Current UTC month Bridge fraud-rate snapshot (Penalty Box). */
+  bridgeFraud: {
+    month: string;
+    openFraudAlerts: number;
+    combinedCountRateBps: number;
+    combinedVolumeRateBps: number;
+    inPenaltyBoxRisk: boolean;
+    inCriticalRisk: boolean;
+  };
 };
 
 export type LifiAdminSummary = {

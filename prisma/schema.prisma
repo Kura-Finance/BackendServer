@@ -56,6 +56,13 @@ model User {
   avatarUrl       String?
   tier            String   @default("Basic")
   cashbackBalance Float    @default(0)
+
+  // Bridge Fraud Alert: platform-level suspend (blocks delete / re-enroll abuse).
+  // Cleared only by admin after the sender withdraws the fraud claim.
+  fraudSuspendedAt              DateTime?
+  fraudSuspendReason            String?
+  fraudSuspendFundsRequestId    String?
+
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -929,6 +936,7 @@ model BridgeFundsRequest {
   @@index([status])
   @@index([userId])
   @@index([noticeCreatedAt])
+  @@index([depositCreatedAt])
   @@index([lastSyncedAt])
 }
 

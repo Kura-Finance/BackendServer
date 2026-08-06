@@ -41,7 +41,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 | `APP_NAME` | No | Default `Kura` |
 | `APP_URL` | No | Frontend base URL |
 | `APP_UPGRADE_URL` | No | Pricing / upgrade link |
-| `ADMIN_EMAIL` | No | Default `admin@kura-finance.com` (ops email + admin allowlist fallback) |
+| `ADMIN_EMAIL` | No | Default `admin@kura-finance.com` (ops email for Fraud Alert notices + admin allowlist fallback) |
 | `ADMIN_EMAILS` | No | Comma-separated admin allowlist for `/api/admin`; if unset, uses `ADMIN_EMAIL` |
 | `SUPPORT_EMAIL` | No | Default `Support@kura-finance.com` |
 

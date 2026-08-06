@@ -69,6 +69,9 @@ export type {
   FundsRequestListItem,
   FundsRequestsSyncExecuted,
   FiatDepositReturnResult,
+  BridgeFraudRateBucket,
+  BridgeFraudRateMonthSummary,
+  FraudRemediateResult,
 } from './models/types';
 export {
   CUSTOMER_NAMED_PAYOUT_CONFIGURATION,

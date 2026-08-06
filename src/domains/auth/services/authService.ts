@@ -286,6 +286,8 @@ export class AuthService {
         tier: true,
         cashbackBalance: true,
         referCode: true,
+        fraudSuspendedAt: true,
+        fraudSuspendReason: true,
         referredBy: {
           select: {
             referCode: true,
@@ -328,6 +330,8 @@ export class AuthService {
       referCode: user.referCode,
       referredByCode: user.referredBy?.referCode ?? null,
       referralCount: user._count.referredUsers,
+      fraudSuspended: Boolean(user.fraudSuspendedAt),
+      fraudSuspendReason: user.fraudSuspendReason,
     };
   }
 
@@ -435,7 +439,7 @@ export class AuthService {
     const startTime = Date.now();
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { email: true, privyUserId: true },
+      select: { email: true, privyUserId: true, fraudSuspendedAt: true },
     });
     logDatabaseOperation('SELECT', 'users', Date.now() - startTime, true);
 
@@ -443,6 +447,16 @@ export class AuthService {
       logAuthEvent('failed_register', undefined, { userId, reason: 'user_not_found' });
       const error = new Error('User not found');
       (error as Error & { statusCode?: number }).statusCode = 404;
+      throw error;
+    }
+
+    // Bridge Fraud Policy: do not allow delete + re-enroll after a Fraud Alert.
+    if (user.fraudSuspendedAt) {
+      const error = new Error(
+        'Account is suspended due to a fraud alert and cannot be deleted. Contact support.',
+      );
+      (error as Error & { statusCode?: number; code?: string }).statusCode = 403;
+      (error as Error & { statusCode?: number; code?: string }).code = 'FRAUD_SUSPENDED';
       throw error;
     }
 

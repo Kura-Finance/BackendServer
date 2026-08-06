@@ -17,6 +17,8 @@ import { BridgeLiquidationService } from './bridgeLiquidationService';
 import { BridgeExternalAccountService } from './bridgeExternalAccountService';
 import { BridgeTransferService } from './bridgeTransferService';
 import { BridgeFundsRequestService } from './bridgeFundsRequestService';
+import { BridgeFraudRemediationService } from './bridgeFraudRemediationService';
+import { BridgeFraudRateService } from './bridgeFraudRateService';
 
 export { BridgeError } from '../lib/bridgeHttp';
 export type { BridgeStructuredErrorBody } from '../lib/bridgeHttp';
@@ -89,8 +91,22 @@ export class BridgeService {
     BridgeFundsRequestService.listLocalFundsRequests.bind(BridgeFundsRequestService);
   static initiateFiatDepositReturn =
     BridgeFundsRequestService.initiateFiatDepositReturn.bind(BridgeFundsRequestService);
+  static remediateFraudFundsRequest =
+    BridgeFundsRequestService.remediateFraudFundsRequest.bind(BridgeFundsRequestService);
   static markFundsRequestReturnedByDeposit =
     BridgeFundsRequestService.markFundsRequestReturnedByDeposit.bind(BridgeFundsRequestService);
+
+  // ── Fraud Alert remediation / Penalty Box rate ─────────────────────
+  static pauseForFundsRequest =
+    BridgeFraudRemediationService.pauseForFundsRequest.bind(BridgeFraudRemediationService);
+  static pauseBridgeCustomer =
+    BridgeFraudRemediationService.pauseBridgeCustomer.bind(BridgeFraudRemediationService);
+  static unpauseBridgeCustomer =
+    BridgeFraudRemediationService.unpauseBridgeCustomer.bind(BridgeFraudRemediationService);
+  static clearPlatformSuspend =
+    BridgeFraudRemediationService.clearPlatformSuspend.bind(BridgeFraudRemediationService);
+  static getFraudRateMonthSummary =
+    BridgeFraudRateService.getMonthSummary.bind(BridgeFraudRateService);
 }
 
 /** Deduplicate webhook events: true on insert; false on duplicate (P2002). */

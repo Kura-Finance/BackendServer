@@ -16,11 +16,13 @@ import type {
   BridgeFundsRequestStatus,
   BridgeTransferResponse,
   FiatDepositReturnResult,
+  FraudRemediateResult,
   FundsRequestListItem,
   FundsRequestsSyncExecuted,
 } from '../models/types';
 import { BridgeError, bridgeFetch } from '../lib/bridgeHttp';
 import { asJson } from '../lib/bridgeJson';
+import { BridgeFraudRemediationService } from './bridgeFraudRemediationService';
 
 export class BridgeFundsRequestService {
   private static getBridgeWalletId(): string {
@@ -85,6 +87,7 @@ export class BridgeFundsRequestService {
     let startingAfter: string | undefined;
     let totalFromBridge = 0;
     let upserted = 0;
+    let fraudAlertsHandled = 0;
     const pageLimit = 100;
 
     for (;;) {
@@ -109,15 +112,22 @@ export class BridgeFundsRequestService {
         const depositCreatedAt = this.parseNoticeDate(
           item.deposit_created_at ?? item.created_at,
         );
+        const isFraud = Boolean(item.fraud);
 
-        await prisma.bridgeFundsRequest.upsert({
+        const existing = await prisma.bridgeFundsRequest.findUnique({
+          where: { bridgeFundsRequestId: item.id },
+          select: { id: true, fraud: true },
+        });
+        const newlyFraud = isFraud && (!existing || !existing.fraud);
+
+        const row = await prisma.bridgeFundsRequest.upsert({
           where: { bridgeFundsRequestId: item.id },
           create: {
             bridgeFundsRequestId: item.id,
             depositId: item.deposit_id,
             bridgeCustomerId,
             userId: local.userId,
-            fraud: Boolean(item.fraud),
+            fraud: isFraud,
             amount: item.amount ?? null,
             currency: item.currency?.toLowerCase() ?? null,
             noticeCreatedAt,
@@ -130,7 +140,7 @@ export class BridgeFundsRequestService {
             depositId: item.deposit_id,
             bridgeCustomerId,
             userId: local.userId,
-            fraud: Boolean(item.fraud),
+            fraud: isFraud,
             amount: item.amount ?? null,
             currency: item.currency?.toLowerCase() ?? null,
             noticeCreatedAt,
@@ -141,6 +151,27 @@ export class BridgeFundsRequestService {
           },
         });
         upserted += 1;
+
+        if (newlyFraud) {
+          try {
+            await BridgeFraudRemediationService.handleFraudAlert({
+              bridgeCustomerId: row.bridgeCustomerId,
+              userId: row.userId,
+              fundsRequestId: row.id,
+              bridgeFundsRequestId: row.bridgeFundsRequestId,
+              depositId: row.depositId,
+              amount: row.amount,
+              currency: row.currency,
+              source: 'sync',
+            });
+            fraudAlertsHandled += 1;
+          } catch (error) {
+            appLogger.warn('[BridgeService] Fraud alert remediation failed during sync', {
+              fundsRequestId: row.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
       }
 
       if (rows.length < pageLimit) break;
@@ -149,11 +180,16 @@ export class BridgeFundsRequestService {
       startingAfter = lastId;
     }
 
-    appLogger.info('[BridgeService] Funds requests synced', { upserted, totalFromBridge });
+    appLogger.info('[BridgeService] Funds requests synced', {
+      upserted,
+      totalFromBridge,
+      fraudAlertsHandled,
+    });
     return {
       skipped: false,
       upserted,
       totalFromBridge,
+      fraudAlertsHandled,
       lastSyncedAt: now.toISOString(),
     };
   }
@@ -351,6 +387,28 @@ export class BridgeFundsRequestService {
         },
       });
       throw error;
+    }
+  }
+
+  /**
+   * One-click Fraud Alert remediation: pause customer + initiate fiat deposit return.
+   * Pause always runs first; return failures are surfaced without rolling back pause.
+   */
+  static async remediateFraudFundsRequest(
+    fundsRequestId: string,
+  ): Promise<FraudRemediateResult> {
+    const pause = await BridgeFraudRemediationService.pauseForFundsRequest(fundsRequestId);
+    try {
+      const returnResult = await this.initiateFiatDepositReturn(fundsRequestId);
+      return { pause, returnResult, returnError: null };
+    } catch (error) {
+      const message =
+        error instanceof BridgeError
+          ? error.bridgeBody
+          : error instanceof Error
+            ? error.message
+            : String(error);
+      return { pause, returnResult: null, returnError: message };
     }
   }
 

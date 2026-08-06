@@ -31,6 +31,9 @@ export interface UserProfile {
   referredByCode?: string | null;
   referralCount?: number;
   cashbackBalance?: number;
+  /** true when suspended after a Bridge Fraud Alert (cannot delete / re-enroll). */
+  fraudSuspended?: boolean;
+  fraudSuspendReason?: string | null;
   plaidCache?: PlaidCacheInfo;
 }
 

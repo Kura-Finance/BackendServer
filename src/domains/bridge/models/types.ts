@@ -764,6 +764,8 @@ export interface FundsRequestsSyncExecuted {
   skipped: false;
   upserted: number;
   totalFromBridge: number;
+  /** New fraud alerts that triggered pause + platform suspend during this sync. */
+  fraudAlertsHandled: number;
   lastSyncedAt: string;
 }
 
@@ -774,4 +776,46 @@ export interface FiatDepositReturnResult {
   status: BridgeFundsRequestStatus;
   returnTransferId: string;
   transferState: string | null;
+}
+
+export interface BridgeFraudRateBucket {
+  fraudCount: number;
+  fraudVolumeUsd: number;
+  depositCount: number;
+  depositVolumeUsd: number;
+  countRate: number;
+  volumeRate: number;
+  countRateBps: number;
+  volumeRateBps: number;
+  exceedsPenaltyBox: boolean;
+  exceedsCritical: boolean;
+}
+
+/** Monthly fraud rate for Penalty Box monitoring (US deposit-month / EUR recall-month). */
+export interface BridgeFraudRateMonthSummary {
+  month: string;
+  periodFrom: string;
+  periodTo: string;
+  penaltyBoxThresholdBps: number;
+  criticalThresholdBps: number;
+  us: BridgeFraudRateBucket;
+  eur: BridgeFraudRateBucket;
+  other: BridgeFraudRateBucket;
+  combined: BridgeFraudRateBucket;
+  openFraudAlerts: number;
+  inPenaltyBoxRisk: boolean;
+  inCriticalRisk: boolean;
+}
+
+export interface FraudRemediateResult {
+  pause: {
+    bridgeCustomerId: string | null;
+    userId: string | null;
+    bridgePaused: boolean;
+    platformSuspended: boolean;
+    alreadyPaused: boolean;
+    alreadySuspended: boolean;
+  };
+  returnResult: FiatDepositReturnResult | null;
+  returnError: string | null;
 }

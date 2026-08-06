@@ -97,7 +97,12 @@ export const deleteAccount = async (req: AuthRequest, res: Response): Promise<vo
     const message = error instanceof Error ? error.message : 'Internal server error';
     const statusCode = (error as { statusCode?: number }).statusCode
       ?? (error instanceof PrismaClientKnownRequestError ? 503 : 500);
+    const code = (error as { code?: string }).code;
     const isNotFound = statusCode === 404 || message.toLowerCase().includes('not found');
+    if (code === 'FRAUD_SUSPENDED') {
+      sendError(res, 403, { code: 'FRAUD_SUSPENDED', message });
+      return;
+    }
     sendError(res, isNotFound ? 404 : statusCode, {
       code: isNotFound ? 'NOT_FOUND' : statusCode === 503 ? 'DATABASE_ERROR' : 'INTERNAL_ERROR',
       message: isNotFound ? message : 'Internal server error',

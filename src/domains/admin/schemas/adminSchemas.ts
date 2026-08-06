@@ -35,3 +35,14 @@ export const listFundsRequestsQuerySchema = z.object({
 export const fundsRequestIdParamSchema = z.object({
   id: z.string().trim().min(1),
 });
+
+export const fraudRateQuerySchema = z.object({
+  month: z
+    .string()
+    .regex(/^\d{4}-\d{2}$/, 'month must be YYYY-MM')
+    .optional(),
+});
+
+export const bridgeCustomerIdParamSchema = z.object({
+  bridgeCustomerId: z.string().trim().min(1),
+});

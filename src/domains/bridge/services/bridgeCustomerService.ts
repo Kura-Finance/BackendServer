@@ -36,6 +36,18 @@ export class BridgeCustomerService {
       return DemoService.bridgeKycLink(params.type);
     }
 
+    const suspended = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { fraudSuspendedAt: true },
+    });
+    if (suspended?.fraudSuspendedAt) {
+      throw new BridgeError(
+        403,
+        'Account suspended due to a Bridge Fraud Alert. Contact support.',
+        'fraud_suspend',
+      );
+    }
+
     const existing = await prisma.bridgeCustomer.findUnique({ where: { userId } });
 
     // Existing customer requesting extra endorsement (e.g. BRL→pix, COP→cop):

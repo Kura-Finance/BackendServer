@@ -149,7 +149,8 @@ jobs:
       # DINARI_WHITELIST_DOMAINS, DINARI_WHITELIST_EMAILS,
       # APPLE_APP_ID, ANDROID_PACKAGE_NAME, ANDROID_SHA256_CERT_FINGERPRINTS
       # Secrets tips (first deploy):
-      # ALLOWED_ORIGINS: "https://app.kura-finance.com,https://www.kura-finance.com,https://kura-finance.com"
+      # ALLOWED_ORIGINS must include web + admin consoles, e.g.:
+      # "https://app.kura-finance.com,https://www.kura-finance.com,https://kura-finance.com,https://admin.kura-finance.com,https://admin-642134687769.us-central1.run.app"
       # PLAID_REDIRECT_URI: "https://app.kura-finance.com/dashboard"
       # APP_URL: "https://app.kura-finance.com"
       # BRIDGE_WEBHOOK_PUBLIC_KEY: PEM from Bridge dashboard (use \n for newlines in secret)

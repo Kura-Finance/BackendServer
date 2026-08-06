@@ -80,7 +80,7 @@ Auth: session + admin email allowlist. Read APIs for the Kura Admin console (`da
 |--------|------|---------|
 | GET | `/api/admin/users` | All users: tier, EOA/SCA, Bridge/Dinari KYC, all-time Bridge/Dinari revenue |
 | GET | `/api/admin/users/:id` | Single user (`404 NOT_FOUND` if missing) |
-| GET | `/api/admin/overview` | Platform metrics (KYC funnel, Bridge/Dinari/Li.Fi totals, FeeWarp TVL) |
+| GET | `/api/admin/overview` | Platform metrics (KYC funnel, Bridge/Dinari/Li.Fi, FeeWarp TVL, current-month `bridgeFraud` rates) |
 | GET | `/api/admin/earn/fee-warps` | Morpho FeeWrapper vaults on Base (live TVL) |
 | GET | `/api/admin/lifi/summary` | Platform Li.Fi `{ volumeUsd, feeUsd, transferCount }` (all-time `transfer_done`) |
 
@@ -90,14 +90,21 @@ Notes:
 - FeeWarp `mau` / `feeWarpMauTotal` are always `0` until a deposit-MAU indexer exists; TVL is live from Morpho.
 - Revenue totals come from `PlatformRecord` (same ledger as Investor platform-insights).
 
-## Admin — Bridge Funds Requests / Returns
+## Admin — Bridge Funds Requests / Fraud Alerts
 
-Auth: session + admin email allowlist. Returns are **manual** (not auto on sync). Funding: Bridge Wallet (`BRIDGE_WALLET_ID`).
+Auth: session + admin email allowlist. Funding for returns: Bridge Wallet (`BRIDGE_WALLET_ID`).
+
+On sync, **new** `fraud=true` rows trigger: Bridge customer `PUT status=paused`, platform `User.fraudSuspendedAt`, and admin email (`ADMIN_EMAIL`).
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/api/admin/bridge/funds-requests/sync?force=` | Poll Bridge `GET /funds_requests`, upsert local rows (lazy interval) |
-| GET | `/api/admin/bridge/funds-requests?fraud=&status=&limit=&offset=` | List local recalls + `paymentProcessed` |
-| POST | `/api/admin/bridge/funds-requests/:id/return` | Create `fiat_deposit_return` transfer via Bridge Wallet |
+| POST | `/api/admin/bridge/funds-requests/sync?force=` | Poll Bridge `GET /funds_requests`, upsert; auto-pause new fraud alerts |
+| GET | `/api/admin/bridge/funds-requests?fraud=&status=&limit=&offset=` | List local recalls + `paymentProcessed` (use `fraud=true` for Fraud Alerts) |
+| POST | `/api/admin/bridge/funds-requests/:id/pause` | Pause Bridge customer + platform-suspend user |
+| POST | `/api/admin/bridge/funds-requests/:id/return` | Create `fiat_deposit_return` via Bridge Wallet |
+| POST | `/api/admin/bridge/funds-requests/:id/remediate` | One-click: pause + return (pause kept if return fails) |
+| GET | `/api/admin/bridge/fraud-rate?month=YYYY-MM` | Monthly fraud rate (US=deposit month, EUR=recall month; 50 bps Penalty Box / 7% critical) |
+| POST | `/api/admin/bridge/customers/:bridgeCustomerId/unpause` | Unpause Bridge customer after sender withdraws claim |
+| POST | `/api/admin/users/:id/clear-fraud-suspend` | Clear platform suspend (does not unpause Bridge) |
 
-VA webhook `refunded` marks matching funds requests `returned`.
+VA webhook `refunded` marks matching funds requests `returned`. Fraud-suspended users cannot `DELETE /api/auth/me` or start new Bridge KYC.
