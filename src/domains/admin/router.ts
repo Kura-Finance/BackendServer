@@ -54,6 +54,17 @@ router.get('/earn/fee-warps', getFeeWarps);
 router.get('/lifi/summary', getLifiSummary);
 
 // ── Bridge funds-request / Fraud Alert ops ───────────────────
+// Prefer GET/POST /refresh — some CDNs/WAFs challenge POST …/sync.
+router.get(
+  '/bridge/funds-requests/refresh',
+  validateRequest({ query: lazyUpdateQuerySchema }),
+  syncFundsRequests,
+);
+router.post(
+  '/bridge/funds-requests/refresh',
+  validateRequest({ query: lazyUpdateQuerySchema }),
+  syncFundsRequests,
+);
 router.post(
   '/bridge/funds-requests/sync',
   validateRequest({ query: lazyUpdateQuerySchema }),

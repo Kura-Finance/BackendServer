@@ -61,6 +61,12 @@ app.use('/api/bridge/webhook', (req: Request, _res: Response, next: NextFunction
 // ========================================
 // 2. CORS
 // ========================================
+const productionOrigins = [
+  'https://app.kura-finance.com',
+  'https://www.kura-finance.com',
+  'https://kura-finance.com',
+  'https://admin.kura-finance.com',
+];
 const developmentOrigins = [
   'http://localhost:3000',
   'http://127.0.0.1:3000',
@@ -71,14 +77,17 @@ const developmentOrigins = [
   'https://localhost:3001',
   'https://127.0.0.1:3001',
 ];
-const fallbackOrigins = process.env.NODE_ENV === 'production'
-  ? [] // production must set ALLOWED_ORIGINS
-  : developmentOrigins;
 
 const corsOptions = {
   origin: (() => {
-    const fromEnv = process.env.ALLOWED_ORIGINS?.split(',').map((o) => o.trim()).filter(Boolean);
-    return fromEnv?.length ? fromEnv : fallbackOrigins;
+    const hardcoded =
+      process.env.NODE_ENV === 'production' ? productionOrigins : developmentOrigins;
+    // Optional extras from env (merged; hardcoded always wins as base).
+    const fromEnv = (process.env.ALLOWED_ORIGINS ?? '')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean);
+    return [...new Set([...hardcoded, ...fromEnv])];
   })(),
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
