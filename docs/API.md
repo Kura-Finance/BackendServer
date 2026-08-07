@@ -106,5 +106,10 @@ On sync, **new** `fraud=true` rows trigger: Bridge customer `PUT status=paused`,
 | GET | `/api/admin/bridge/fraud-rate?month=YYYY-MM` | Monthly fraud rate (US=deposit month, EUR=recall month; 50 bps Penalty Box / 7% critical) |
 | POST | `/api/admin/bridge/customers/:bridgeCustomerId/unpause` | Unpause Bridge customer after sender withdraws claim |
 | POST | `/api/admin/users/:id/clear-fraud-suspend` | Clear platform suspend (does not unpause Bridge) |
+| GET | `/api/admin/bridge/inactive-customers?months=6&onlyWithActivatedVa=` | Bridge customers with no activity for N months (default 6); cost review |
+| POST | `/api/admin/bridge/inactive-customers/notify?months=6` | Same scan + email digest to `ADMIN_EMAIL` |
+| POST | `/api/admin/bridge/customers/:userId/delete` | Manual cleanup: deactivate VAs + `DELETE` Bridge customer + remove local `BridgeCustomer` |
 
 VA webhook `refunded` marks matching funds requests `returned`. Fraud-suspended users cannot `DELETE /api/auth/me` or start new Bridge KYC.
+
+Inactive detection uses the latest of VA events, transfers, VA/LA provisioning, and customer KYC updates. Default `onlyWithActivatedVa=true` focuses on accounts still accruing VA fees.

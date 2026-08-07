@@ -19,6 +19,7 @@ import { BridgeTransferService } from './bridgeTransferService';
 import { BridgeFundsRequestService } from './bridgeFundsRequestService';
 import { BridgeFraudRemediationService } from './bridgeFraudRemediationService';
 import { BridgeFraudRateService } from './bridgeFraudRateService';
+import { BridgeInactiveAccountService } from './bridgeInactiveAccountService';
 
 export { BridgeError } from '../lib/bridgeHttp';
 export type { BridgeStructuredErrorBody } from '../lib/bridgeHttp';
@@ -107,6 +108,14 @@ export class BridgeService {
     BridgeFraudRemediationService.clearPlatformSuspend.bind(BridgeFraudRemediationService);
   static getFraudRateMonthSummary =
     BridgeFraudRateService.getMonthSummary.bind(BridgeFraudRateService);
+
+  // ── Inactive customers (cost review) ────────────────────────────────
+  static listInactiveCustomers =
+    BridgeInactiveAccountService.listInactiveCustomers.bind(BridgeInactiveAccountService);
+  static notifyInactiveCustomers =
+    BridgeInactiveAccountService.notifyInactiveCustomers.bind(BridgeInactiveAccountService);
+  static deleteInactiveCustomerForCostSavings =
+    BridgeInactiveAccountService.deleteCustomerForCostSavings.bind(BridgeInactiveAccountService);
 }
 
 /** Deduplicate webhook events: true on insert; false on duplicate (P2002). */

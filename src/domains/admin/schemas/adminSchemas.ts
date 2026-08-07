@@ -11,6 +11,11 @@ export const userIdParamSchema = z.object({
   id: z.string().uuid(),
 });
 
+/** Path param for admin Bridge customer delete by Kura userId. */
+export const bridgeCostDeleteUserParamSchema = z.object({
+  userId: z.string().uuid(),
+});
+
 export const fundsRequestStatusSchema = z.enum([
   'open',
   'return_initiated',
@@ -56,4 +61,13 @@ export const fraudRateQuerySchema = z.object({
 
 export const bridgeCustomerIdParamSchema = z.object({
   bridgeCustomerId: z.string().trim().min(1),
+});
+
+/** List / notify Bridge customers with no activity for N months. */
+export const inactiveBridgeCustomersQuerySchema = z.object({
+  months: z.coerce.number().int().min(1).max(60).optional(),
+  /** Default true — only customers that still have activated VAs (fee drivers). */
+  onlyWithActivatedVa: boolQuery,
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
 });

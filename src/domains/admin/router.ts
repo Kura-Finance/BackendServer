@@ -9,9 +9,12 @@ import { validateRequest } from '../shared/middleware/validateRequest';
 import { requireAdmin } from './middleware/requireAdmin';
 import {
   clearUserFraudSuspend,
+  deleteBridgeCustomerForCostSavings,
   getFraudRate,
   initiateFundsRequestReturn,
   listFundsRequests,
+  listInactiveBridgeCustomers,
+  notifyInactiveBridgeCustomers,
   pauseFundsRequestCustomer,
   remediateFundsRequest,
   syncFundsRequests,
@@ -25,9 +28,11 @@ import {
   listUsers,
 } from './controllers/dashboardAdminController';
 import {
+  bridgeCostDeleteUserParamSchema,
   bridgeCustomerIdParamSchema,
   fraudRateQuerySchema,
   fundsRequestIdParamSchema,
+  inactiveBridgeCustomersQuerySchema,
   lazyUpdateQuerySchema,
   listFundsRequestsQuerySchema,
   userIdParamSchema,
@@ -112,6 +117,23 @@ router.post(
   '/bridge/customers/:bridgeCustomerId/unpause',
   validateRequest({ params: bridgeCustomerIdParamSchema }),
   unpauseBridgeCustomer,
+);
+
+// ── Inactive Bridge customers (VA fee cost review) ───────────
+router.get(
+  '/bridge/inactive-customers',
+  validateRequest({ query: inactiveBridgeCustomersQuerySchema }),
+  listInactiveBridgeCustomers,
+);
+router.post(
+  '/bridge/inactive-customers/notify',
+  validateRequest({ query: inactiveBridgeCustomersQuerySchema }),
+  notifyInactiveBridgeCustomers,
+);
+router.post(
+  '/bridge/customers/:userId/delete',
+  validateRequest({ params: bridgeCostDeleteUserParamSchema }),
+  deleteBridgeCustomerForCostSavings,
 );
 
 export const adminRouter = router;

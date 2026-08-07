@@ -106,5 +106,8 @@ Sync 時若出現**新的** `fraud=true`：會 `PUT` Bridge customer `status=pau
 | GET | `/api/admin/bridge/fraud-rate?month=YYYY-MM` | 月詐欺率（US=存款月、EUR=recall 月；50 bps Penalty Box／7% critical） |
 | POST | `/api/admin/bridge/customers/:bridgeCustomerId/unpause` | Sender 撤回 claim 後解除 Bridge pause |
 | POST | `/api/admin/users/:id/clear-fraud-suspend` | 清除平台停權（不會自動 unpause Bridge） |
+| GET | `/api/admin/bridge/inactive-customers?months=6&onlyWithActivatedVa=` | 超過 N 個月無互動的 Bridge 帳戶（預設 6；省 VA 成本） |
+| POST | `/api/admin/bridge/inactive-customers/notify?months=6` | 同上掃描並寄 digest 到 `ADMIN_EMAIL` |
+| POST | `/api/admin/bridge/customers/:userId/delete` | 手動清理：deactivate VA + `DELETE` Bridge customer + 移除本地 `BridgeCustomer` |
 
 VA webhook `refunded` 會把對應 funds request 標成 `returned`。Fraud 停權使用者無法 `DELETE /api/auth/me` 或新建 Bridge KYC。

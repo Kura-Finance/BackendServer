@@ -187,3 +187,78 @@ export const unpauseBridgeCustomer = async (
     handleBridgeAdminError(res, error, 'Failed to unpause Bridge customer');
   }
 };
+
+/** List Bridge customers inactive for N months (default 6; cost review). */
+export const listInactiveBridgeCustomers = async (
+  req: AuthRequest,
+  res: Response,
+): Promise<void> => {
+  try {
+    const query = req.query as {
+      months?: number;
+      onlyWithActivatedVa?: boolean;
+      limit?: number;
+      offset?: number;
+    };
+    const result = await BridgeService.listInactiveCustomers({
+      ...(query.months != null ? { months: query.months } : {}),
+      ...(query.onlyWithActivatedVa != null
+        ? { onlyWithActivatedVa: query.onlyWithActivatedVa }
+        : {}),
+      ...(query.limit != null ? { limit: query.limit } : {}),
+      ...(query.offset != null ? { offset: query.offset } : {}),
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    logError('Admin Bridge inactive-customers list failed', error as Error, {
+      userId: req.userId,
+    });
+    handleBridgeAdminError(res, error, 'Failed to list inactive Bridge customers');
+  }
+};
+
+/** Scan inactive Bridge customers and email ADMIN_EMAIL a digest. */
+export const notifyInactiveBridgeCustomers = async (
+  req: AuthRequest,
+  res: Response,
+): Promise<void> => {
+  try {
+    const query = req.query as {
+      months?: number;
+      onlyWithActivatedVa?: boolean;
+    };
+    const result = await BridgeService.notifyInactiveCustomers({
+      ...(query.months != null ? { months: query.months } : {}),
+      ...(query.onlyWithActivatedVa != null
+        ? { onlyWithActivatedVa: query.onlyWithActivatedVa }
+        : {}),
+    });
+    sendSuccess(res, result);
+  } catch (error) {
+    logError('Admin Bridge inactive-customers notify failed', error as Error, {
+      userId: req.userId,
+    });
+    handleBridgeAdminError(res, error, 'Failed to notify inactive Bridge customers');
+  }
+};
+
+/**
+ * Manual cost cleanup: deactivate VAs on Bridge, DELETE customer, remove local BridgeCustomer.
+ * Keeps local VA/event history for audit.
+ */
+export const deleteBridgeCustomerForCostSavings = async (
+  req: AuthRequest,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { userId } = req.params as { userId: string };
+    const result = await BridgeService.deleteInactiveCustomerForCostSavings(userId);
+    sendSuccess(res, result);
+  } catch (error) {
+    logError('Admin Bridge customer cost-delete failed', error as Error, {
+      userId: req.userId,
+      targetUserId: req.params.userId,
+    });
+    handleBridgeAdminError(res, error, 'Failed to delete Bridge customer');
+  }
+};
