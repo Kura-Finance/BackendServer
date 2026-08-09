@@ -1,8 +1,10 @@
 /**
  * Admin email allowlist gate (ADMIN_EMAILS / ADMIN_EMAIL).
+ * No hardcoded default — empty allowlist denies all admin access.
  */
 
 import { Response, NextFunction } from 'express';
+import { getAdminEmail } from '../../../config/brand';
 import { prisma } from '../../shared/lib/prisma';
 import { sendError } from '../../shared/lib/apiResponse';
 import { AuthRequest } from '../../auth/middleware/auth';
@@ -16,7 +18,7 @@ export function getAdminEmailAllowlist(): Set<string> {
   if (fromList.length > 0) {
     return new Set(fromList);
   }
-  const single = (process.env.ADMIN_EMAIL || 'admin@kura-finance.com').trim().toLowerCase();
+  const single = getAdminEmail();
   return new Set(single ? [single] : []);
 }
 

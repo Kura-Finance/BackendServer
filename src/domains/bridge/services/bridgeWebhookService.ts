@@ -32,19 +32,11 @@ export interface BridgeWebhookVerifyResult {
   reason?: string;
 }
 
-// TODO(temp): hardcoded to diagnose Cloud Run env PEM mangling — remove after fix
-const HARDCODED_BRIDGE_WEBHOOK_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArjJBrH3GRGjB/0CTUrkn
-CBa9M5+kQNYqBGILtvRuboN9/+qj3zUnSsnlD1+U7GIMDJtkdoWVV4rNXKnGXH5z
-JwDITUaGNVPX12TGmVYqeYvLnq8a9X3Z/bRF8V1adkyWw94Sm/jMMRNvqP+S9GId
-10ieNZ3RJToMsn5LA2wPtsM5vhLeDC/X/0UFpQDtvTzsvB7WEMV9LvjDC2Qh6Fom
-LSvqC1q9dLWd5yKBIxvenSDZG61dqG7bO07aepM0X/2TS4Qq0oi2BcJGT1DLr1k+
-S2exfc9QkSEJuY6dihzO5RwLLwChskOD66bgFXpxXqVO2UFcQi9o+2rSPQ19AZEB
-TwIDAQAB
------END PUBLIC KEY-----`;
-
+/** Normalize PEM from env (secret stores often flatten newlines to `\n`). */
 function getWebhookPublicKey(): string | null {
-  return HARDCODED_BRIDGE_WEBHOOK_PUBLIC_KEY;
+  const raw = process.env.BRIDGE_WEBHOOK_PUBLIC_KEY?.trim();
+  if (!raw) return null;
+  return raw.includes('\\n') ? raw.replace(/\\n/g, '\n') : raw;
 }
 
 function parseSignatureHeader(header: string): { timestamp: number; signature: string } | null {

@@ -3,10 +3,9 @@
 [繁體中文](THIRD_PARTY_NOTICES.zh-TW.md)
 
 This document lists open-source software used by the **Kura** backend
-(product of **Kura Finance LLC**; production dependencies as resolved by
-`package-lock.json`).
+(production dependencies as resolved by `package-lock.json`).
 
-The Kura application source code itself is proprietary; see [../../LICENSE](../../LICENSE).
+Application source license: [../../LICENSE](../../LICENSE) (MIT).
 
 Generated from the production dependency tree. No GPL, AGPL, LGPL, SSPL, or
 BUSL licenses were detected.

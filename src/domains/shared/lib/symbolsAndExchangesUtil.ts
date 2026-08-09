@@ -27,7 +27,22 @@ function cryptoPublicIconUrl(symbol: string): string {
   return `https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/${s}.png`;
 }
 
-const FALLBACK_LOGO = googleFaviconUrl('kura-finance.com');
+function fallbackLogoUrl(): string {
+  const csv = process.env.ALLOWED_ORIGINS || process.env.WEBAUTHN_RELATED_ORIGINS || '';
+  for (const part of csv.split(',')) {
+    const o = part.trim();
+    if (!o || o.startsWith('android:')) continue;
+    try {
+      const host = new URL(o).hostname.replace(/^www\./i, '');
+      if (host) return googleFaviconUrl(host);
+    } catch {
+      /* try next */
+    }
+  }
+  return googleFaviconUrl('localhost');
+}
+
+const FALLBACK_LOGO = fallbackLogoUrl();
 
 /**
  * Optional Logo.dev publishable token. When set, Logo.dev URLs are used;

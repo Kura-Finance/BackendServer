@@ -2,7 +2,7 @@
 
 [繁體中文](API.zh-TW.md)
 
-Base: production host (e.g. `https://api.kura-finance.com`). Auth: session from `/api/auth` unless noted.
+Base: your API host (e.g. `https://api.example.com`). Auth: session from `/api/auth` unless noted.
 
 Response shape (typical): `{ success, data }` or `{ success: false, error: { code, message, details? } }`.
 

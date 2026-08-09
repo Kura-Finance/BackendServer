@@ -30,9 +30,9 @@
 
 ## 密鑰與維運
 
-- 密鑰在 GitHub Actions／Cloud Run — **不在** Data Room 內。
-- 密鑰**名稱**與移轉步驟：[HANDOFF.zh-TW.md](HANDOFF.zh-TW.md)。
-- 移轉後輪替並撤銷賣方存取。
+- 密鑰在 GitHub Actions／Cloud Run — 切勿提交 `.env*`（僅追蹤 `.env.example`）。
+- 目錄：[ENVIRONMENT.zh-TW.md](ENVIRONMENT.zh-TW.md) · 夥伴清單：[API_KEYS.zh-TW.md](API_KEYS.zh-TW.md)。
+- 於夥伴後台輪替後，更新 Secrets／Variables 並重新部署。
 
 ## 相依套件
 

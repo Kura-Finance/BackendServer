@@ -66,12 +66,6 @@ if (isFeatureEnabled('bridge')) {
 // ========================================
 // 2. CORS
 // ========================================
-const productionOrigins = [
-  'https://app.kura-finance.com',
-  'https://www.kura-finance.com',
-  'https://kura-finance.com',
-  'https://admin.kura-finance.com',
-];
 const developmentOrigins = [
   'http://localhost:3000',
   'http://127.0.0.1:3000',
@@ -85,14 +79,16 @@ const developmentOrigins = [
 
 const corsOptions = {
   origin: (() => {
-    const hardcoded =
-      process.env.NODE_ENV === 'production' ? productionOrigins : developmentOrigins;
-    // Optional extras from env (merged; hardcoded always wins as base).
     const fromEnv = (process.env.ALLOWED_ORIGINS ?? '')
       .split(',')
       .map((o) => o.trim())
       .filter(Boolean);
-    return [...new Set([...hardcoded, ...fromEnv])];
+    // Production: ALLOWED_ORIGINS only (no hardcoded product domains).
+    // Development: localhost defaults + optional ALLOWED_ORIGINS.
+    if (process.env.NODE_ENV === 'production') {
+      return fromEnv;
+    }
+    return [...new Set([...developmentOrigins, ...fromEnv])];
   })(),
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -139,44 +135,33 @@ app.use('/api', webTierGate);
 // 4. Well-known endpoints (Universal Links / Passkey / Associated Domains)
 // ========================================
 
-const DEFAULT_APPLE_APP_ID = 'K7FVP5GGP9.com.kurafinance.app';
-const DEFAULT_ANDROID_PACKAGE_NAME = 'com.kurafinance.app';
-const DEFAULT_ANDROID_SHA256_CERT_FINGERPRINTS = [
-  '3E:2E:17:95:8B:7C:6C:88:D6:6F:0F:A4:30:48:F1:7B:3C:E0:4F:A0:C5:D7:9D:32:06:80:77:FE:49:78:66:33',
-  '31:E3:CE:78:ED:6F:55:A6:2C:40:34:F2:61:F2:91:43:2D:BE:44:74:A0:67:17:02:0B:88:9F:72:19:AE:BB:A0',
-  '2B:AE:23:03:BE:ED:C6:A2:87:18:B5:89:7A:59:C9:43:A7:BB:56:8F:B2:50:CB:9F:FF:81:12:36:CA:EB:8B:F3',
-  'FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C',
-];
-
-function appleAppId(): string {
-  return process.env.APPLE_APP_ID?.trim() || DEFAULT_APPLE_APP_ID;
+function appleAppId(): string | undefined {
+  return process.env.APPLE_APP_ID?.trim() || undefined;
 }
 
-function androidPackageName(): string {
-  return process.env.ANDROID_PACKAGE_NAME?.trim() || DEFAULT_ANDROID_PACKAGE_NAME;
+function androidPackageName(): string | undefined {
+  return process.env.ANDROID_PACKAGE_NAME?.trim() || undefined;
 }
 
 function androidSha256CertFingerprints(): string[] {
-  const fromEnv = process.env.ANDROID_SHA256_CERT_FINGERPRINTS?.split(',')
+  return (process.env.ANDROID_SHA256_CERT_FINGERPRINTS ?? '')
+    .split(',')
     .map((fp) => fp.trim())
     .filter(Boolean);
-  return fromEnv?.length ? fromEnv : DEFAULT_ANDROID_SHA256_CERT_FINGERPRINTS;
 }
 
-// iOS: Apple App Site Association — required for Universal Links and Passkeys.
-// Override with APPLE_APP_ID (format: TeamID.bundleId).
+// iOS: Apple App Site Association — set APPLE_APP_ID (TeamID.bundleId).
 app.get('/.well-known/apple-app-site-association', (_req: Request, res: Response) => {
   const appID = appleAppId();
   res.setHeader('Content-Type', 'application/json');
+  if (!appID) {
+    res.status(404).json({ error: 'APPLE_APP_ID is not configured' });
+    return;
+  }
   res.json({
     applinks: {
       apps: [],
-      details: [
-        {
-          appID,
-          paths: ['*'],
-        },
-      ],
+      details: [{ appID, paths: ['*'] }],
     },
     webcredentials: {
       apps: [appID],
@@ -185,34 +170,36 @@ app.get('/.well-known/apple-app-site-association', (_req: Request, res: Response
 });
 
 /**
- * WebAuthn Related Origin Requests — lets https://app.kura-finance.com use
- * RP ID api.kura-finance.com (same passkeys as the mobile app).
+ * WebAuthn Related Origin Requests — origins that may use WEBAUTHN_RP_ID.
  * @see https://passkeys.dev/docs/advanced/related-origins/
  */
 app.get('/.well-known/webauthn', (_req: Request, res: Response) => {
-  const related =
-    process.env.WEBAUTHN_RELATED_ORIGINS ||
-    'https://app.kura-finance.com';
+  const related = process.env.WEBAUTHN_RELATED_ORIGINS || process.env.ALLOWED_ORIGINS || '';
   const origins = related
     .split(',')
     .map((o) => o.trim())
-    .filter(Boolean);
+    .filter((o) => Boolean(o) && !o.startsWith('android:'));
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Cache-Control', 'public, max-age=300');
   res.status(200).json({ origins });
 });
 
-// Android: Digital Asset Links — required for Android Passkeys.
-// Override with ANDROID_PACKAGE_NAME and ANDROID_SHA256_CERT_FINGERPRINTS (comma-separated).
+// Android: Digital Asset Links — set ANDROID_PACKAGE_NAME + ANDROID_SHA256_CERT_FINGERPRINTS.
 app.get('/.well-known/assetlinks.json', (_req: Request, res: Response) => {
+  const packageName = androidPackageName();
+  const fingerprints = androidSha256CertFingerprints();
   res.setHeader('Content-Type', 'application/json');
+  if (!packageName || fingerprints.length === 0) {
+    res.status(404).json({ error: 'Android associated-domain env is not configured' });
+    return;
+  }
   res.json([
     {
       relation: ['delegate_permission/common.handle_all_urls', 'delegate_permission/common.get_login_creds'],
       target: {
         namespace: 'android_app',
-        package_name: androidPackageName(),
-        sha256_cert_fingerprints: androidSha256CertFingerprints(),
+        package_name: packageName,
+        sha256_cert_fingerprints: fingerprints,
       },
     },
   ]);

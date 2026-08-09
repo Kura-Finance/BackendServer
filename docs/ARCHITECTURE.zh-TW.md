@@ -97,4 +97,4 @@ flowchart TB
   Partners[Plaid Stripe Bridge etc] -->|webhooks| CR
 ```
 
-正式部署路徑：[`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) → Cloud Run。`cloudbuild.yaml`／`app.yaml` 為舊路徑，非主要流程——見 [OPERATIONS.zh-TW.md](OPERATIONS.zh-TW.md)。
+正式部署路徑：[`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) → Cloud Run。見 [OPERATIONS.zh-TW.md](OPERATIONS.zh-TW.md)。

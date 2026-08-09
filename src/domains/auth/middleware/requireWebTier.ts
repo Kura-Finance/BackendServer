@@ -1,6 +1,7 @@
 /** Soft web-tier gate middleware (Pro / Ultimate vs Basic allowlist). */
 
 import { Response, NextFunction } from 'express';
+import { getUpgradeUrl } from '../../../config/brand';
 import { getUserTier } from '../../shared/lib/apiRateLimitUtil';
 import { sendError } from '../../shared/lib/apiResponse';
 import {
@@ -45,7 +46,7 @@ export async function webTierGate(
       details: {
         tier,
         requiredTiers: ['Pro', 'Ultimate'],
-        upgrade: process.env.APP_UPGRADE_URL || 'https://kura-finance.com/pricing',
+        upgrade: getUpgradeUrl(),
       },
     });
   } catch (error) {

@@ -2,7 +2,7 @@
 
 [English](API.md)
 
-基底：正式主機（例如 `https://api.kura-finance.com`）。除註明外需 `/api/auth` session。
+基底：你的 API 主機（例如 `https://api.example.com`）。除註明外需 `/api/auth` session。
 
 典型回應：`{ success, data }` 或 `{ success: false, error: { code, message, details? } }`。
 

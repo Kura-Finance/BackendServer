@@ -97,4 +97,4 @@ flowchart TB
   Partners[Plaid Stripe Bridge etc] -->|webhooks| CR
 ```
 
-Canonical deploy path: [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) → Cloud Run. `cloudbuild.yaml` / `app.yaml` are legacy and not the primary path—see [OPERATIONS.md](OPERATIONS.md).
+Canonical deploy path: [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) → Cloud Run. See [OPERATIONS.md](OPERATIONS.md).

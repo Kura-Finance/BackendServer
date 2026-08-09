@@ -28,7 +28,24 @@ import {
   InvestmentSensitive,
 } from '../lib/plaidPayloadBuilder';
 
-const PLAID_FALLBACK_LOGO = 'https://www.google.com/s2/favicons?domain=kura-finance.com&sz=128';
+function plaidFallbackLogo(): string {
+  const csv = process.env.ALLOWED_ORIGINS || '';
+  for (const part of csv.split(',')) {
+    const o = part.trim();
+    if (!o || o.startsWith('android:')) continue;
+    try {
+      const host = new URL(o).hostname.replace(/^www\./i, '');
+      if (host) {
+        return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=128`;
+      }
+    } catch {
+      /* try next */
+    }
+  }
+  return 'https://www.google.com/s2/favicons?domain=localhost&sz=128';
+}
+
+const PLAID_FALLBACK_LOGO = plaidFallbackLogo();
 
 /**
  * Create a payloadKey for a scope.

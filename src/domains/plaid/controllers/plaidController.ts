@@ -2,6 +2,7 @@
  * Plaid HTTP handlers — Link, snapshots, cache, and webhooks.
  */
 import { Response, Request } from 'express';
+import { getUpgradeUrl } from '../../../config/brand';
 import { AuthRequest } from '../../auth/middleware/auth';
 import { PlaidService } from '../services/plaidService';
 import { PlaidAccountNotFoundError } from '../services/plaidAccountService';
@@ -243,7 +244,7 @@ export const getFinanceSnapshotOptimized = async (req: AuthRequest, res: Respons
             details: {
               refreshLimit: error.refreshLimit,
               refreshCountRemaining: error.refreshCountRemaining,
-              upgrade: process.env.APP_UPGRADE_URL || 'https://kura-finance.com/pricing',
+              upgrade: getUpgradeUrl(),
               retryAfter: 86400,
             },
           });

@@ -1,8 +1,8 @@
 # 第三方聲明（中文）
 
-本文件列出產品 **Kura**（公司 **Kura Finance LLC**）後端所使用之開源軟體（依 `package-lock.json` 解析之正式環境相依套件）。
+本文件列出產品 **Kura** 後端所使用之開源軟體（依 `package-lock.json` 解析之正式環境相依套件）。
 
-Kura 應用程式原始碼本身為專有軟體；見 [../../LICENSE](../../LICENSE)／[LICENSE.zh-TW.md](LICENSE.zh-TW.md)。
+應用程式原始碼授權：[../../LICENSE](../../LICENSE)（MIT）／[../../LICENSE.zh-TW.md](../../LICENSE.zh-TW.md)。
 
 英文版：[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 

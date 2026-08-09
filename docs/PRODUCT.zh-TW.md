@@ -27,4 +27,4 @@
 
 - [ARCHITECTURE.zh-TW.md](ARCHITECTURE.zh-TW.md)
 - [API.zh-TW.md](API.zh-TW.md)
-- [data-room/README.zh-TW.md](data-room/README.zh-TW.md)
+- [../CONTRIBUTING.md](../CONTRIBUTING.md) — 貢獻指南

@@ -1,5 +1,4 @@
-# .gcloudignore file for Google Cloud
-# 指定哪些文件不應該上傳到 Google Cloud
+# Files excluded from Google Cloud uploads
 
 # Node.js
 node_modules/
@@ -7,9 +6,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# IDE
+# IDE / OS
 .vscode/
 .idea/
+.cursor/
 *.swp
 *.swo
 *~
@@ -20,45 +20,37 @@ yarn-error.log*
 .gitignore
 .gitattributes
 
-# 環境變數
+# Env / secrets (never upload)
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
-# 日誌
+# Logs
 logs/
 *.log
 
-# 構建產物
+# Build
 dist/
 build/
 
-# 測試
+# Tests
 coverage/
 .nyc_output/
 
-# Prisma
-prisma/migrations/
-
-# Docker
+# Docker / CI
 docker-compose.yml
 Dockerfile.dev
 .dockerignore
-
-# CI/CD
 .github/
-github/
 
-# 開發文件
+# Docs (optional for runtime image builds via Dockerfile — keep out of gcloud source upload)
 README*.md
 CHANGELOG.md
 docs/
-
-# 證書
-certificates/
-
-# 其他
+CONTRIBUTING.md
 *.md
+!LICENSE
+
+# Tooling
 .prettierrc
 .eslintrc
-tsconfig.json

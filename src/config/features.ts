@@ -36,7 +36,6 @@ export type CoreFeatureName = (typeof CORE_FEATURES)[number];
 
 /**
  * Toggle optional domains here (true = mount routes + require partner keys).
- * Forks / open-source setups: set unused partners to false.
  */
 export const FEATURES: Record<FeatureName, boolean> = {
   email: true,

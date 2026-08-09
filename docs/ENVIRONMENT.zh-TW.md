@@ -41,17 +41,17 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 | `DB_SCHEMA` | 否 | 預設 `public` |
 | `DATABASE_URL` | 自動 | 啟動時由 `buildDatabaseUrl()` 建立 |
 
-## 應用／CORS／品牌
+## 應用／CORS／admin
+
+品牌字串（產品名、升級頁、demo 基底）在 [`src/config/brand.ts`](../src/config/brand.ts)，**不進 env**。前台 origin 由 `ALLOWED_ORIGINS` 推導。
 
 | 變數 | 必填 | 說明 |
 |------|------|------|
-| `ALLOWED_ORIGINS` | 正式 | 逗號分隔 origins |
-| `APP_NAME` | 否 | 預設 `Kura` |
-| `APP_URL` | 否 | 前端基底 URL |
-| `APP_UPGRADE_URL` | 否 | 定價／升級連結 |
-| `ADMIN_EMAIL` | 否 | 預設 `admin@kura-finance.com`（營運信箱 + admin 白名單後備） |
-| `ADMIN_EMAILS` | 否 | 逗號分隔 admin 白名單（`/api/admin`）；未設則用 `ADMIN_EMAIL` |
-| `SUPPORT_EMAIL` | 否 | 預設 `Support@kura-finance.com` |
+| `ALLOWED_ORIGINS` | 正式 | CORS（正式環境**唯一**來源）；第一個 HTTP origin = app URL |
+| `ADMIN_EMAIL` | admin／fraud 郵件 | 空則拒絕 admin |
+| `ADMIN_EMAILS` | 否 | 逗號分隔白名單；否則用 `ADMIN_EMAIL` |
+
+GitHub 清單：[SECRETS.zh-TW.md](SECRETS.zh-TW.md)。
 
 ## 郵件（Resend）
 
@@ -104,10 +104,10 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 | 變數 | 必填 | 說明 |
 |------|------|------|
-| `WEBAUTHN_RP_ID` | Passkey 用 | Web + mobile 共用：`api.kura-finance.com` |
-| `WEBAUTHN_RP_NAME` | Passkey 用 | 例如 `Kura` |
-| `WEBAUTHN_ORIGIN` | Passkey 用 | 逗號分隔；須含 `https://app.kura-finance.com`，可含 `android:apk-key-hash:...` |
-| `WEBAUTHN_RELATED_ORIGINS` | Web ROR 用 | 允許使用 RP ID 的 origin 清單（`/.well-known/webauthn`；預設 `https://app.kura-finance.com`） |
+| `WEBAUTHN_RP_ID` | Passkey 用 | Web + mobile 共用 RP ID（你的 API 主機） |
+| `WEBAUTHN_RP_NAME` | Passkey 用 | 顯示名稱 |
+| `WEBAUTHN_ORIGIN` | Passkey 用 | 逗號分隔允許 origins；可含 `android:apk-key-hash:...` |
+| `WEBAUTHN_RELATED_ORIGINS` | Web ROR 用 | `/.well-known/webauthn`（後備 `ALLOWED_ORIGINS`） |
 
 ## Bridge
 
@@ -145,9 +145,9 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 | 變數 | 必填 | 說明 |
 |------|------|------|
-| `APPLE_APP_ID` | 否 | 預設 `K7FVP5GGP9.com.kurafinance.app` |
-| `ANDROID_PACKAGE_NAME` | 否 | 預設 `com.kurafinance.app` |
-| `ANDROID_SHA256_CERT_FINGERPRINTS` | 否 | 逗號分隔；預設為現有 Kura 憑證指紋 |
+| `APPLE_APP_ID` | iOS AASA | `TeamID.bundleId` — 未設則 404 |
+| `ANDROID_PACKAGE_NAME` | assetlinks | 未設則 404 |
+| `ANDROID_SHA256_CERT_FINGERPRINTS` | assetlinks | 逗號分隔 SHA-256 指紋 |
 
 ## 除錯
 

@@ -1,4 +1,4 @@
-# 專有 API Key vs 免費公用端點
+# 夥伴 API Key vs 免費公用端點
 
 [English](API_KEYS.md)
 

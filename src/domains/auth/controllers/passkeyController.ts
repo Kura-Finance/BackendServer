@@ -8,7 +8,7 @@
  * POST /api/auth/passkey/authenticate            → verify assertion → { encryptedDek }
  *
  * All require login (Privy JWT); passkey is the second step to unlock E2EE after login.
- * Web + mobile share WEBAUTHN_RP_ID=api.kura-finance.com (Related Origin Requests).
+ * Web + mobile share WEBAUTHN_RP_ID (Related Origin Requests).
  */
 
 import { Response } from 'express';

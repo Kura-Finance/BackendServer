@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { getDemoBaseUrl } from '../../config/brand';
 import { prisma } from '../shared/lib/prisma';
 import { generateSEK, sealForPublicKey, encryptPayload, zeroize } from '../shared/crypto';
 import type { EncryptedFinanceSnapshot } from '../plaid/services/plaidCacheService';
@@ -683,8 +684,8 @@ export class DemoService {
       bridgeCustomerId: DEMO_BRIDGE_CUSTOMER_ID,
       kycLinkId: DEMO_KYC_LINK_ID,
       customerType,
-      kycLink: 'https://demo.kura-finance.com/bridge/kyc',
-      tosLink: 'https://demo.kura-finance.com/bridge/tos',
+      kycLink: `${getDemoBaseUrl()}/bridge/kyc`,
+      tosLink: `${getDemoBaseUrl()}/bridge/tos`,
       kycStatus: 'approved',
       tosStatus: 'approved',
     };
@@ -697,7 +698,7 @@ export class DemoService {
     return {
       bridgeCustomerId: DEMO_BRIDGE_CUSTOMER_ID,
       endorsement,
-      kycLink: `https://demo.kura-finance.com/bridge/endorsement/${endorsement}`,
+      kycLink: `${getDemoBaseUrl()}/bridge/endorsement/${endorsement}`,
       ...(currency ? { currency } : {}),
     };
   }

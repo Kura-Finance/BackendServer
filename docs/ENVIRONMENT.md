@@ -41,17 +41,17 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 | `DB_SCHEMA` | No | Default `public` |
 | `DATABASE_URL` | Auto | Built by `buildDatabaseUrl()` at startup |
 
-## Application / CORS / branding
+## Application / CORS / admin
+
+Brand strings (`APP_NAME`, upgrade URL, demo base) live in [`src/config/brand.ts`](../src/config/brand.ts) — not env. Public app origin is derived from `ALLOWED_ORIGINS`.
 
 | Variable | Required | Notes |
 |----------|----------|-------|
-| `ALLOWED_ORIGINS` | Prod | Comma-separated origins |
-| `APP_NAME` | No | Default `Kura` |
-| `APP_URL` | No | Frontend base URL |
-| `APP_UPGRADE_URL` | No | Pricing / upgrade link |
-| `ADMIN_EMAIL` | No | Default `admin@kura-finance.com` (ops email for Fraud Alert notices + admin allowlist fallback) |
-| `ADMIN_EMAILS` | No | Comma-separated admin allowlist for `/api/admin`; if unset, uses `ADMIN_EMAIL` |
-| `SUPPORT_EMAIL` | No | Default `Support@kura-finance.com` |
+| `ALLOWED_ORIGINS` | Prod | Comma-separated CORS origins (**only** source in production); first HTTP origin = app URL |
+| `ADMIN_EMAIL` | For admin / fraud mail | Empty deny admin |
+| `ADMIN_EMAILS` | No | Comma-separated allowlist; else `ADMIN_EMAIL` |
+
+GitHub inventory: [SECRETS.md](SECRETS.md).
 
 ## Email (Resend)
 
@@ -87,10 +87,10 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 | Variable | Required | Notes |
 |----------|----------|-------|
-| `DEBANK_ACCESS_KEY` | Prod | Proprietary; no free public substitute |
+| `DEBANK_ACCESS_KEY` | When `FEATURES.debank` | No free public substitute |
 | `LOGO_DEV_TOKEN` | No | Optional. When unset, logos use free Google favicons + jsDelivr crypto icons |
 
-See [API_KEYS.md](API_KEYS.md) for proprietary vs free-public inventory.
+See [API_KEYS.md](API_KEYS.md) for partner keys vs free-public inventory.
 
 ## Privy
 
@@ -104,10 +104,10 @@ See [API_KEYS.md](API_KEYS.md) for proprietary vs free-public inventory.
 
 | Variable | Required | Notes |
 |----------|----------|-------|
-| `WEBAUTHN_RP_ID` | For passkeys | Shared web + mobile RP ID: `api.kura-finance.com` |
-| `WEBAUTHN_RP_NAME` | For passkeys | e.g. `Kura` |
-| `WEBAUTHN_ORIGIN` | For passkeys | Comma-separated; must include `https://app.kura-finance.com` and may include `android:apk-key-hash:...` |
-| `WEBAUTHN_RELATED_ORIGINS` | For web ROR | Origins allowed to use `WEBAUTHN_RP_ID` via `/.well-known/webauthn` (default `https://app.kura-finance.com`) |
+| `WEBAUTHN_RP_ID` | For passkeys | Shared web + mobile RP ID (your API host) |
+| `WEBAUTHN_RP_NAME` | For passkeys | Display name |
+| `WEBAUTHN_ORIGIN` | For passkeys | Comma-separated allowed origins; may include `android:apk-key-hash:...` |
+| `WEBAUTHN_RELATED_ORIGINS` | For web ROR | Origins for `/.well-known/webauthn` (falls back to `ALLOWED_ORIGINS`) |
 
 ## Bridge
 
@@ -145,9 +145,9 @@ Without whitelist env vars, only demo emails (`DEMO_USER_EMAILS` / demo helpers)
 
 | Variable | Required | Notes |
 |----------|----------|-------|
-| `APPLE_APP_ID` | No | Default `K7FVP5GGP9.com.kurafinance.app` |
-| `ANDROID_PACKAGE_NAME` | No | Default `com.kurafinance.app` |
-| `ANDROID_SHA256_CERT_FINGERPRINTS` | No | Comma-separated; defaults to current Kura certs |
+| `APPLE_APP_ID` | For iOS AASA | `TeamID.bundleId` — endpoint 404 if unset |
+| `ANDROID_PACKAGE_NAME` | For assetlinks | Endpoint 404 if unset |
+| `ANDROID_SHA256_CERT_FINGERPRINTS` | For assetlinks | Comma-separated SHA-256 fingerprints |
 
 ## Debug
 
@@ -157,4 +157,4 @@ Without whitelist env vars, only demo emails (`DEMO_USER_EMAILS` / demo helpers)
 
 ## GitHub Actions mapping
 
-Production values are injected in [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) from GitHub **Secrets** and **Variables**. Optional vars include `ADMIN_EMAIL`, `SUPPORT_EMAIL`, `PLAID_SANDBOX_USER_IDS`, `DINARI_WHITELIST_*`, and mobile well-known overrides.
+Production values are injected in [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml). Core + Privy only by default — see **[SECRETS.md](SECRETS.md)** for what belongs in Secrets vs Variables and what you can delete.

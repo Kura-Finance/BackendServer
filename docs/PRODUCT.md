@@ -27,4 +27,4 @@
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — internal structure
 - [API.md](API.md) — HTTP surface
-- [data-room/README.md](data-room/README.md) — sale diligence package
+- [../CONTRIBUTING.md](../CONTRIBUTING.md) — how to contribute

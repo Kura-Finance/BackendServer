@@ -14,6 +14,8 @@ on:
       - '.gcloudignore'
       - '.cursor/**'
       - '.vscode/**'
+
+# Production injects everything from GitHub Secrets (this repo's setup).
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   REGION: us-central1
@@ -30,37 +32,30 @@ jobs:
     permissions:
       contents: 'read'
       id-token: 'write'
-    
+
     steps:
-      # 步驟 1: 檢出代碼
       - name: Checkout code
         uses: actions/checkout@v4.1.7
 
-      # 步驟 2: 認證 Google Cloud (使用 Service Account Key)
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2.1.3
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      # 步驟 3: 設置 Google Cloud SDK
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2.1.0
 
-      # 步驟 4: 設置 Docker 認證
       - name: Configure Docker for Google Container Registry
         run: gcloud auth configure-docker
 
-      # 步驟 5: 設置 Node.js（用於執行 Prisma migration）
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '24'
 
-      # 步驟 6: 安裝依賴（migration 需要 Prisma CLI）
       - name: Install dependencies
         run: npm ci
 
-      # 步驟 7: 執行 Prisma migration（透過 Cloud SQL Proxy）
       - name: Run Prisma migrations
         env:
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
@@ -74,11 +69,9 @@ jobs:
 
           DB_PASSWORD_ENCODED=$(node -e "console.log(encodeURIComponent(process.env.DB_PASSWORD || ''))")
           export DATABASE_URL="postgresql://${{ env.DB_USER }}:${DB_PASSWORD_ENCODED}@127.0.0.1:5432/${{ env.DB_NAME }}?schema=${{ env.DB_SCHEMA }}"
-          # 清除上次失敗留下的 failed migration 記錄（幂等：無 failed 記錄時為 no-op）
           npx prisma migrate resolve --rolled-back 20260616000000_plaid_cache_item_cascade || true
           npx prisma migrate deploy
 
-      # 步驟 8: 構建 Docker 鏡像
       - name: Build Docker image
         run: |
           docker build \
@@ -86,13 +79,11 @@ jobs:
             -t gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:latest \
             .
 
-      # 步驟 9: 推送鏡像到 Google Container Registry
       - name: Push image to Google Container Registry
         run: |
           docker push gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
           docker push gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:latest
 
-      # 步驟 10: 部署到 Cloud Run
       - name: Deploy to Cloud Run
         uses: 'google-github-actions/deploy-cloudrun@v2'
         with:
@@ -117,8 +108,6 @@ jobs:
             ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}
             RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
             RESEND_FROM_EMAIL=${{ secrets.RESEND_FROM_EMAIL }}
-            APP_NAME=${{ secrets.APP_NAME }}
-            APP_URL=${{ secrets.APP_URL }}
             DEBANK_ACCESS_KEY=${{ secrets.DEBANK_ACCESS_KEY }}
             STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
             STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
@@ -128,7 +117,6 @@ jobs:
             STRIPE_PRICE_ULTIMATE_YEARLY=${{ secrets.STRIPE_PRICE_ULTIMATE_YEARLY }}
             BRIDGE_API_KEY=${{ secrets.BRIDGE_API_KEY }}
             BRIDGE_WEBHOOK_PUBLIC_KEY=${{ secrets.BRIDGE_WEBHOOK_PUBLIC_KEY }}
-            BRIDGE_FEE_CONFIG_ENABLED=${{ vars.BRIDGE_FEE_CONFIG_ENABLED }}
             DINARI_API_KEY_ID=${{ secrets.DINARI_API_KEY_ID }}
             DINARI_API_SECRET_KEY=${{ secrets.DINARI_API_SECRET_KEY }}
             DINARI_ENVIRONMENT=sandbox
@@ -137,25 +125,16 @@ jobs:
             PRIVY_APP_SECRET=${{ secrets.PRIVY_APP_SECRET }}
             PRIVY_VERIFICATION_KEY=${{ secrets.PRIVY_VERIFICATION_KEY }}
             LIFI_INTEGRATOR=kura,Kura
+            LIFI_API_KEY=${{ secrets.LIFI_API_KEY }}
+            ADMIN_EMAIL=${{ secrets.ADMIN_EMAIL }}
             WEBAUTHN_RP_ID=api.kura-finance.com
             WEBAUTHN_RP_NAME=Kura
             WEBAUTHN_ORIGIN=https://app.kura-finance.com\,https://api.kura-finance.com\,android:apk-key-hash:MePOeO1vVaYsQDTyYfKRQy2-RHSgZxcCC4ifchmuu6A
             WEBAUTHN_RELATED_ORIGINS=https://app.kura-finance.com
 
-      # Optional env (add to env_vars above when set — see docs/ENVIRONMENT.md / docs/API_KEYS.md):
-      # LOGO_DEV_TOKEN (Logo.dev; default logos use free Google favicons + jsDelivr),
-      # LIFI_API_KEY (optional rate-limit boost; LI.FI works without it),
-      # ADMIN_EMAIL, SUPPORT_EMAIL, PLAID_SANDBOX_USER_IDS,
-      # DINARI_WHITELIST_DOMAINS, DINARI_WHITELIST_EMAILS,
-      # APPLE_APP_ID, ANDROID_PACKAGE_NAME, ANDROID_SHA256_CERT_FINGERPRINTS
-      # Secrets tips (first deploy):
-      # ALLOWED_ORIGINS must include web + admin consoles, e.g.:
-      # "https://app.kura-finance.com,https://www.kura-finance.com,https://kura-finance.com,https://admin.kura-finance.com,https://admin-642134687769.us-central1.run.app"
-      # PLAID_REDIRECT_URI: "https://app.kura-finance.com/dashboard"
-      # APP_URL: "https://app.kura-finance.com"
-      # BRIDGE_WEBHOOK_PUBLIC_KEY: PEM from Bridge dashboard (use \n for newlines in secret)
+      # Optional if present as Secrets: APPLE_APP_ID, ANDROID_PACKAGE_NAME,
+      # ANDROID_SHA256_CERT_FINGERPRINTS, BRIDGE_FEE_CONFIG_ENABLED, ADMIN_EMAIL
 
-      # 步驟 11: 驗證部署
       - name: Verify Cloud Run deployment
         run: |
           gcloud run services describe ${{ env.SERVICE_NAME }} \
@@ -163,7 +142,6 @@ jobs:
             --region ${{ env.REGION }} \
             --project ${{ env.PROJECT_ID }}
 
-      # 步驟 12: 部署成功通知
       - name: Deploy successful
         if: success()
         run: |
@@ -173,7 +151,6 @@ jobs:
           echo "Project: ${{ env.PROJECT_ID }}"
           echo "Image: gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }}"
 
-      # 步驟 13: 部署失敗通知
       - name: Deploy failed
         if: failure()
         run: echo "❌ Deployment failed"

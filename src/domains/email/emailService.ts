@@ -1,4 +1,5 @@
 import { Resend } from 'resend';
+import { getAdminEmail, getAppName, getSupportEmail } from '../../config/brand';
 import { logDebug, logError, logBusinessEvent } from '../logger';
 
 /**
@@ -51,8 +52,11 @@ export class EmailService {
 
       const resend = this.initializeResend();
       const fromEmail = process.env.RESEND_FROM_EMAIL;
-      const appName = process.env.APP_NAME || 'Kura';
-      const adminEmail = process.env.ADMIN_EMAIL || 'admin@kura-finance.com';
+      const appName = getAppName();
+      const adminEmail = getAdminEmail();
+      if (!adminEmail) {
+        throw new Error('Missing required environment variable: ADMIN_EMAIL');
+      }
 
       if (!fromEmail) {
         throw new Error('Missing required environment variable: RESEND_FROM_EMAIL');
@@ -139,8 +143,8 @@ export class EmailService {
 
       const resend = this.initializeResend();
       const fromEmail = process.env.RESEND_FROM_EMAIL;
-      const appName = process.env.APP_NAME || 'Kura';
-      const supportEmail = process.env.SUPPORT_EMAIL || 'Support@kura-finance.com';
+      const appName = getAppName();
+      const supportEmail = getSupportEmail();
 
       if (!fromEmail) {
         throw new Error('Missing required environment variable: RESEND_FROM_EMAIL');

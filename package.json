@@ -1,8 +1,7 @@
 {
-  "name": "backend",
+  "name": "kura-backend",
   "version": "1.0.0",
-  "private": true,
-  "description": "Kura backend API (Kura Finance LLC)",
+  "description": "Open-source multi-asset finance backend API (Kura)",
   "main": "index.js",
   "scripts": {
     "predev": "prisma generate",
@@ -11,9 +10,9 @@
     "build": "tsc",
     "start": "node dist/index.js"
   },
-  "keywords": [],
+  "keywords": ["finance", "express", "prisma", "plaid", "bridge"],
   "author": "Kura Finance LLC",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "commonjs",
   "dependencies": {
     "@dinari/api-sdk": "^0.14.0",

@@ -30,9 +30,9 @@ High-level security model for diligence. Not a penetration-test report.
 
 ## Secrets & ops
 
-- Secrets live in GitHub Actions / Cloud Run env — **not** in this Data Room.
-- Secret **names** and transfer steps: [HANDOFF.md](HANDOFF.md).
-- Rotate keys after ownership transfer; revoke seller access.
+- Secrets live in GitHub Actions / Cloud Run env — never commit `.env*` (except `.env.example`).
+- Catalog: [ENVIRONMENT.md](ENVIRONMENT.md) · partner inventory: [API_KEYS.md](API_KEYS.md).
+- Rotate keys via partner dashboards, then update Secrets/Variables and redeploy.
 
 ## Dependencies
 

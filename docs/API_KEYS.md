@@ -1,4 +1,4 @@
-# Proprietary API keys vs free public endpoints
+# Partner API keys vs free public endpoints
 
 [繁體中文](API_KEYS.zh-TW.md)
 
@@ -8,7 +8,7 @@ This backend does **not** use Alchemy / Infura / QuickNode (or any custom chain 
 
 Optional domains: toggle the `FEATURES` map in [`src/config/features.ts`](../src/config/features.ts). Disabled domains skip key validation and are not mounted. Snapshot: `GET /api/features`.
 
-## Must have a proprietary key (no free public substitute)
+## Require a partner / proprietary key (no free public substitute)
 
 | Service | Env vars | Why required |
 |---------|----------|--------------|

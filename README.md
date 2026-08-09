@@ -1,16 +1,16 @@
 # Kura Backend
 
-Backend API for **Kura**, a multi-asset finance application owned by **Kura Finance LLC**.
+Open-source backend API for **Kura** — a multi-asset finance application.
 
-Stack: Node.js 24, TypeScript, Express 5, Prisma, PostgreSQL. Production deploy targets Google Cloud Run with Cloud SQL.
+Stack: Node.js 24, TypeScript, Express 5, Prisma, PostgreSQL. Deploy target: Google Cloud Run + Cloud SQL (optional).
 
-[繁體中文](README.zh-TW.md)
+[繁體中文](README.zh-TW.md) · [Contributing](CONTRIBUTING.md)
 
 ## License
 
-Proprietary. Copyright © 2024–2026 Kura Finance LLC. See [LICENSE](LICENSE) (authoritative) and [docs/legal/LICENSE.zh-TW.md](docs/legal/LICENSE.zh-TW.md) (Chinese courtesy translation).
+[MIT](LICENSE) · Copyright © 2024–2026 Kura Finance LLC
 
-Third-party notices: [docs/legal/THIRD_PARTY_NOTICES.md](docs/legal/THIRD_PARTY_NOTICES.md).
+Third-party notices: [docs/legal/THIRD_PARTY_NOTICES.md](docs/legal/THIRD_PARTY_NOTICES.md)
 
 ## Documentation
 
@@ -18,28 +18,31 @@ Full index: **[docs/README.md](docs/README.md)**
 
 | Doc | Description |
 |-----|-------------|
-| [docs/data-room/README.md](docs/data-room/README.md) | **Sale Data Room** (buyer diligence package) |
 | [docs/PRODUCT.md](docs/PRODUCT.md) | Product overview |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Domains, auth, data flows |
 | [docs/API.md](docs/API.md) | HTTP mounts and access rules |
 | [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) | Environment variables |
-| [.env.example](.env.example) | Env template for local / open-source setup |
+| [.env.example](.env.example) | Env template |
+| [src/config/features.ts](src/config/features.ts) | Domain feature toggles |
+| [docs/API_KEYS.md](docs/API_KEYS.md) | Partner keys vs free public endpoints |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | Local / Docker / Cloud Run |
 | [docs/SECURITY.md](docs/SECURITY.md) | Security model |
-| [docs/HANDOFF.md](docs/HANDOFF.md) | Sale / transfer checklist |
 
-## Quick start (local)
+## Quick start
 
 Prerequisites: Node.js 24+, PostgreSQL.
 
 ```bash
-cp .env.example .env.development   # fill in secrets — see docs/ENVIRONMENT.md
+cp .env.example .env.development
+# Enable only the domains you need in src/config/features.ts
+# Fill JWT_SECRET, ENCRYPTION_KEY, DB_*, and partner keys for enabled features
+
 npm ci
 npx prisma migrate deploy   # or: npx prisma migrate dev
 npm run dev
 ```
 
-Health check: `GET http://localhost:8080/health`
+Health: `GET http://localhost:8080/health` · Features: `GET http://localhost:8080/api/features`
 
 ## Scripts
 
@@ -49,7 +52,3 @@ Health check: `GET http://localhost:8080/health`
 | `npm run build` | Compile TypeScript to `dist/` |
 | `npm start` | Run compiled server |
 | `npm run dbml` | Regenerate Prisma client / DBML |
-
-## Copyright
-
-Copyright © 2024–2026 Kura Finance LLC. All rights reserved.
