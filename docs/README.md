@@ -12,6 +12,7 @@ Product: **Kura** · Entity: **Kura Finance LLC** · Repo: BackendServer
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Domains, auth, data flows |
 | [API.md](API.md) | HTTP mounts and access rules |
 | [ENVIRONMENT.md](ENVIRONMENT.md) | Environment variable catalog |
+| [API_KEYS.md](API_KEYS.md) | Proprietary API keys vs free public endpoints |
 | [OPERATIONS.md](OPERATIONS.md) | Local, Docker, Cloud Run, migrations |
 | [SECURITY.md](SECURITY.md) | Auth, E2EE, secrets, webhooks |
 

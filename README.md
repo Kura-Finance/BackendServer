@@ -23,15 +23,17 @@ Full index: **[docs/README.md](docs/README.md)**
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Domains, auth, data flows |
 | [docs/API.md](docs/API.md) | HTTP mounts and access rules |
 | [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) | Environment variables |
+| [.env.example](.env.example) | Env template for local / open-source setup |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | Local / Docker / Cloud Run |
 | [docs/SECURITY.md](docs/SECURITY.md) | Security model |
 | [docs/HANDOFF.md](docs/HANDOFF.md) | Sale / transfer checklist |
 
 ## Quick start (local)
 
-Prerequisites: Node.js 24+, PostgreSQL, and a `.env.development` file (see [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md)).
+Prerequisites: Node.js 24+, PostgreSQL.
 
 ```bash
+cp .env.example .env.development   # fill in secrets — see docs/ENVIRONMENT.md
 npm ci
 npx prisma migrate deploy   # or: npx prisma migrate dev
 npm run dev

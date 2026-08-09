@@ -114,7 +114,6 @@ jobs:
             PLAID_PRODUCTION_SECRET=${{ secrets.PLAID_PRODUCTION_SECRET }}
             PLAID_REDIRECT_URI=${{ secrets.PLAID_REDIRECT_URI }}
             PLAID_WEBHOOK_URL=${{ secrets.PLAID_WEBHOOK_URL }}
-            LOGO_DEV_TOKEN=${{ secrets.LOGO_DEV_PUBLISHABLE_KEY }}
             ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}
             RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
             RESEND_FROM_EMAIL=${{ secrets.RESEND_FROM_EMAIL }}
@@ -138,13 +137,14 @@ jobs:
             PRIVY_APP_SECRET=${{ secrets.PRIVY_APP_SECRET }}
             PRIVY_VERIFICATION_KEY=${{ secrets.PRIVY_VERIFICATION_KEY }}
             LIFI_INTEGRATOR=kura,Kura
-            LIFI_API_KEY=${{ secrets.LIFI_API_KEY }}
             WEBAUTHN_RP_ID=api.kura-finance.com
             WEBAUTHN_RP_NAME=Kura
             WEBAUTHN_ORIGIN=https://app.kura-finance.com\,https://api.kura-finance.com\,android:apk-key-hash:MePOeO1vVaYsQDTyYfKRQy2-RHSgZxcCC4ifchmuu6A
             WEBAUTHN_RELATED_ORIGINS=https://app.kura-finance.com
 
-      # Optional env (add to env_vars above when set — see docs/ENVIRONMENT.md):
+      # Optional env (add to env_vars above when set — see docs/ENVIRONMENT.md / docs/API_KEYS.md):
+      # LOGO_DEV_TOKEN (Logo.dev; default logos use free Google favicons + jsDelivr),
+      # LIFI_API_KEY (optional rate-limit boost; LI.FI works without it),
       # ADMIN_EMAIL, SUPPORT_EMAIL, PLAID_SANDBOX_USER_IDS,
       # DINARI_WHITELIST_DOMAINS, DINARI_WHITELIST_EMAILS,
       # APPLE_APP_ID, ANDROID_PACKAGE_NAME, ANDROID_SHA256_CERT_FINGERPRINTS

@@ -1,8 +1,6 @@
 # Bridge Fraud Fund Trail Report
 
-**Status:** Unrecoverable on-chain
-
-On-chain investigation of ~992.5 USDC that entered a Kura SCA on Base and was drained within ~5 minutes into Relay protocol liquidity. Prepared for Bridge remediation / Slack reporting.
+On-chain investigation of ~992.5 USDC that entered a Kura SCA on Base and was drained within ~5 minutes into Relay protocol liquidity.
 
 - **Source:** Base RPC + Basescan
 - **Event date:** 2026-07-27 UTC

@@ -2,9 +2,17 @@
 
 [繁體中文](ENVIRONMENT.zh-TW.md)
 
-Local development loads `.env.development` when `NODE_ENV` is not `production` and `DB_HOST` is unset (see `src/config/env.ts`). Never commit `.env*` files.
+Template: **[../.env.example](../.env.example)** — copy to `.env.development` for local use.
 
-Validation: `validateEnvironment()` runs at boot. Some integrations warn and continue; others exit in production when missing.
+Local development loads `.env.development` when `NODE_ENV` is not `production` and `DB_HOST` is unset (see `src/config/env.ts`). Never commit real `.env*` files (`.env.example` is tracked).
+
+Validation: `validateEnvironment()` runs at boot. Partner-key checks run only when the matching flag in [`src/config/features.ts`](../src/config/features.ts) is on. Some integrations warn and continue; others exit in production when missing.
+
+## Feature flags (domain toggles)
+
+**Source of truth:** edit the `FEATURES` map in [`src/config/features.ts`](../src/config/features.ts) (not env). Snapshot: `GET /api/features` and `GET /health` → `features`.
+
+Always on: `auth`, `assets`. Optional keys in `FEATURES`: `email`, `plaid`, `exchange`, `notifications`, `debank`, `stripe`, `wallet`, `treasury`, `bridge`, `dinari`, `waitlist`, `platformInsights`, `privyAnalytics`, `lifiAnalytics`, `admin`.
 
 ## Core (required)
 
@@ -79,8 +87,10 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 | Variable | Required | Notes |
 |----------|----------|-------|
-| `DEBANK_ACCESS_KEY` | Prod | |
-| `LOGO_DEV_TOKEN` | No | Logo.dev publishable key |
+| `DEBANK_ACCESS_KEY` | Prod | Proprietary; no free public substitute |
+| `LOGO_DEV_TOKEN` | No | Optional. When unset, logos use free Google favicons + jsDelivr crypto icons |
+
+See [API_KEYS.md](API_KEYS.md) for proprietary vs free-public inventory.
 
 ## Privy
 
@@ -128,8 +138,8 @@ Without whitelist env vars, only demo emails (`DEMO_USER_EMAILS` / demo helpers)
 
 | Variable | Required | Notes |
 |----------|----------|-------|
-| `LIFI_API_KEY` | Recommended | |
-| `LIFI_INTEGRATOR` | For analytics sync | Comma-separated integrator names |
+| `LIFI_API_KEY` | No | Optional rate-limit boost; public `li.quest` works without it |
+| `LIFI_INTEGRATOR` | For analytics sync | Integrator **names** (not a secret), comma-separated |
 
 ## Mobile associated domains (well-known)
 

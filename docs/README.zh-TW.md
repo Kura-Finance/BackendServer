@@ -12,6 +12,7 @@
 | [ARCHITECTURE.zh-TW.md](ARCHITECTURE.zh-TW.md) | 網域、認證、資料流 |
 | [API.zh-TW.md](API.zh-TW.md) | HTTP 掛載與存取規則 |
 | [ENVIRONMENT.zh-TW.md](ENVIRONMENT.zh-TW.md) | 環境變數目錄 |
+| [API_KEYS.zh-TW.md](API_KEYS.zh-TW.md) | 專有 API Key vs 免費公用端點 |
 | [OPERATIONS.zh-TW.md](OPERATIONS.zh-TW.md) | 本地、Docker、Cloud Run、migration |
 | [SECURITY.zh-TW.md](SECURITY.zh-TW.md) | 認證、E2EE、密鑰、webhook |
 

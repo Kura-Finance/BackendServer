@@ -23,15 +23,17 @@
 | [docs/ARCHITECTURE.zh-TW.md](docs/ARCHITECTURE.zh-TW.md) | 網域、認證、資料流 |
 | [docs/API.zh-TW.md](docs/API.zh-TW.md) | HTTP 掛載與存取規則 |
 | [docs/ENVIRONMENT.zh-TW.md](docs/ENVIRONMENT.zh-TW.md) | 環境變數 |
+| [.env.example](.env.example) | 本地／開源用環境變數範本 |
 | [docs/OPERATIONS.zh-TW.md](docs/OPERATIONS.zh-TW.md) | 本地／Docker／Cloud Run |
 | [docs/SECURITY.zh-TW.md](docs/SECURITY.zh-TW.md) | 安全模型 |
 | [docs/HANDOFF.zh-TW.md](docs/HANDOFF.zh-TW.md) | 售出／交接清單 |
 
 ## 快速開始（本地）
 
-前置：Node.js 24+、PostgreSQL，以及 `.env.development`（見 [docs/ENVIRONMENT.zh-TW.md](docs/ENVIRONMENT.zh-TW.md)）。
+前置：Node.js 24+、PostgreSQL。
 
 ```bash
+cp .env.example .env.development   # 填入密鑰 — 見 docs/ENVIRONMENT.zh-TW.md
 npm ci
 npx prisma migrate deploy   # 或：npx prisma migrate dev
 npm run dev

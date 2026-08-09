@@ -2,9 +2,17 @@
 
 [English](ENVIRONMENT.md)
 
-本地開發：當 `NODE_ENV` 非 `production` 且未設定 `DB_HOST` 時，會載入 `.env.development`（見 `src/config/env.ts`）。**切勿**提交 `.env*` 檔案。
+範本：**[../.env.example](../.env.example)** — 複製為 `.env.development` 供本地使用。
 
-驗證：啟動時執行 `validateEnvironment()`。部分整合僅警告並繼續；正式環境缺必要變數時會結束行程。
+本地開發：當 `NODE_ENV` 非 `production` 且未設定 `DB_HOST` 時，會載入 `.env.development`（見 `src/config/env.ts`）。**切勿**提交真實 `.env*`（`.env.example` 會納入版控）。
+
+驗證：啟動時執行 `validateEnvironment()`。夥伴 API Key 檢查僅在 [`src/config/features.ts`](../src/config/features.ts) 對應開關為開時執行。部分整合僅警告並繼續；正式環境缺必要變數時會結束行程。
+
+## 功能開關（Domain toggles）
+
+**唯一來源：** 改 [`src/config/features.ts`](../src/config/features.ts) 的 `FEATURES`（不用 env）。查詢：`GET /api/features`、`GET /health` → `features`。
+
+永遠開啟：`auth`、`assets`。可選：`email`、`plaid`、`exchange`、`notifications`、`debank`、`stripe`、`wallet`、`treasury`、`bridge`、`dinari`、`waitlist`、`platformInsights`、`privyAnalytics`、`lifiAnalytics`、`admin`。
 
 ## 核心（必填）
 
@@ -79,8 +87,10 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 | 變數 | 必填 | 說明 |
 |------|------|------|
-| `DEBANK_ACCESS_KEY` | 正式 | |
-| `LOGO_DEV_TOKEN` | 否 | Logo.dev publishable key |
+| `DEBANK_ACCESS_KEY` | 正式 | 專有；無對等免費公用替代 |
+| `LOGO_DEV_TOKEN` | 否 | 可選。未設定時 logo 用免費 Google favicon + jsDelivr crypto icons |
+
+專有 Key vs 免費公用清單見 [API_KEYS.zh-TW.md](API_KEYS.zh-TW.md)。
 
 ## Privy
 
@@ -128,8 +138,8 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 | 變數 | 必填 | 說明 |
 |------|------|------|
-| `LIFI_API_KEY` | 建議 | |
-| `LIFI_INTEGRATOR` | 分析同步用 | 逗號分隔 integrator 名稱 |
+| `LIFI_API_KEY` | 否 | 可選提高額度；公用 `li.quest` 無需 Key |
+| `LIFI_INTEGRATOR` | 分析同步用 | Integrator **名稱**（非密鑰），逗號分隔 |
 
 ## 行動裝置關聯網域（well-known）
 

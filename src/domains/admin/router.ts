@@ -1,9 +1,11 @@
 /**
  * Admin APIs — requireAuth + requireAdmin (ADMIN_EMAILS / ADMIN_EMAIL).
  * Base path: /api/admin
+ * Bridge / LI.FI sub-routes also require the matching flag in src/config/features.ts.
  */
 
 import { Router } from 'express';
+import { requireFeature } from '../../config/features';
 import { requireAuth } from '../auth/middleware/auth';
 import { validateRequest } from '../shared/middleware/validateRequest';
 import { requireAdmin } from './middleware/requireAdmin';
@@ -51,89 +53,95 @@ router.get(
 );
 router.post(
   '/users/:id/clear-fraud-suspend',
+  requireFeature('bridge'),
   validateRequest({ params: userIdParamSchema }),
   clearUserFraudSuspend,
 );
 router.get('/overview', getOverview);
 router.get('/earn/fee-warps', getFeeWarps);
-router.get('/lifi/summary', getLifiSummary);
+router.get('/lifi/summary', requireFeature('lifiAnalytics'), getLifiSummary);
 
 // ── Bridge funds-request / Fraud Alert ops ───────────────────
+const bridgeAdmin = Router();
+bridgeAdmin.use(requireFeature('bridge'));
+
 // Prefer GET/POST /refresh — some CDNs/WAFs challenge POST …/sync.
-router.get(
-  '/bridge/funds-requests/refresh',
+bridgeAdmin.get(
+  '/funds-requests/refresh',
   validateRequest({ query: lazyUpdateQuerySchema }),
   syncFundsRequests,
 );
-router.post(
-  '/bridge/funds-requests/refresh',
+bridgeAdmin.post(
+  '/funds-requests/refresh',
   validateRequest({ query: lazyUpdateQuerySchema }),
   syncFundsRequests,
 );
-router.post(
-  '/bridge/funds-requests/sync',
+bridgeAdmin.post(
+  '/funds-requests/sync',
   validateRequest({ query: lazyUpdateQuerySchema }),
   syncFundsRequests,
 );
 
-router.get(
-  '/bridge/funds-requests',
+bridgeAdmin.get(
+  '/funds-requests',
   validateRequest({ query: listFundsRequestsQuerySchema }),
   listFundsRequests,
 );
 
-router.post(
-  '/bridge/funds-requests/:id/return',
+bridgeAdmin.post(
+  '/funds-requests/:id/return',
   validateRequest({ params: fundsRequestIdParamSchema }),
   initiateFundsRequestReturn,
 );
 
-router.post(
-  '/bridge/funds-requests/:id/pause',
+bridgeAdmin.post(
+  '/funds-requests/:id/pause',
   validateRequest({ params: fundsRequestIdParamSchema }),
   pauseFundsRequestCustomer,
 );
 
-router.post(
-  '/bridge/funds-requests/:id/remediate',
+bridgeAdmin.post(
+  '/funds-requests/:id/remediate',
   validateRequest({ params: fundsRequestIdParamSchema }),
   remediateFundsRequest,
 );
 
-router.get(
-  '/bridge/fraud-rate',
+bridgeAdmin.get(
+  '/fraud-rate',
   validateRequest({ query: fraudRateQuerySchema }),
   getFraudRate,
 );
 
 /** Alias — avoids WAF rules that match the literal path segment `fraud`. */
-router.get(
-  '/bridge/penalty-box',
+bridgeAdmin.get(
+  '/penalty-box',
   validateRequest({ query: fraudRateQuerySchema }),
   getFraudRate,
 );
 
-router.post(
-  '/bridge/customers/:bridgeCustomerId/unpause',
+bridgeAdmin.post(
+  '/customers/:bridgeCustomerId/unpause',
   validateRequest({ params: bridgeCustomerIdParamSchema }),
   unpauseBridgeCustomer,
 );
 
 // ── Inactive Bridge customers (VA fee cost review) ───────────
-router.get(
-  '/bridge/inactive-customers',
+bridgeAdmin.get(
+  '/inactive-customers',
   validateRequest({ query: inactiveBridgeCustomersQuerySchema }),
   listInactiveBridgeCustomers,
 );
-router.post(
-  '/bridge/inactive-customers/notify',
+bridgeAdmin.post(
+  '/inactive-customers/notify',
   validateRequest({ query: inactiveBridgeCustomersQuerySchema }),
   notifyInactiveBridgeCustomers,
 );
-router.post(
-  '/bridge/customers/:userId/delete',
+bridgeAdmin.post(
+  '/customers/:userId/delete',
   validateRequest({ params: bridgeCostDeleteUserParamSchema }),
   deleteBridgeCustomerForCostSavings,
 );
+
+router.use('/bridge', bridgeAdmin);
 
 export const adminRouter = router;

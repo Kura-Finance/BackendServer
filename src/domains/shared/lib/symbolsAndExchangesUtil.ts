@@ -1,7 +1,40 @@
 /**
  * Shared symbol & exchange helpers.
  * Exchange constants/types plus stock and institution logo utilities.
+ *
+ * Logos default to free public endpoints (Google favicons + jsDelivr crypto icons).
+ * Set LOGO_DEV_TOKEN to optionally prefer Logo.dev instead.
  */
+
+// ============================================
+// Free public logo helpers (default)
+// ============================================
+
+/** Google favicon service — no API key. */
+function googleFaviconUrl(domain: string, size = 128): string {
+  const host = domain
+    .replace(/^https?:\/\//i, '')
+    .replace(/^www\./i, '')
+    .split('/')[0]!
+    .trim()
+    .toLowerCase();
+  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=${size}`;
+}
+
+/** Free crypto icon CDN (jsDelivr / cryptocurrency-icons) — no API key. */
+function cryptoPublicIconUrl(symbol: string): string {
+  const s = symbol.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return `https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/${s}.png`;
+}
+
+const FALLBACK_LOGO = googleFaviconUrl('kura-finance.com');
+
+/**
+ * Optional Logo.dev publishable token. When set, Logo.dev URLs are used;
+ * otherwise free public favicons / crypto CDN are used.
+ */
+const LOGO_DEV_TOKEN = process.env.LOGO_DEV_TOKEN?.trim();
+const LOGO_DEV_USE_TOKEN = Boolean(LOGO_DEV_TOKEN);
 
 // ============================================
 // Exchange constants and types
@@ -20,56 +53,56 @@ export const KURA_SUPPORTED_EXCHANGES: SupportedExchange[] = [
     id: 'binance',
     displayName: 'Binance',
     requiresPassphrase: false,
-    icon: 'https://img.logo.dev/binance.com?format=webp&size=128',
+    icon: googleFaviconUrl('binance.com'),
     website: 'https://www.binance.com',
   },
   {
     id: 'okx',
     displayName: 'OKX',
     requiresPassphrase: true,
-    icon: 'https://img.logo.dev/okx.com?format=webp&size=128',
+    icon: googleFaviconUrl('okx.com'),
     website: 'https://www.okx.com',
   },
   {
     id: 'bybit',
     displayName: 'Bybit',
     requiresPassphrase: false,
-    icon: 'https://img.logo.dev/bybit.com?format=webp&size=128',
+    icon: googleFaviconUrl('bybit.com'),
     website: 'https://www.bybit.com',
   },
   {
     id: 'coinbase',
     displayName: 'Coinbase',
     requiresPassphrase: false,
-    icon: 'https://img.logo.dev/coinbase.com?format=webp&size=128',
+    icon: googleFaviconUrl('coinbase.com'),
     website: 'https://www.coinbase.com',
   },
   {
     id: 'kraken',
     displayName: 'Kraken',
     requiresPassphrase: false,
-    icon: 'https://img.logo.dev/kraken.com?format=webp&size=128',
+    icon: googleFaviconUrl('kraken.com'),
     website: 'https://www.kraken.com',
   },
   {
     id: 'kucoin',
     displayName: 'KuCoin',
     requiresPassphrase: true,
-    icon: 'https://img.logo.dev/kucoin.com?format=webp&size=128',
+    icon: googleFaviconUrl('kucoin.com'),
     website: 'https://www.kucoin.com',
   },
   {
     id: 'bitget',
     displayName: 'Bitget',
     requiresPassphrase: true,
-    icon: 'https://img.logo.dev/bitget.com?format=webp&size=128',
+    icon: googleFaviconUrl('bitget.com'),
     website: 'https://www.bitget.com',
   },
   {
     id: 'gateio',
     displayName: 'Gate.io',
     requiresPassphrase: false,
-    icon: 'https://img.logo.dev/gate.io?format=webp&size=128',
+    icon: googleFaviconUrl('gate.io'),
     website: 'https://www.gate.io',
   },
 ];
@@ -97,33 +130,34 @@ export const EXCHANGES_REQUIRING_PASSPHRASE = KURA_SUPPORTED_EXCHANGES.filter(
   (ex) => ex.requiresPassphrase
 ).map((ex) => ex.id);
 
-const FALLBACK_LOGO = 'https://img.logo.dev/kura-finance.com?format=webp&size=128';
-
-/**
- * Logo.dev API token (from env).
- * If unset, Logo.dev public endpoints are used (no auth).
- */
-const LOGO_DEV_TOKEN = process.env.LOGO_DEV_TOKEN;
-const LOGO_DEV_USE_TOKEN = !!LOGO_DEV_TOKEN;
-
 /**
  * Exchange icon URL for an exchange id.
+ * Defaults to free Google favicons; uses Logo.dev when LOGO_DEV_TOKEN is set.
  * @param exchangeId e.g. 'binance', 'okx'
  * @returns icon URL
  */
 export function getExchangeIcon(exchangeId: string): string {
-  const iconUrl = EXCHANGE_ICON_MAP[exchangeId.toLowerCase()];
-  if (!iconUrl) {
+  const exchange = KURA_SUPPORTED_EXCHANGES.find(
+    (ex) => ex.id === exchangeId.toLowerCase()
+  );
+  if (!exchange) {
     return FALLBACK_LOGO;
   }
-  
-  // Append Logo.dev token when configured
-  if (LOGO_DEV_USE_TOKEN) {
-    const separator = iconUrl.includes('?') ? '&' : '?';
-    return `${iconUrl}${separator}token=${LOGO_DEV_TOKEN}`;
+
+  let domain: string | undefined;
+  if (exchange.website) {
+    try {
+      domain = new URL(exchange.website).hostname.replace(/^www\./i, '');
+    } catch {
+      domain = undefined;
+    }
   }
-  
-  return iconUrl;
+
+  if (LOGO_DEV_USE_TOKEN && domain) {
+    return buildLogoDevUrl(domain, 'domain');
+  }
+
+  return EXCHANGE_ICON_MAP[exchange.id] || (domain ? googleFaviconUrl(domain) : FALLBACK_LOGO);
 }
 
 // ============================================
@@ -385,9 +419,9 @@ function isCryptoSymbol(symbol: string): boolean {
 }
 
 /**
- * Stock/crypto logo URL via Logo.dev (https://www.logo.dev/).
- * Crypto: https://img.logo.dev/crypto/{SYMBOL}?token=
- * Stocks prefer derived domain; ticker fallback: https://img.logo.dev/ticker/{SYMBOL}?token=
+ * Stock/crypto logo URL.
+ * Default: free public (jsDelivr crypto icons / Google favicons).
+ * With LOGO_DEV_TOKEN: Logo.dev crypto/domain/ticker paths.
  * @param symbol e.g. 'AAPL', 'PLTR', 'BTC', 'CANYX', 'USDC.B', 'CUR:USD'
  * @returns logo URL or fallback URL
  */
@@ -403,7 +437,7 @@ export function getStockLogoUrl(symbol: string): string {
     upperSymbol = upperSymbol.split('.')[0]!;
   }
   
-  // Crypto → crypto logo API path
+  // Crypto → free CDN or Logo.dev
   if (isCryptoSymbol(upperSymbol)) {
     return buildLogoDevUrl(upperSymbol, 'crypto');
   }
@@ -419,8 +453,7 @@ export function getStockLogoUrl(symbol: string): string {
 }
 
 /**
- * Institution logo URL via Logo.dev.
- * Uses Logo.dev API (https://www.logo.dev/).
+ * Institution logo URL (free Google favicon by default; Logo.dev if token set).
  * @param institutionName e.g. 'Fidelity', 'Interactive Brokers - Rick'
  * @returns logo URL
  */
@@ -462,7 +495,9 @@ function inferDomainFromInstitution(institutionName: string): string {
 }
 
 /**
- * Build a Logo.dev URL.
+ * Build a logo URL.
+ * Without LOGO_DEV_TOKEN: Google favicons (domain/ticker) or jsDelivr crypto icons.
+ * With LOGO_DEV_TOKEN: Logo.dev paths + token.
  * @param identifier domain, symbol, or other id
  * @param type 'domain' | 'ticker' | 'crypto'
  * @returns logo URL
@@ -471,26 +506,31 @@ export function buildLogoDevUrl(identifier: string, type: 'domain' | 'ticker' | 
   if (!identifier) {
     return FALLBACK_LOGO;
   }
-  
+
+  // Free public defaults (no proprietary key)
+  if (!LOGO_DEV_USE_TOKEN) {
+    if (type === 'crypto') {
+      return cryptoPublicIconUrl(identifier);
+    }
+    if (type === 'domain') {
+      return googleFaviconUrl(identifier);
+    }
+    // ticker without mapped domain — best-effort favicon on inferred .com
+    return googleFaviconUrl(`${identifier.toLowerCase()}.com`);
+  }
+
   let logoUrl: string;
-  
+
   if (type === 'crypto') {
-    // Crypto path + format params for consistency
     logoUrl = `https://img.logo.dev/crypto/${identifier.toUpperCase()}?format=webp&size=128`;
   } else if (type === 'ticker') {
-    // Ticker path + format params for consistency
     logoUrl = `https://img.logo.dev/ticker/${identifier.toUpperCase()}?format=webp&size=128`;
   } else {
-    // Default: domain path
     logoUrl = `https://img.logo.dev/${identifier}?format=webp&size=128`;
   }
-  
-  if (LOGO_DEV_USE_TOKEN) {
-    const separator = logoUrl.includes('?') ? '&' : '?';
-    logoUrl += `${separator}token=${LOGO_DEV_TOKEN}`;
-  }
-  
-  return logoUrl;
+
+  const separator = logoUrl.includes('?') ? '&' : '?';
+  return `${logoUrl}${separator}token=${LOGO_DEV_TOKEN}`;
 }
 
 /**

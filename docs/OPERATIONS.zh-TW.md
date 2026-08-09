@@ -6,7 +6,13 @@
 
 1. 安裝 Node.js 24+。
 2. 建立 PostgreSQL 資料庫（例如 `kura_db`）。
-3. 建立 `.env.development`，至少包含 `JWT_SECRET`、`ENCRYPTION_KEY`、資料庫變數，以及所需夥伴金鑰（見 [ENVIRONMENT.zh-TW.md](ENVIRONMENT.zh-TW.md)）。
+3. 複製環境變數範本並填入密鑰：
+
+```bash
+cp .env.example .env.development
+```
+
+   至少設定 `JWT_SECRET`、`ENCRYPTION_KEY`、資料庫變數，以及所需夥伴金鑰（見 [ENVIRONMENT.zh-TW.md](ENVIRONMENT.zh-TW.md)）。
 4. 安裝與遷移：
 
 ```bash

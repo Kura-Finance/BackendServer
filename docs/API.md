@@ -10,32 +10,36 @@ Response shape (typical): `{ success, data }` or `{ success: false, error: { cod
 
 | Mount | Auth | Notes |
 |-------|------|-------|
-| `GET /health` | No | Liveness |
+| `GET /health` | No | Liveness (+ `features` snapshot) |
+| `GET /api/features` | No | Domain flags from `src/config/features.ts` |
 | `/.well-known/apple-app-site-association` | No | iOS associated domains / passkeys |
 | `/.well-known/assetlinks.json` | No | Android Digital Asset Links |
-| `/api/auth` | Mixed | Login, logout, me, passkeys, referrals |
-| `/api/plaid` | Yes | Bank linking |
-| `/api/assets` | Yes | Aggregated holdings / history |
-| `/api/exchange` | Yes | CEX via CCXT |
-| `/api/debank` | Yes | On-chain portfolios |
-| `/api/stripe` | Mixed | Checkout / portal / billing-status (auth); webhook (Stripe signature) |
-| `/api/wallet` | Yes | Personal wallet / SCA |
-| `/api/treasuries` | Yes + **Pro/Ultimate** | Org Treasury Safes (`requirePaidTier`) |
-| `/api/bridge` | Mixed | On/off-ramp; webhook (Bridge RSA signature) |
-| `/api/dinari` | Yes | Tokenized stocks (whitelist for Entity/KYC) |
-| `/api/notifications` | Yes | Notifications |
-| `/api/waitlist` | Partial | Public signup endpoints |
-| `/api/platform-insights` | Public GETs | Investor summary: `platformRevenue` is the single source of truth (Bridge/Swap 0.25%, Dinari 0%, Earn 10% perf fee, Card reserved); also live Morpho Earn AUM (`earn`) |
-| `/api/privy-analytics` | Yes | Privy analytics |
-| `/api/lifi-analytics` | Yes | LI.FI integrator volume |
-| `/api/admin` | Auth + **admin** | `requireAuth` + `requireAdmin` (`ADMIN_EMAILS` / `ADMIN_EMAIL`); web tier exempt |
+| `/api/auth` | Mixed | Always on — login, logout, me, passkeys, referrals |
+| `/api/plaid` | Yes | Bank linking (`FEATURES.plaid`) |
+| `/api/assets` | Yes | Always on — aggregated holdings / history |
+| `/api/exchange` | Yes | CEX via CCXT (`FEATURES.exchange`) |
+| `/api/debank` | Yes | On-chain portfolios (`FEATURES.debank`) |
+| `/api/stripe` | Mixed | Checkout / portal / billing (`FEATURES.stripe`) |
+| `/api/wallet` | Yes | Personal wallet / SCA (`FEATURES.wallet`) |
+| `/api/treasuries` | Yes + **Pro/Ultimate** | Org Treasury Safes (`FEATURES.treasury`) |
+| `/api/bridge` | Mixed | On/off-ramp (`FEATURES.bridge`) |
+| `/api/dinari` | Yes | Tokenized stocks (`FEATURES.dinari`) |
+| `/api/notifications` | Yes | Notifications (`FEATURES.notifications`) |
+| `/api/waitlist` | Partial | Public signup (`FEATURES.waitlist`) |
+| `/api/platform-insights` | Public GETs | Investor summary (`FEATURES.platformInsights`) |
+| `/api/privy-analytics` | Yes | Privy analytics (`FEATURES.privyAnalytics`) |
+| `/api/lifi-analytics` | Yes | LI.FI integrator volume (`FEATURES.lifiAnalytics`) |
+| `/api/admin` | Auth + **admin** | Admin console (`FEATURES.admin`) |
+
+Disabled domains are not mounted (404). Edit [`src/config/features.ts`](../src/config/features.ts).
 
 ## Access gates
 
 1. **`requireAuth`** — most `/api/*` routes.
-2. **`webTierGate`** — Web clients: Basic may use exempt paths (auth, Stripe billing, waitlist, some analytics, `/api/admin`); other Web APIs need Pro / Ultimate.
+2. **`webTierGate`** — Web clients: Basic may use exempt paths (auth, Stripe billing, waitlist, some analytics, `/api/admin`, `/api/features`); other Web APIs need Pro / Ultimate.
 3. **`requirePaidTier`** — `/api/treasuries` for **all** client types: Pro / Ultimate only. Basic → `403 SUBSCRIPTION_REQUIRED`.
 4. **`requireAdmin`** — `/api/admin/*`: logged-in user email must be in `ADMIN_EMAILS` (or `ADMIN_EMAIL`). Else `403 ADMIN_REQUIRED`.
+5. **`FEATURES` in `features.ts`** — optional domains unmounted when off; nested admin Bridge/LI.FI ops return `503` if their feature is off.
 
 ## Webhooks (raw body)
 

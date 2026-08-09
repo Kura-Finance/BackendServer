@@ -6,6 +6,7 @@ export const WEB_ALLOWED_TIERS = new Set(['Pro', 'Ultimate']);
  * Full API paths including the `/api` prefix.
  */
 export const WEB_TIER_EXEMPT_PATHS = new Set([
+  '/api/features',
   '/api/auth/login',
   '/api/auth/logout',
   '/api/auth/me',

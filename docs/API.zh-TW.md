@@ -10,32 +10,23 @@
 
 | 路徑 | 認證 | 說明 |
 |------|------|------|
-| `GET /health` | 否 | 存活 |
+| `GET /health` | 否 | 存活（含 `features`） |
+| `GET /api/features` | 否 | Domain 功能開關快照 |
 | `/.well-known/apple-app-site-association` | 否 | iOS |
 | `/.well-known/assetlinks.json` | 否 | Android |
-| `/api/auth` | 混合 | 登入、登出、me、Passkey、推薦 |
-| `/api/plaid` | 是 | 銀行連結 |
-| `/api/assets` | 是 | 資產彙總／歷史 |
-| `/api/exchange` | 是 | CEX（CCXT） |
-| `/api/debank` | 是 | 鏈上部位 |
-| `/api/stripe` | 混合 | Checkout／portal／billing-status；webhook |
-| `/api/wallet` | 是 | 個人錢包／SCA |
-| `/api/treasuries` | 是 + **Pro／Ultimate** | Treasury Safe（`requirePaidTier`） |
-| `/api/bridge` | 混合 | 出入金；webhook |
-| `/api/dinari` | 是 | 代幣化股票（Entity／KYC 白名單） |
-| `/api/notifications` | 是 | 通知 |
-| `/api/waitlist` | 部分 | 公開報名 |
-| `/api/platform-insights` | 公開 GET | Investor summary：`platformRevenue` 為唯一真實來源（Bridge/Swap 0.25%、Dinari 暫 0%、Earn 10% performance fee、Card 預留）；另含 Morpho Earn AUM（`earn`） |
-| `/api/privy-analytics` | 是 | Privy 分析 |
-| `/api/lifi-analytics` | 是 | LI.FI 量能 |
-| `/api/admin` | 登入 + **admin** | `requireAuth` + `requireAdmin`（`ADMIN_EMAILS`／`ADMIN_EMAIL`）；web tier 豁免 |
+| `/api/auth` | 混合 | 永遠開啟 |
+| `/api/assets` | 是 | 永遠開啟 |
+| `/api/plaid` … `/api/admin` | 依 domain | 由 [`src/config/features.ts`](../src/config/features.ts) 的 `FEATURES` 控制 |
+
+關閉的 domain 不會掛路由（404）。
 
 ## 存取閘道
 
 1. **`requireAuth`** — 多數 `/api/*`
-2. **`webTierGate`** — Web：Basic 僅白名單（含 `/api/admin`）；其餘需 Pro／Ultimate
+2. **`webTierGate`** — Web：Basic 僅白名單（含 `/api/admin`、`/api/features`）；其餘需 Pro／Ultimate
 3. **`requirePaidTier`** — `/api/treasuries` 對**所有** client：僅 Pro／Ultimate；Basic → `403 SUBSCRIPTION_REQUIRED`
 4. **`requireAdmin`** — `/api/admin/*`：登入使用者 email 須在 `ADMIN_EMAILS`（或 `ADMIN_EMAIL`）；否則 `403 ADMIN_REQUIRED`
+5. **`features.ts` 的 `FEATURES`** — 可選 domain 關閉時不掛載；Admin 內 Bridge／LI.FI 在對應 feature 關閉時回 `503`
 
 ## Webhook（raw body）
 

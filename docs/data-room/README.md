@@ -48,6 +48,7 @@ Share this folder (or the whole `docs/` tree + `LICENSE` + source) via your VDR.
 | API surface & gates | [../API.md](../API.md) |
 | Security model | [../SECURITY.md](../SECURITY.md) |
 | Environment catalog | [../ENVIRONMENT.md](../ENVIRONMENT.md) |
+| API keys inventory | [../API_KEYS.md](../API_KEYS.md) |
 | Operations / deploy | [../OPERATIONS.md](../OPERATIONS.md) |
 | Source code | Repository root (`src/`, `prisma/`) |
 | Schema history | `prisma/migrations/` |
@@ -116,6 +117,7 @@ If copying into an external virtual data room, mirror:
   API.md
   SECURITY.md
   ENVIRONMENT.md
+  API_KEYS.md
   OPERATIONS.md
 03_Transfer/
   HANDOFF.md

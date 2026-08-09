@@ -48,6 +48,7 @@
 | API | [../API.zh-TW.md](../API.zh-TW.md) |
 | 安全 | [../SECURITY.zh-TW.md](../SECURITY.zh-TW.md) |
 | 環境變數 | [../ENVIRONMENT.zh-TW.md](../ENVIRONMENT.zh-TW.md) |
+| API Key 清單 | [../API_KEYS.zh-TW.md](../API_KEYS.zh-TW.md) |
 | 維運／部署 | [../OPERATIONS.zh-TW.md](../OPERATIONS.zh-TW.md) |
 | 原始碼 | 倉庫根目錄（`src/`、`prisma/`） |
 | Schema 歷史 | `prisma/migrations/` |

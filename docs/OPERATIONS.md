@@ -6,7 +6,13 @@
 
 1. Install Node.js 24+.
 2. Create PostgreSQL database (e.g. `kura_db`).
-3. Create `.env.development` with at least `JWT_SECRET`, `ENCRYPTION_KEY`, DB vars, and partner keys you need (see [ENVIRONMENT.md](ENVIRONMENT.md)).
+3. Copy the env template and fill secrets:
+
+```bash
+cp .env.example .env.development
+```
+
+   Set at least `JWT_SECRET`, `ENCRYPTION_KEY`, DB vars, and any partner keys you need (see [ENVIRONMENT.md](ENVIRONMENT.md)).
 4. Install and migrate:
 
 ```bash

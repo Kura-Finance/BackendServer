@@ -1,8 +1,10 @@
 import dotenv from 'dotenv';
+import { isFeatureEnabled, logFeatureFlags } from './features';
 
 /**
  * Environment configuration.
  * Centralizes loading and validation of process.env.
+ * Partner-key checks run only when the matching flag in src/config/features.ts is on.
  */
 
 // Default NODE_ENV to development when unset.
@@ -70,43 +72,51 @@ export function validateEnvironment(): void {
   }
 
   // Resend (transactional email).
-  const emailVars = ['RESEND_API_KEY', 'RESEND_FROM_EMAIL'];
-  const missingEmailVars = emailVars.filter((key) => !process.env[key]);
+  if (isFeatureEnabled('email')) {
+    const emailVars = ['RESEND_API_KEY', 'RESEND_FROM_EMAIL'];
+    const missingEmailVars = emailVars.filter((key) => !process.env[key]);
 
-  if (missingEmailVars.length > 0) {
-    console.error(`❌ Resend API not fully configured: ${missingEmailVars.join(', ')}`);
-    console.error('💡 Set RESEND_API_KEY and RESEND_FROM_EMAIL environment variables');
-    if (isProduction) process.exit(1);
+    if (missingEmailVars.length > 0) {
+      console.error(`❌ Resend API not fully configured: ${missingEmailVars.join(', ')}`);
+      console.error('💡 Set RESEND_API_KEY and RESEND_FROM_EMAIL, or disable email in src/config/features.ts');
+      if (isProduction) process.exit(1);
+    }
   }
 
   // Plaid.
-  const plaidVars = ['PLAID_CLIENT_ID', 'PLAID_SANDBOX_SECRET', 'PLAID_PRODUCTION_SECRET'];
-  const missingPlaidVars = plaidVars.filter((key) => !process.env[key]);
+  if (isFeatureEnabled('plaid')) {
+    const plaidVars = ['PLAID_CLIENT_ID', 'PLAID_SANDBOX_SECRET', 'PLAID_PRODUCTION_SECRET'];
+    const missingPlaidVars = plaidVars.filter((key) => !process.env[key]);
 
-  if (missingPlaidVars.length > 0) {
-    console.error(`❌ Plaid API not fully configured: ${missingPlaidVars.join(', ')}`);
-    console.error('💡 Set PLAID_CLIENT_ID, PLAID_SANDBOX_SECRET, and PLAID_PRODUCTION_SECRET environment variables');
-    if (isProduction) process.exit(1);
+    if (missingPlaidVars.length > 0) {
+      console.error(`❌ Plaid API not fully configured: ${missingPlaidVars.join(', ')}`);
+      console.error('💡 Set PLAID_* secrets, or disable plaid in src/config/features.ts');
+      if (isProduction) process.exit(1);
+    }
   }
 
   // Stripe.
-  const stripeVars = ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'];
-  const missingStripeVars = stripeVars.filter((key) => !process.env[key]);
+  if (isFeatureEnabled('stripe')) {
+    const stripeVars = ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'];
+    const missingStripeVars = stripeVars.filter((key) => !process.env[key]);
 
-  if (missingStripeVars.length > 0) {
-    console.error(`❌ Stripe API not fully configured: ${missingStripeVars.join(', ')}`);
-    console.error('💡 Set STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET environment variables');
-    if (isProduction) process.exit(1);
+    if (missingStripeVars.length > 0) {
+      console.error(`❌ Stripe API not fully configured: ${missingStripeVars.join(', ')}`);
+      console.error('💡 Set STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET, or disable stripe in src/config/features.ts');
+      if (isProduction) process.exit(1);
+    }
   }
 
   // DeBank.
-  const debankVars = ['DEBANK_ACCESS_KEY'];
-  const missingDeBankVars = debankVars.filter((key) => !process.env[key]);
+  if (isFeatureEnabled('debank')) {
+    const debankVars = ['DEBANK_ACCESS_KEY'];
+    const missingDeBankVars = debankVars.filter((key) => !process.env[key]);
 
-  if (missingDeBankVars.length > 0) {
-    console.error(`❌ DeBank API not fully configured: ${missingDeBankVars.join(', ')}`);
-    console.error('💡 Set DEBANK_ACCESS_KEY environment variable');
-    if (isProduction) process.exit(1);
+    if (missingDeBankVars.length > 0) {
+      console.error(`❌ DeBank API not fully configured: ${missingDeBankVars.join(', ')}`);
+      console.error('💡 Set DEBANK_ACCESS_KEY, or disable debank in src/config/features.ts');
+      if (isProduction) process.exit(1);
+    }
   }
 
   // Privy (core login). Warn only so the process can still boot.
@@ -128,43 +138,47 @@ export function validateEnvironment(): void {
   }
 
   // Bridge on/off-ramp.
-  const bridgeVars = ['BRIDGE_API_KEY'];
-  const missingBridgeVars = bridgeVars.filter((key) => !process.env[key]);
+  if (isFeatureEnabled('bridge')) {
+    const bridgeVars = ['BRIDGE_API_KEY'];
+    const missingBridgeVars = bridgeVars.filter((key) => !process.env[key]);
 
-  if (missingBridgeVars.length > 0) {
-    console.error(`❌ Bridge API not fully configured: ${missingBridgeVars.join(', ')}`);
-    console.error('💡 Set BRIDGE_API_KEY (from the Bridge Dashboard) to enable on/off ramp');
-    if (isProduction) process.exit(1);
-  }
+    if (missingBridgeVars.length > 0) {
+      console.error(`❌ Bridge API not fully configured: ${missingBridgeVars.join(', ')}`);
+      console.error('💡 Set BRIDGE_API_KEY, or disable bridge in src/config/features.ts');
+      if (isProduction) process.exit(1);
+    }
 
-  // Webhook public key is optional; without it the webhook endpoint fail-closes.
-  if (!process.env.BRIDGE_WEBHOOK_PUBLIC_KEY) {
-    console.warn('⚠️ BRIDGE_WEBHOOK_PUBLIC_KEY not set — Bridge webhooks will be rejected until configured');
+    // Webhook public key is optional; without it the webhook endpoint fail-closes.
+    if (!process.env.BRIDGE_WEBHOOK_PUBLIC_KEY) {
+      console.warn('⚠️ BRIDGE_WEBHOOK_PUBLIC_KEY not set — Bridge webhooks will be rejected until configured');
+    }
   }
 
   // Dinari tokenized stocks.
-  const dinariVars = ['DINARI_API_KEY_ID', 'DINARI_API_SECRET_KEY'];
-  const missingDinariVars = dinariVars.filter((key) => !process.env[key]);
+  if (isFeatureEnabled('dinari')) {
+    const dinariVars = ['DINARI_API_KEY_ID', 'DINARI_API_SECRET_KEY'];
+    const missingDinariVars = dinariVars.filter((key) => !process.env[key]);
 
-  if (missingDinariVars.length > 0) {
-    console.error(`❌ Dinari API not fully configured: ${missingDinariVars.join(', ')}`);
-    console.error('💡 Set DINARI_API_KEY_ID / DINARI_API_SECRET_KEY (from partners.dinari.com) to enable tokenized stocks');
-    if (isProduction) process.exit(1);
-  }
+    if (missingDinariVars.length > 0) {
+      console.error(`❌ Dinari API not fully configured: ${missingDinariVars.join(', ')}`);
+      console.error('💡 Set DINARI_API_KEY_ID / DINARI_API_SECRET_KEY, or disable dinari in src/config/features.ts');
+      if (isProduction) process.exit(1);
+    }
 
-  // Payment token (e.g. USDC) required for orders.
-  if (!process.env.DINARI_PAYMENT_TOKEN_ADDRESS) {
-    console.warn('⚠️ DINARI_PAYMENT_TOKEN_ADDRESS not set — Dinari order placement will be rejected until configured');
-  }
-  if (!process.env.DINARI_WHITELIST_EMAILS && !process.env.DINARI_WHITELIST_DOMAINS) {
-    console.warn(
-      '⚠️ DINARI_WHITELIST_EMAILS / DINARI_WHITELIST_DOMAINS not set — only DEMO_USER_EMAILS can access Dinari Entity/KYC',
-    );
+    // Payment token (e.g. USDC) required for orders.
+    if (!process.env.DINARI_PAYMENT_TOKEN_ADDRESS) {
+      console.warn('⚠️ DINARI_PAYMENT_TOKEN_ADDRESS not set — Dinari order placement will be rejected until configured');
+    }
+    if (!process.env.DINARI_WHITELIST_EMAILS && !process.env.DINARI_WHITELIST_DOMAINS) {
+      console.warn(
+        '⚠️ DINARI_WHITELIST_EMAILS / DINARI_WHITELIST_DOMAINS not set — only DEMO_USER_EMAILS can access Dinari Entity/KYC',
+      );
+    }
   }
 
   // LI.FI Investor analytics; sync rejects until integrator is set.
   // Comma-separated: LIFI_INTEGRATOR=kura-ios,kura-android,kura-web
-  if (!process.env.LIFI_INTEGRATOR) {
+  if (isFeatureEnabled('lifiAnalytics') && !process.env.LIFI_INTEGRATOR) {
     console.warn(
       '⚠️ LIFI_INTEGRATOR not set — LI.FI transfer sync for Investor will be unavailable until configured',
     );
@@ -234,6 +248,7 @@ export function initializeEnv(): void {
   console.log('✅ DATABASE_URL configured');
 
   validateEnvironment();
+  logFeatureFlags();
 
   console.log(`✅ Environment initialized (NODE_ENV=${process.env.NODE_ENV})`);
 }

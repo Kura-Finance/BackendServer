@@ -52,8 +52,8 @@ Transfer ownership or create buyer accounts and cut over env vars:
 | Dinari | `DINARI_*` | Whitelist domains/emails via env |
 | DeBank | `DEBANK_ACCESS_KEY` | |
 | Resend | `RESEND_*` | Verify sending domain |
-| LI.FI | `LIFI_API_KEY`, `LIFI_INTEGRATOR` | Integrator name may stay `kura` or change |
-| Logo.dev | `LOGO_DEV_TOKEN` | |
+| LI.FI | `LIFI_INTEGRATOR` (+ optional `LIFI_API_KEY`) | Public API works without key; key only raises limits |
+| Logo.dev | `LOGO_DEV_TOKEN` | Optional; default logos are free public (see [API_KEYS.md](API_KEYS.md)) |
 
 - [ ] Point all partner webhooks at the post-cutover API hostname.
 - [ ] Revoke seller API keys after buyer keys are live.
@@ -85,7 +85,9 @@ Transfer ownership or create buyer accounts and cut over env vars:
 ## 8. GitHub Secrets / Variables inventory
 
 **Secrets (typical):**  
-`GCP_PROJECT_ID`, `GCP_SA_KEY`, `DB_PASSWORD`, `JWT_SECRET`, `ENCRYPTION_KEY`, `PLAID_CLIENT_ID`, `PLAID_PRODUCTION_SECRET`, `PLAID_REDIRECT_URI`, `PLAID_WEBHOOK_URL`, `LOGO_DEV_PUBLISHABLE_KEY`, `ALLOWED_ORIGINS`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `APP_NAME`, `APP_URL`, `DEBANK_ACCESS_KEY`, `STRIPE_*`, `BRIDGE_API_KEY`, `BRIDGE_WEBHOOK_PUBLIC_KEY`, `DINARI_API_KEY_ID`, `DINARI_API_SECRET_KEY`, `PRIVY_*`, `LIFI_API_KEY`.
+`GCP_PROJECT_ID`, `GCP_SA_KEY`, `DB_PASSWORD`, `JWT_SECRET`, `ENCRYPTION_KEY`, `PLAID_CLIENT_ID`, `PLAID_PRODUCTION_SECRET`, `PLAID_REDIRECT_URI`, `PLAID_WEBHOOK_URL`, `ALLOWED_ORIGINS`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `APP_NAME`, `APP_URL`, `DEBANK_ACCESS_KEY`, `STRIPE_*`, `BRIDGE_API_KEY`, `BRIDGE_WEBHOOK_PUBLIC_KEY`, `DINARI_API_KEY_ID`, `DINARI_API_SECRET_KEY`, `PRIVY_*`.
+
+Optional: `LIFI_API_KEY`, `LOGO_DEV_PUBLISHABLE_KEY` → `LOGO_DEV_TOKEN` (not injected by default deploy).
 
 **Variables (optional):**  
 `BRIDGE_FEE_CONFIG_ENABLED`, `ADMIN_EMAIL`, `SUPPORT_EMAIL`, `PLAID_SANDBOX_USER_IDS`, `DINARI_WHITELIST_DOMAINS`, `DINARI_WHITELIST_EMAILS`, `APPLE_APP_ID`, `ANDROID_PACKAGE_NAME`, `ANDROID_SHA256_CERT_FINGERPRINTS`.
