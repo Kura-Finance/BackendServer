@@ -13,10 +13,9 @@
 | [API.zh-TW.md](API.zh-TW.md) | HTTP 掛載與存取規則 |
 | [ENVIRONMENT.zh-TW.md](ENVIRONMENT.zh-TW.md) | 環境變數目錄 |
 | [API_KEYS.zh-TW.md](API_KEYS.zh-TW.md) | 夥伴 API Key vs 免費公用端點 |
-| [SECRETS.zh-TW.md](SECRETS.zh-TW.md) | GitHub Secrets／Variables（只留功能用） |
 | [SECRETS.zh-TW.md](SECRETS.zh-TW.md) | GitHub Secrets vs Variables — 保留／可刪 |
 | [OPERATIONS.zh-TW.md](OPERATIONS.zh-TW.md) | 本地、Docker、Cloud Run、migration |
-| [SECURITY.zh-TW.md](SECURITY.zh-TW.md) | 認證、E2EE、密鑰、webhook |
+| [SECURITY.zh-TW.md](SECURITY.zh-TW.md) | 認證、E2EE、密鑰、webhook、漏洞回報 |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | 貢獻指南 |
 
 ## 法律

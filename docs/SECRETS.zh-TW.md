@@ -31,6 +31,6 @@
 
 ## 可從 GitHub 刪除
 
-`APP_NAME`、`APP_URL`、`APP_UPGRADE_URL`、`DEMO_BASE_URL`、`SUPPORT_EMAIL`、`LOGO_DEV_*`，以及 `FEATURES` 關閉之夥伴金鑰。
+`APP_NAME`、`APP_URL`、`APP_UPGRADE_URL`、`DEMO_BASE_URL`、`SUPPORT_EMAIL`、`LOGO_DEV_*`、`DATABASE_URL`、`DIDIT_*`、`GNOSIS_PAY_*`、`LITHIC_*`，以及 `FEATURES` 關閉之夥伴金鑰。值若應為 Variable 卻存在 Secret，搬完後刪掉 Secret 副本。
 
 完整表見 [SECRETS.md](SECRETS.md)。

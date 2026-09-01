@@ -27,6 +27,12 @@ See [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) and [docs/API_KEYS.md](docs/API_K
 2. Note how you tested (e.g. `npm run build`, hit `/health`).
 3. Avoid bundling unrelated refactors.
 
+CI runs `npx prisma generate` and `npm run build` on pull requests.
+
+## Security
+
+Report vulnerabilities privately — see [docs/SECURITY.md](docs/SECURITY.md). Do not open a public issue for sensitive reports.
+
 ## License
 
 By contributing, you agree your contributions are licensed under the MIT License (see [LICENSE](LICENSE)).

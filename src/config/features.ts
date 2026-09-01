@@ -36,6 +36,7 @@ export type CoreFeatureName = (typeof CORE_FEATURES)[number];
 
 /**
  * Toggle optional domains here (true = mount routes + require partner keys).
+ * This map is Kura production. Forks: disable domains you do not have keys for.
  */
 export const FEATURES: Record<FeatureName, boolean> = {
   email: true,
@@ -46,7 +47,7 @@ export const FEATURES: Record<FeatureName, boolean> = {
   stripe: true,
   wallet: true,
   treasury: true,
-  bridge: false,
+  bridge: true,
   dinari: true,
   waitlist: true,
   platformInsights: true,

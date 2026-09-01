@@ -40,7 +40,9 @@ docker run --env-file .env.production -p 8080:8080 kura-backend
 
 Secrets vs Variables（保留／可刪／應改 Variables）：**[SECRETS.zh-TW.md](SECRETS.zh-TW.md)**。完整目錄：[ENVIRONMENT.zh-TW.md](ENVIRONMENT.zh-TW.md)。
 
-Deploy 預設只注入**核心 + Privy + WebAuthn**。開啟 [`src/config/features.ts`](../src/config/features.ts) 對應 domain 時，再把夥伴金鑰加回 workflow。
+正式環境的主機名、Cloud SQL instance、WebAuthn origins 等**不可**寫死在 workflow（公開後人人可見）。請設為 GitHub Variables。
+
+本倉庫 workflow 注入**核心 + Privy + WebAuthn**，以及 [`src/config/features.ts`](../src/config/features.ts) 目前開啟之 domain 夥伴金鑰。Fork 請依自己的 flags 刪減 `env_vars`。`vars.X || secrets.X` 在值從 Secret 搬到 Variable 前仍可用。
 
 ## Migrations／日誌／擴展
 

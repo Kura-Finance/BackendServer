@@ -13,10 +13,9 @@ Product: **Kura** · Repo: open-source backend API
 | [API.md](API.md) | HTTP mounts and access rules |
 | [ENVIRONMENT.md](ENVIRONMENT.md) | Environment variable catalog |
 | [API_KEYS.md](API_KEYS.md) | Partner API keys vs free public endpoints |
-| [SECRETS.md](SECRETS.md) | GitHub Secrets / Variables (functional only) |
 | [SECRETS.md](SECRETS.md) | GitHub Secrets vs Variables — what to keep / delete |
 | [OPERATIONS.md](OPERATIONS.md) | Local, Docker, Cloud Run, migrations |
-| [SECURITY.md](SECURITY.md) | Auth, E2EE, secrets, webhooks |
+| [SECURITY.md](SECURITY.md) | Auth, E2EE, secrets, webhooks, vulnerability reporting |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | How to contribute |
 
 ## Legal

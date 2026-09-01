@@ -49,20 +49,25 @@ On push to `main` or `develop`:
 
 ### Required GitHub Variables
 
+Production hostnames, Cloud SQL instance, WebAuthn origins, and similar **must not** be hardcoded in the workflow (they would be public). Set them as Variables:
+
 | Variable | Example |
 |----------|---------|
+| `GCP_PROJECT_ID` | GCP project id |
 | `GCP_REGION` | `us-central1` |
 | `CLOUD_RUN_SERVICE` | `kura-backend` |
 | `CLOUD_SQL_INSTANCE` | `PROJECT:REGION:INSTANCE` |
 | `DB_USER` / `DB_NAME` / `DB_SCHEMA` | DB connection |
+| `ALLOWED_ORIGINS` | CORS origins (CSV) |
 | `LIFI_INTEGRATOR` | integrator name(s) |
 | `WEBAUTHN_RP_ID` / `WEBAUTHN_RP_NAME` / `WEBAUTHN_ORIGIN` / `WEBAUTHN_RELATED_ORIGINS` | Passkeys |
-| `APPLE_APP_ID` / `ANDROID_PACKAGE_NAME` / `ANDROID_SHA256_CERT_FINGERPRINTS` | Mobile associated domains |
+| `DINARI_ENVIRONMENT` / `DINARI_CHAIN_ID` | When `FEATURES.dinari` |
+| `APPLE_APP_ID` / `ANDROID_PACKAGE_NAME` / `ANDROID_SHA256_CERT_FINGERPRINTS` | Mobile associated domains (optional) |
 | `ADMIN_EMAIL` | Admin allowlist / fraud mail |
 
 Secrets vs Variables (what to keep / delete / move): **[SECRETS.md](SECRETS.md)**. Full catalog: [ENVIRONMENT.md](ENVIRONMENT.md).
 
-Deploy injects **core + Privy + WebAuthn** only. Partner keys are added to the workflow when you enable the matching domain in [`src/config/features.ts`](../src/config/features.ts).
+This repo’s workflow injects **core + Privy + WebAuthn** plus partner keys for domains currently enabled in [`src/config/features.ts`](../src/config/features.ts). Forks should trim `env_vars` to match their flags. `vars.X || secrets.X` keeps working until a value is moved from Secrets to Variables.
 
 ## Migrations
 

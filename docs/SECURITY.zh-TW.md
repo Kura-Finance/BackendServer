@@ -4,6 +4,12 @@
 
 盡職調查用高層說明，非正式滲透測試報告。
 
+## 回報漏洞
+
+請**不要**用公開 GitHub issue 回報安全問題。
+
+請使用本倉庫的 [私下漏洞回報](https://github.com/Kura-Finance/BackendServer/security/advisories/new)（GitHub Security Advisories）。請附重現步驟與受影響版本。
+
 ## 身分與 session
 
 - **Privy** 驗證終端身分；本 API 簽發自有 **JWT**（`JWT_SECRET`）。
@@ -31,6 +37,7 @@
 ## 密鑰與維運
 
 - 密鑰在 GitHub Actions／Cloud Run — 切勿提交 `.env*`（僅追蹤 `.env.example`）。
+- 正式環境主機名與 Cloud SQL instance 應放 GitHub **Variables**，不要寫進 workflow YAML。
 - 目錄：[ENVIRONMENT.zh-TW.md](ENVIRONMENT.zh-TW.md) · 夥伴清單：[API_KEYS.zh-TW.md](API_KEYS.zh-TW.md)。
 - 於夥伴後台輪替後，更新 Secrets／Variables 並重新部署。
 

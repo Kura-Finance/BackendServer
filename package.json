@@ -13,6 +13,14 @@
   "keywords": ["finance", "express", "prisma", "plaid", "bridge"],
   "author": "Kura Finance LLC",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kura-Finance/BackendServer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Kura-Finance/BackendServer/issues"
+  },
+  "homepage": "https://github.com/Kura-Finance/BackendServer#readme",
   "type": "commonjs",
   "dependencies": {
     "@dinari/api-sdk": "^0.14.0",

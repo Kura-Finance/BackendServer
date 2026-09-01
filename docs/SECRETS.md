@@ -76,6 +76,8 @@ Enable a domain in `features.ts`, then add matching `env_vars` lines in `deploy.
 | `SUPPORT_EMAIL` | Uses `ADMIN_EMAIL` |
 | `LOGO_DEV_*` | Free public logos; not injected |
 | Partner keys for `FEATURES.* === false` | Domain unmounted |
+| `DATABASE_URL` | Built at boot from `DB_*` |
+| `DIDIT_*` / `GNOSIS_PAY_*` / `LITHIC_*` | Removed domains; not referenced |
 | Anything above stored as Secret that belongs in Variables | Move, then delete Secret copy |
 
 Domains with no partner keys (`exchange`, `notifications`, `wallet`, `treasury`, `waitlist`, `platformInsights`, `admin`): no extra Secrets beyond core + `ADMIN_EMAIL` for admin.

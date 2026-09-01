@@ -157,4 +157,4 @@ Without whitelist env vars, only demo emails (`DEMO_USER_EMAILS` / demo helpers)
 
 ## GitHub Actions mapping
 
-Production values are injected in [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml). Core + Privy only by default — see **[SECRETS.md](SECRETS.md)** for what belongs in Secrets vs Variables and what you can delete.
+Production values are injected in [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) from GitHub **Variables** (infra / public config) and **Secrets** (credentials). See **[SECRETS.md](SECRETS.md)** for what belongs where and what you can delete.

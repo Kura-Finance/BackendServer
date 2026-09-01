@@ -157,4 +157,4 @@ GitHub 清單：[SECRETS.zh-TW.md](SECRETS.zh-TW.md)。
 
 ## GitHub Actions 對應
 
-正式環境值由 [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) 自 GitHub **Secrets**／**Variables** 注入。可選變數含 `ADMIN_EMAIL`、`SUPPORT_EMAIL`、`PLAID_SANDBOX_USER_IDS`、`DINARI_WHITELIST_*`，以及行動裝置 well-known 覆寫。
+正式環境值由 [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) 自 GitHub **Variables**（基礎建設／公開設定）與 **Secrets**（憑證）注入。見 **[SECRETS.zh-TW.md](SECRETS.zh-TW.md)**。可選變數含 `ADMIN_EMAIL`、`PLAID_SANDBOX_USER_IDS`、`DINARI_WHITELIST_*`，以及行動裝置 well-known。
