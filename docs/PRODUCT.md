@@ -2,7 +2,7 @@
 
 [繁體中文](PRODUCT.zh-TW.md)
 
-**Kura** is a multi-asset personal finance application. This repository is the **backend API** owned by **Kura Finance LLC**.
+**Kura** is a multi-asset personal finance application. This repository is the **backend API** owned by **Prism Capital LLC**.
 
 ## What it does
 

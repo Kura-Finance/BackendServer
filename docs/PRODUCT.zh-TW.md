@@ -2,7 +2,7 @@
 
 [English](PRODUCT.md)
 
-**Kura** 是多資產個人理財應用。本儲存庫為其 **後端 API**，著作權人為 **Kura Finance LLC**。
+**Kura** 是多資產個人理財應用。本儲存庫為其 **後端 API**，著作權人為 **Prism Capital LLC**。
 
 ## 能力
 

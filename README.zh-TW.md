@@ -8,7 +8,7 @@
 
 ## 授權
 
-[MIT](LICENSE) · Copyright © 2024–2026 Kura Finance LLC
+[MIT](LICENSE) · Copyright © 2024–2026 Prism Capital LLC
 
 第三方聲明：[docs/legal/THIRD_PARTY_NOTICES.zh-TW.md](docs/legal/THIRD_PARTY_NOTICES.zh-TW.md)
 
