@@ -8,7 +8,7 @@ Stack: Node.js 24, TypeScript, Express 5, Prisma, PostgreSQL. Deploy target: Goo
 
 ## License
 
-[MIT](LICENSE) · Copyright © 2024–2026 Prism Capital LLC
+[MIT](LICENSE) · Copyright © 2024–2026 Rick Weng
 
 Third-party notices: [docs/legal/THIRD_PARTY_NOTICES.md](docs/legal/THIRD_PARTY_NOTICES.md)
 
