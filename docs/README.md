@@ -15,6 +15,7 @@ Product: **Kura** · Repo: open-source backend API
 | [API_KEYS.md](API_KEYS.md) | Partner API keys vs free public endpoints |
 | [SECRETS.md](SECRETS.md) | GitHub Secrets vs Variables — what to keep / delete |
 | [OPERATIONS.md](OPERATIONS.md) | Local, Docker, Cloud Run, migrations |
+| [../infra/gcp-migration/README.md](../infra/gcp-migration/README.md) | Back up and rebuild the GCP stack in another project |
 | [SECURITY.md](SECURITY.md) | Auth, E2EE, secrets, webhooks, vulnerability reporting |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | How to contribute |
 

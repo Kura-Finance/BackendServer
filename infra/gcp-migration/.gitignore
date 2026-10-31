@@ -1,0 +1,7 @@
+# Local migration state — contains SQL dumps, service-account keys and
+# plaintext env vars exported from Cloud Run. Never commit.
+backups/
+config.env
+*.sql
+*.sql.gz
+*-key.json

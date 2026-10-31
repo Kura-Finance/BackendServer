@@ -2,3 +2,5 @@ node_modules
 dist
 .env
 .git
+# Ops tooling (not part of the image)
+infra/

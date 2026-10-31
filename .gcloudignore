@@ -54,3 +54,6 @@ CONTRIBUTING.md
 # Tooling
 .prettierrc
 .eslintrc
+
+# Ops tooling
+infra/

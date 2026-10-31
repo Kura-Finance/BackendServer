@@ -15,6 +15,7 @@
 | [API_KEYS.zh-TW.md](API_KEYS.zh-TW.md) | 夥伴 API Key vs 免費公用端點 |
 | [SECRETS.zh-TW.md](SECRETS.zh-TW.md) | GitHub Secrets vs Variables — 保留／可刪 |
 | [OPERATIONS.zh-TW.md](OPERATIONS.zh-TW.md) | 本地、Docker、Cloud Run、migration |
+| [../infra/gcp-migration/README.zh-TW.md](../infra/gcp-migration/README.zh-TW.md) | 備份並在另一個 GCP 專案重建 |
 | [SECURITY.zh-TW.md](SECURITY.zh-TW.md) | 認證、E2EE、密鑰、webhook、漏洞回報 |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | 貢獻指南 |
 

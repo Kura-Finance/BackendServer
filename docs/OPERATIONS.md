@@ -69,6 +69,16 @@ Secrets vs Variables (what to keep / delete / move): **[SECRETS.md](SECRETS.md)*
 
 This repo’s workflow injects **core + Privy + WebAuthn** plus partner keys for domains currently enabled in [`src/config/features.ts`](../src/config/features.ts). Forks should trim `env_vars` to match their flags. `vars.X || secrets.X` keeps working until a value is moved from Secrets to Variables.
 
+## Moving to another GCP project (e.g. "No organization")
+
+A project cannot be moved out of an organization. To relocate the stack, back
+it up and rebuild it with the scripts in
+[`infra/gcp-migration/`](../infra/gcp-migration/README.md): SQL export/import,
+image copy into a `gcr.io`-compatible Artifact Registry repo, Cloud Run redeploy
+with the exported env vars, a new deploy service account, and a helper that
+repoints the GitHub Variables/Secrets. The deploy workflow itself needs no
+change — only `GCP_PROJECT_ID`, `CLOUD_SQL_INSTANCE` and `GCP_SA_KEY`.
+
 ## Migrations
 
 - Author migrations with `npx prisma migrate dev --name <name>` in development.

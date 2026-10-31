@@ -44,6 +44,14 @@ Secrets vs Variables（保留／可刪／應改 Variables）：**[SECRETS.zh-TW.
 
 本倉庫 workflow 注入**核心 + Privy + WebAuthn**，以及 [`src/config/features.ts`](../src/config/features.ts) 目前開啟之 domain 夥伴金鑰。Fork 請依自己的 flags 刪減 `env_vars`。`vars.X || secrets.X` 在值從 Secret 搬到 Variable 前仍可用。
 
+## 搬到另一個 GCP 專案（例如「No organization」）
+
+GCP 專案無法從組織底下搬出。要搬遷整套服務，請用
+[`infra/gcp-migration/`](../infra/gcp-migration/README.zh-TW.md) 的腳本備份後重建：
+SQL 匯出／匯入、映像複製到相容 `gcr.io` 的 Artifact Registry repo、以匯出的環境變數重新部署 Cloud Run、
+建立新的部署服務帳戶，以及一個改寫 GitHub Variables／Secrets 的輔助腳本。
+deploy workflow 本身不用改，只需更新 `GCP_PROJECT_ID`、`CLOUD_SQL_INSTANCE`、`GCP_SA_KEY`。
+
 ## Migrations／日誌／擴展
 
 見英文版 [OPERATIONS.md](OPERATIONS.md)。
