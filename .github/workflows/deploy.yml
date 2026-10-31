@@ -12,6 +12,7 @@ on:
       - 'LICENSE.zh-TW.md'
       - '.gitignore'
       - '.gcloudignore'
+      - 'infra/**'
       - '.cursor/**'
       - '.vscode/**'
 

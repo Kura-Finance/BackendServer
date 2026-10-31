@@ -185,8 +185,33 @@ if run_step sql; then
         --member "serviceAccount:$sa_email" --role roles/storage.objectViewer --quiet >/dev/null
       info "Importing into $DST_SQL_INSTANCE/$DB_NAME (as postgres)"
       $G sql import sql "$DST_SQL_INSTANCE" "$obj" --database "$DB_NAME" --user postgres
-      date -u +%Y-%m-%dT%H:%M:%SZ > "$marker"
       ok "Import complete"
+      # The import ran as postgres, so every object is owned by postgres and the
+      # app user cannot even read them. Hand ownership of the schema to DB_USER.
+      if [ "$DB_USER" != "postgres" ]; then
+        fix="$DST_STATE/fix-owner.sql"
+        cat > "$fix" <<SQL
+GRANT "$DB_USER" TO postgres;
+DO \$\$ DECLARE r record; BEGIN
+  FOR r IN SELECT tablename AS n FROM pg_tables WHERE schemaname='$DB_SCHEMA' LOOP
+    EXECUTE format('ALTER TABLE $DB_SCHEMA.%I OWNER TO "$DB_USER"', r.n); END LOOP;
+  FOR r IN SELECT sequencename AS n FROM pg_sequences WHERE schemaname='$DB_SCHEMA' LOOP
+    EXECUTE format('ALTER SEQUENCE $DB_SCHEMA.%I OWNER TO "$DB_USER"', r.n); END LOOP;
+  FOR r IN SELECT viewname AS n FROM pg_views WHERE schemaname='$DB_SCHEMA' LOOP
+    EXECUTE format('ALTER VIEW $DB_SCHEMA.%I OWNER TO "$DB_USER"', r.n); END LOOP;
+  FOR r IN SELECT t.typname AS n FROM pg_type t JOIN pg_namespace ns ON ns.oid=t.typnamespace WHERE ns.nspname='$DB_SCHEMA' AND t.typtype='e' LOOP
+    EXECUTE format('ALTER TYPE $DB_SCHEMA.%I OWNER TO "$DB_USER"', r.n); END LOOP;
+  FOR r IN SELECT p.proname AS n, pg_get_function_identity_arguments(p.oid) AS a FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamespace WHERE ns.nspname='$DB_SCHEMA' LOOP
+    EXECUTE format('ALTER FUNCTION $DB_SCHEMA.%I(%s) OWNER TO "$DB_USER"', r.n, r.a); END LOOP;
+END \$\$;
+GRANT ALL ON SCHEMA $DB_SCHEMA TO "$DB_USER";
+SQL
+        fixobj="gs://$DST_BUCKET/sql/$(basename "$BACKUP_DIR")/fix-owner.sql"
+        gcloud storage cp "$fix" "$fixobj" --quiet
+        $G sql import sql "$DST_SQL_INSTANCE" "$fixobj" --database "$DB_NAME" --user postgres
+        ok "Ownership of $DB_SCHEMA objects transferred to $DB_USER"
+      fi
+      date -u +%Y-%m-%dT%H:%M:%SZ > "$marker"
     fi
     ok "Connection name: $DST_SQL_CONN"
   fi

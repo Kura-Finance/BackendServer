@@ -27,6 +27,7 @@ set -a; . "$CONFIG_FILE"; set +a
 REGION="${REGION:-us-central1}"
 DB_NAME="${DB_NAME:-kura_db}"
 DB_USER="${DB_USER:-postgres}"
+DB_SCHEMA="${DB_SCHEMA:-public}"
 BACKUP_ROOT="${BACKUP_ROOT:-$SCRIPT_DIR/backups}"
 case "$BACKUP_ROOT" in /*) ;; *) BACKUP_ROOT="$SCRIPT_DIR/$BACKUP_ROOT" ;; esac
 SAVE_IMAGES="${SAVE_IMAGES:-true}"
