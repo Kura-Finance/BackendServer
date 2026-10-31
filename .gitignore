@@ -25,3 +25,5 @@ Thumbs.db
 .cursorrules
 
 scripts/pse/certs/
+# Claude Code local permissions
+.claude/settings.local.json

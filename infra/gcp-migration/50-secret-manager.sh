@@ -58,8 +58,13 @@ for key in $SECRET_KEYS; do
   fi
   if [ -z "$val" ]; then warn "$key: empty — not created"; continue; fi
   if $G secrets describe "$key" >/dev/null 2>&1; then
-    printf '%s' "$val" | $G secrets versions add "$key" --data-file=- >/dev/null
-    ok "$key: new version added ($src)"
+    cur="$($G secrets versions access latest --secret "$key" 2>/dev/null || true)"
+    if [ "$cur" = "$val" ]; then
+      ok "$key: unchanged"
+    else
+      printf '%s' "$val" | $G secrets versions add "$key" --data-file=- >/dev/null
+      ok "$key: new version added ($src)"
+    fi
   else
     printf '%s' "$val" | $G secrets create "$key" --replication-policy=automatic --data-file=- >/dev/null
     ok "$key: created ($src)"
@@ -83,12 +88,14 @@ for k in "${REMOVE[@]}" "${GARBAGE[@]}"; do grep -qxF -- "$k" <<<"$LIVE_KEYS" &&
 info "removing ${#TO_REMOVE[@]} env var(s) (${#GARBAGE[@]} malformed), binding ${#SET_SECRETS[@]} secret(s)"
 # --remove-env-vars is comma-separated; malformed keys may contain commas, so
 # remove those one at a time via the YAML path instead.
+# Remove and bind in ONE revision, otherwise the intermediate revision has no
+# JWT_SECRET/DB_PASSWORD and fails to start.
 SAFE_REMOVE=(); for k in "${TO_REMOVE[@]}"; do case "$k" in *,*) ;; *) SAFE_REMOVE+=("$k");; esac; done
-if [ "${#SAFE_REMOVE[@]}" -gt 0 ]; then
-  $G run services update "$SERVICE" --region "$REGION" --remove-env-vars "$(IFS=,; echo "${SAFE_REMOVE[*]}")" >/dev/null
-fi
-if [ "${#SET_SECRETS[@]}" -gt 0 ]; then
-  $G run services update "$SERVICE" --region "$REGION" --set-secrets "$(IFS=,; echo "${SET_SECRETS[*]}")" >/dev/null
+UPDATE_FLAGS=()
+[ "${#SAFE_REMOVE[@]}" -gt 0 ] && UPDATE_FLAGS+=(--remove-env-vars "$(IFS=,; echo "${SAFE_REMOVE[*]}")")
+[ "${#SET_SECRETS[@]}" -gt 0 ] && UPDATE_FLAGS+=(--update-secrets "$(IFS=,; echo "${SET_SECRETS[*]}")")
+if [ "${#UPDATE_FLAGS[@]}" -gt 0 ]; then
+  $G run services update "$SERVICE" --region "$REGION" "${UPDATE_FLAGS[@]}" >/dev/null
 fi
 # Keys containing commas: strip through a YAML round-trip.
 COMMA_KEYS=(); for k in "${TO_REMOVE[@]}"; do case "$k" in *,*) COMMA_KEYS+=("$k");; esac; done

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Shared helpers for the GCP migration scripts. Source, do not execute.
 set -euo pipefail
+# A stale CLOUDSDK_AUTH_ACCESS_TOKEN in the environment overrides `gcloud auth login`.
+unset CLOUDSDK_AUTH_ACCESS_TOKEN
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${CONFIG_FILE:-$SCRIPT_DIR/config.env}"
