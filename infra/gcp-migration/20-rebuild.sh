@@ -267,9 +267,10 @@ if run_step run; then
       --out-env "$env_file" --out-flags "$flags_file" >/dev/null
     chmod 600 "$env_file"
     mapfile -t flags < "$flags_file"
+    # gcloud rejects an empty --env-vars-file; services with no env vars skip it.
+    if [ -s "$env_file" ]; then flags+=(--env-vars-file "$env_file"); fi
     info "Deploying $svc in $REGION (source region was $src_region)"
-    $G run deploy "$svc" --image "$image" --region "$REGION" --platform managed \
-      --env-vars-file "$env_file" "${flags[@]}"
+    $G run deploy "$svc" --image "$image" --region "$REGION" --platform managed "${flags[@]}"
     if grep -q '"allUsers"' "$BACKUP_DIR/run/$svc.iam.json"; then
       $G run services add-iam-policy-binding "$svc" --region "$REGION" \
         --member allUsers --role roles/run.invoker >/dev/null
