@@ -15,18 +15,15 @@ on:
       - '.cursor/**'
       - '.vscode/**'
 
-# Infra / public config: GitHub Variables (never hardcode production IDs here).
-# Credentials: GitHub Secrets.
-# `vars.X || secrets.X` keeps working until a Secret is copied to a Variable.
-#
-# Required Variables: GCP_PROJECT_ID, GCP_REGION, CLOUD_RUN_SERVICE,
-#   CLOUD_SQL_INSTANCE, DB_USER, DB_NAME, DB_SCHEMA, ALLOWED_ORIGINS,
-#   WEBAUTHN_RP_ID, WEBAUTHN_RP_NAME, WEBAUTHN_ORIGIN, WEBAUTHN_RELATED_ORIGINS
-# Optional Variables: ADMIN_EMAIL, LIFI_INTEGRATOR, DINARI_ENVIRONMENT,
-#   DINARI_CHAIN_ID, APPLE_APP_ID, ANDROID_PACKAGE_NAME,
-#   ANDROID_SHA256_CERT_FINGERPRINTS
-# Partner env_vars below match FEATURES in src/config/features.ts.
-# Enable a domain there, then add its lines here (see docs/SECRETS.md).
+# Deploy model
+#   GitHub Variables : where to deploy (project, region, service, Cloud SQL, DB name/user).
+#   GitHub Secrets   : GCP_SA_KEY only (deploy identity).
+#   Secret Manager   : every credential, bound below via `secrets:` (see docs/SECRETS.md).
+#   Cloud Run service: all other runtime config (ALLOWED_ORIGINS, WEBAUTHN_*, partner
+#                      URLs/IDs). `gcloud run deploy --image` keeps it between deploys;
+#                      change it with `gcloud run services update --update-env-vars`.
+# Secrets listed under `secrets:` must exist in Secret Manager
+# (infra/gcp-migration/50-secret-manager.sh creates them from a running service).
 env:
   PROJECT_ID: ${{ vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID }}
   REGION: ${{ vars.GCP_REGION || secrets.GCP_REGION }}
@@ -49,9 +46,6 @@ jobs:
         uses: actions/checkout@v4.1.7
 
       - name: Check required deploy config
-        env:
-          WEBAUTHN_RP_ID: ${{ vars.WEBAUTHN_RP_ID }}
-          WEBAUTHN_ORIGIN: ${{ vars.WEBAUTHN_ORIGIN }}
         run: |
           missing=0
           check() {
@@ -66,8 +60,6 @@ jobs:
           check CLOUD_SQL_INSTANCE "$DB_INSTANCE_NAME"
           check DB_USER "$DB_USER"
           check DB_NAME "$DB_NAME"
-          check WEBAUTHN_RP_ID "$WEBAUTHN_RP_ID"
-          check WEBAUTHN_ORIGIN "$WEBAUTHN_ORIGIN"
           exit "$missing"
 
       - name: Authenticate to Google Cloud
@@ -90,9 +82,9 @@ jobs:
         run: npm ci
 
       - name: Run Prisma migrations
-        env:
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
+          DB_PASSWORD="$(gcloud secrets versions access latest --secret=DB_PASSWORD --project "$PROJECT_ID")"
+          export DB_PASSWORD
           curl -fsSL -o cloud-sql-proxy "https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.3/cloud-sql-proxy.linux.amd64"
           chmod +x cloud-sql-proxy
           ./cloud-sql-proxy ${{ env.DB_INSTANCE_NAME }} --port 5432 &
@@ -117,22 +109,6 @@ jobs:
           docker push gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
           docker push gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:latest
 
-      # gcloud --set-env-vars is comma-separated; escape commas in CSV values.
-      - name: Escape comma-separated Cloud Run values
-        env:
-          ALLOWED_ORIGINS_RAW: ${{ vars.ALLOWED_ORIGINS || secrets.ALLOWED_ORIGINS }}
-          WEBAUTHN_ORIGIN_RAW: ${{ vars.WEBAUTHN_ORIGIN }}
-          WEBAUTHN_RELATED_ORIGINS_RAW: ${{ vars.WEBAUTHN_RELATED_ORIGINS }}
-          LIFI_INTEGRATOR_RAW: ${{ vars.LIFI_INTEGRATOR }}
-        run: |
-          escape() { printf '%s' "$1" | sed 's/,/\\,/g'; }
-          {
-            echo "ALLOWED_ORIGINS_ESC=$(escape "$ALLOWED_ORIGINS_RAW")"
-            echo "WEBAUTHN_ORIGIN_ESC=$(escape "$WEBAUTHN_ORIGIN_RAW")"
-            echo "WEBAUTHN_RELATED_ORIGINS_ESC=$(escape "$WEBAUTHN_RELATED_ORIGINS_RAW")"
-            echo "LIFI_INTEGRATOR_ESC=$(escape "$LIFI_INTEGRATOR_RAW")"
-          } >> "$GITHUB_ENV"
-
       - name: Deploy to Cloud Run
         uses: 'google-github-actions/deploy-cloudrun@v2'
         with:
@@ -140,46 +116,34 @@ jobs:
           region: ${{ env.REGION }}
           image: gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
           flags: --add-cloudsql-instances=${{ env.DB_INSTANCE_NAME }} --allow-unauthenticated --port=8080 --memory=512Mi --cpu=1 --timeout=3600
+          # Only the DB wiring is managed here; everything else stays on the service.
           env_vars: |-
             NODE_ENV=production
             DB_HOST=/cloudsql/${{ env.DB_INSTANCE_NAME }}
             DB_PORT=5432
             DB_USER=${{ env.DB_USER }}
-            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
             DB_NAME=${{ env.DB_NAME }}
             DB_SCHEMA=${{ env.DB_SCHEMA }}
-            JWT_SECRET=${{ secrets.JWT_SECRET }}
-            ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
-            ALLOWED_ORIGINS=${{ env.ALLOWED_ORIGINS_ESC }}
-            PRIVY_APP_ID=${{ secrets.PRIVY_APP_ID }}
-            PRIVY_APP_SECRET=${{ secrets.PRIVY_APP_SECRET }}
-            PRIVY_VERIFICATION_KEY=${{ secrets.PRIVY_VERIFICATION_KEY }}
-            WEBAUTHN_RP_ID=${{ vars.WEBAUTHN_RP_ID }}
-            WEBAUTHN_RP_NAME=${{ vars.WEBAUTHN_RP_NAME }}
-            WEBAUTHN_ORIGIN=${{ env.WEBAUTHN_ORIGIN_ESC }}
-            WEBAUTHN_RELATED_ORIGINS=${{ env.WEBAUTHN_RELATED_ORIGINS_ESC }}
-            ADMIN_EMAIL=${{ vars.ADMIN_EMAIL || secrets.ADMIN_EMAIL }}
-            RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
-            RESEND_FROM_EMAIL=${{ vars.RESEND_FROM_EMAIL || secrets.RESEND_FROM_EMAIL }}
-            PLAID_CLIENT_ID=${{ secrets.PLAID_CLIENT_ID }}
-            PLAID_PRODUCTION_SECRET=${{ secrets.PLAID_PRODUCTION_SECRET }}
-            PLAID_REDIRECT_URI=${{ vars.PLAID_REDIRECT_URI || secrets.PLAID_REDIRECT_URI }}
-            PLAID_WEBHOOK_URL=${{ vars.PLAID_WEBHOOK_URL || secrets.PLAID_WEBHOOK_URL }}
-            DEBANK_ACCESS_KEY=${{ secrets.DEBANK_ACCESS_KEY }}
-            STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
-            STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
-            STRIPE_PRICE_PRO_MONTHLY=${{ vars.STRIPE_PRICE_PRO_MONTHLY || secrets.STRIPE_PRICE_PRO_MONTHLY }}
-            STRIPE_PRICE_PRO_YEARLY=${{ vars.STRIPE_PRICE_PRO_YEARLY || secrets.STRIPE_PRICE_PRO_YEARLY }}
-            STRIPE_PRICE_ULTIMATE_MONTHLY=${{ vars.STRIPE_PRICE_ULTIMATE_MONTHLY || secrets.STRIPE_PRICE_ULTIMATE_MONTHLY }}
-            STRIPE_PRICE_ULTIMATE_YEARLY=${{ vars.STRIPE_PRICE_ULTIMATE_YEARLY || secrets.STRIPE_PRICE_ULTIMATE_YEARLY }}
-            BRIDGE_API_KEY=${{ secrets.BRIDGE_API_KEY }}
-            BRIDGE_WEBHOOK_PUBLIC_KEY=${{ vars.BRIDGE_WEBHOOK_PUBLIC_KEY || secrets.BRIDGE_WEBHOOK_PUBLIC_KEY }}
-            DINARI_API_KEY_ID=${{ secrets.DINARI_API_KEY_ID }}
-            DINARI_API_SECRET_KEY=${{ secrets.DINARI_API_SECRET_KEY }}
-            DINARI_ENVIRONMENT=${{ vars.DINARI_ENVIRONMENT }}
-            DINARI_CHAIN_ID=${{ vars.DINARI_CHAIN_ID }}
-            LIFI_INTEGRATOR=${{ env.LIFI_INTEGRATOR_ESC }}
-            LIFI_API_KEY=${{ secrets.LIFI_API_KEY }}
+          # Credentials come from Secret Manager (secret name = env var name).
+          # Trim to the domains enabled in src/config/features.ts.
+          secrets: |-
+            DB_PASSWORD=DB_PASSWORD:latest
+            JWT_SECRET=JWT_SECRET:latest
+            ENCRYPTION_KEY=ENCRYPTION_KEY:latest
+            PRIVY_APP_ID=PRIVY_APP_ID:latest
+            PRIVY_APP_SECRET=PRIVY_APP_SECRET:latest
+            RESEND_API_KEY=RESEND_API_KEY:latest
+            PLAID_CLIENT_ID=PLAID_CLIENT_ID:latest
+            PLAID_SANDBOX_SECRET=PLAID_SANDBOX_SECRET:latest
+            PLAID_PRODUCTION_SECRET=PLAID_PRODUCTION_SECRET:latest
+            DEBANK_ACCESS_KEY=DEBANK_ACCESS_KEY:latest
+            STRIPE_SECRET_KEY=STRIPE_SECRET_KEY:latest
+            STRIPE_WEBHOOK_SECRET=STRIPE_WEBHOOK_SECRET:latest
+            BRIDGE_API_KEY=BRIDGE_API_KEY:latest
+            BRIDGE_WEBHOOK_PUBLIC_KEY=BRIDGE_WEBHOOK_PUBLIC_KEY:latest
+            DINARI_API_KEY_ID=DINARI_API_KEY_ID:latest
+            DINARI_API_SECRET_KEY=DINARI_API_SECRET_KEY:latest
+            LOGO_DEV_TOKEN=LOGO_DEV_TOKEN:latest
 
       - name: Verify Cloud Run deployment
         run: |

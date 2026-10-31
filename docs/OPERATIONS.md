@@ -43,13 +43,11 @@ Provide all production env vars at runtime; the image does not bake secrets.
 On push to `main` or `develop`:
 
 1. Authenticate to GCP (`GCP_SA_KEY` secret).
-2. Run `prisma migrate deploy` through Cloud SQL Auth Proxy (`CLOUD_SQL_INSTANCE` variable).
+2. Run `prisma migrate deploy` through Cloud SQL Auth Proxy (`CLOUD_SQL_INSTANCE` variable; `DB_PASSWORD` read from Secret Manager).
 3. Build and push image to `gcr.io/$PROJECT_ID/$CLOUD_RUN_SERVICE`.
-4. Deploy to Cloud Run with Cloud SQL attachment.
+4. Deploy the image to Cloud Run with the Cloud SQL attachment and Secret Manager bindings. Runtime config already on the service is kept.
 
-### Required GitHub Variables
-
-Production hostnames, Cloud SQL instance, WebAuthn origins, and similar **must not** be hardcoded in the workflow (they would be public). Set them as Variables:
+### GitHub Variables (where to deploy)
 
 | Variable | Example |
 |----------|---------|
@@ -58,16 +56,8 @@ Production hostnames, Cloud SQL instance, WebAuthn origins, and similar **must n
 | `CLOUD_RUN_SERVICE` | `kura-backend` |
 | `CLOUD_SQL_INSTANCE` | `PROJECT:REGION:INSTANCE` |
 | `DB_USER` / `DB_NAME` / `DB_SCHEMA` | DB connection |
-| `ALLOWED_ORIGINS` | CORS origins (CSV) |
-| `LIFI_INTEGRATOR` | integrator name(s) |
-| `WEBAUTHN_RP_ID` / `WEBAUTHN_RP_NAME` / `WEBAUTHN_ORIGIN` / `WEBAUTHN_RELATED_ORIGINS` | Passkeys |
-| `DINARI_ENVIRONMENT` / `DINARI_CHAIN_ID` | When `FEATURES.dinari` |
-| `APPLE_APP_ID` / `ANDROID_PACKAGE_NAME` / `ANDROID_SHA256_CERT_FINGERPRINTS` | Mobile associated domains (optional) |
-| `ADMIN_EMAIL` | Admin allowlist / fraud mail |
 
-Secrets vs Variables (what to keep / delete / move): **[SECRETS.md](SECRETS.md)**. Full catalog: [ENVIRONMENT.md](ENVIRONMENT.md).
-
-This repo’s workflow injects **core + Privy + WebAuthn** plus partner keys for domains currently enabled in [`src/config/features.ts`](../src/config/features.ts). Forks should trim `env_vars` to match their flags. `vars.X || secrets.X` keeps working until a value is moved from Secrets to Variables.
+Credentials live in Secret Manager and runtime config on the Cloud Run service — see **[SECRETS.md](SECRETS.md)**. Full variable catalog: [ENVIRONMENT.md](ENVIRONMENT.md).
 
 ## Moving to another GCP project (e.g. "No organization")
 

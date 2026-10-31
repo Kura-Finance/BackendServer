@@ -1,83 +1,54 @@
-# Secrets & Variables (functional only)
+# Secrets & configuration (functional only)
 
 [繁體中文](SECRETS.zh-TW.md)
 
 Aligns with [`src/config/features.ts`](../src/config/features.ts) and [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml).
 
-**Rules**
-- **Secrets** = credentials that grant access.
-- **Variables** = non-secret config (URLs, public keys, IDs).
-- **Not env:** product name / upgrade / demo branding — see `src/config/brand.ts` (code constants; app URL derived from `ALLOWED_ORIGINS`).
+## Where each kind of value lives
 
-## Core Secrets (always)
+| Kind | Store | Examples |
+|------|-------|----------|
+| Deploy identity | GitHub **Secret** | `GCP_SA_KEY` (only GitHub Secret needed) |
+| Where to deploy | GitHub **Variables** | `GCP_PROJECT_ID`, `GCP_REGION`, `CLOUD_RUN_SERVICE`, `CLOUD_SQL_INSTANCE`, `DB_USER`, `DB_NAME`, `DB_SCHEMA` |
+| Credentials | **Google Secret Manager** (same project as Cloud Run) | everything in the table below |
+| Runtime config | **Cloud Run service env vars** | `ALLOWED_ORIGINS`, `WEBAUTHN_*`, `ADMIN_EMAIL`, `RESEND_FROM_EMAIL`, `PLAID_*_URI/URL`, `STRIPE_PRICE_*`, `DINARI_ENVIRONMENT`, `DINARI_CHAIN_ID`, `LIFI_INTEGRATOR`, mobile well-known vars |
+| Brand strings | code | `src/config/brand.ts` |
 
-| Name | Used by |
-|------|---------|
-| `GCP_SA_KEY` | Deploy |
-| `DB_PASSWORD` | Postgres |
-| `JWT_SECRET` | Auth sessions |
-| `ENCRYPTION_KEY` | Server crypto |
-| `PRIVY_APP_ID` | Auth / Privy |
-| `PRIVY_APP_SECRET` | Auth / Privy |
-| `PRIVY_VERIFICATION_KEY` | Auth / Privy |
+The deploy workflow only builds the image, runs migrations, and swaps the image. `gcloud run deploy --image` keeps the service's env vars and secret bindings, so runtime config is edited on the service, not in GitHub:
 
-## Core Variables (always)
+```bash
+gcloud run services update kura-backend --region us-central1 --project PROJECT \
+  --update-env-vars ALLOWED_ORIGINS=https://app.example.com,WEBAUTHN_RP_ID=api.example.com
+```
 
-| Name | Used by |
-|------|---------|
-| `GCP_PROJECT_ID` | Deploy |
-| `GCP_REGION` | Deploy |
-| `CLOUD_RUN_SERVICE` | Deploy |
-| `CLOUD_SQL_INSTANCE` | Deploy + `DB_HOST` |
-| `DB_USER` / `DB_NAME` / `DB_SCHEMA` | Postgres |
-| `ALLOWED_ORIGINS` | CORS (+ derives public app URL in code) |
-| `ADMIN_EMAIL` | Admin allowlist / fraud mail (`FEATURES.admin`) |
-| `WEBAUTHN_RP_ID` | Passkeys |
-| `WEBAUTHN_RP_NAME` | Passkeys |
-| `WEBAUTHN_ORIGIN` | Passkeys |
-| `WEBAUTHN_RELATED_ORIGINS` | `/.well-known/webauthn` |
-| `APPLE_APP_ID` | iOS AASA (optional) |
-| `ANDROID_PACKAGE_NAME` | Android assetlinks (optional) |
-| `ANDROID_SHA256_CERT_FINGERPRINTS` | Android assetlinks (optional) |
+(Comma-separated values: use `--env-vars-file` or `^;^` delimiter syntax.)
 
-## Domain Secrets — only when `FEATURES.* === true`
+## Secret Manager secrets (secret name = env var name)
 
-| Feature | Secrets |
-|---------|---------|
-| `email` | `RESEND_API_KEY` |
-| `plaid` | `PLAID_CLIENT_ID`, `PLAID_PRODUCTION_SECRET` (+ `PLAID_SANDBOX_SECRET` if used) |
-| `stripe` | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
-| `debank` | `DEBANK_ACCESS_KEY` |
-| `bridge` | `BRIDGE_API_KEY` |
-| `dinari` | `DINARI_API_KEY_ID`, `DINARI_API_SECRET_KEY` |
-| `lifiAnalytics` | `LIFI_API_KEY` (optional rate limit) |
+Bound by `secrets:` in the deploy workflow. Create them once with `infra/gcp-migration/50-secret-manager.sh` (reads a running service) or by hand:
 
-## Domain Variables — only when feature on
+```bash
+printf '%s' 'VALUE' | gcloud secrets create JWT_SECRET --data-file=- --replication-policy=automatic
+```
 
-| Feature | Variables |
-|---------|-----------|
-| `email` | `RESEND_FROM_EMAIL` |
-| `plaid` | `PLAID_REDIRECT_URI`, `PLAID_WEBHOOK_URL` |
-| `stripe` | `STRIPE_PRICE_PRO_MONTHLY`, `STRIPE_PRICE_PRO_YEARLY`, `STRIPE_PRICE_ULTIMATE_MONTHLY`, `STRIPE_PRICE_ULTIMATE_YEARLY` |
-| `bridge` | `BRIDGE_WEBHOOK_PUBLIC_KEY` (public PEM), optional `BRIDGE_WALLET_ID` |
-| `dinari` | `DINARI_ENVIRONMENT`, `DINARI_CHAIN_ID`, optional whitelist |
-| `lifiAnalytics` | `LIFI_INTEGRATOR` |
+| Always | Per feature (`FEATURES.*`) |
+|--------|----------------------------|
+| `DB_PASSWORD` | `email`: `RESEND_API_KEY` |
+| `JWT_SECRET` | `plaid`: `PLAID_CLIENT_ID`, `PLAID_SANDBOX_SECRET`, `PLAID_PRODUCTION_SECRET` |
+| `ENCRYPTION_KEY` | `debank`: `DEBANK_ACCESS_KEY` |
+| `PRIVY_APP_ID`, `PRIVY_APP_SECRET` | `stripe`: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
+| optional `PRIVY_VERIFICATION_KEY` (PEM; JWKS fetched when unset) | `bridge`: `BRIDGE_API_KEY`, `BRIDGE_WEBHOOK_PUBLIC_KEY` (PEM, multi-line safe here) |
+| optional `LOGO_DEV_TOKEN` | `dinari`: `DINARI_API_KEY_ID`, `DINARI_API_SECRET_KEY` |
+| | `lifiAnalytics`: optional `LIFI_API_KEY` |
 
-Enable a domain in `features.ts`, then add matching `env_vars` lines in `deploy.yml` (checklist in the workflow comments).
+The Cloud Run runtime service account and the deploy service account need `roles/secretmanager.secretAccessor`.
 
-## Delete from GitHub (not needed)
+Disable a domain in `features.ts` → remove its lines from `secrets:` in the workflow (the secret itself can stay).
 
-| Name | Why |
-|------|-----|
-| `APP_NAME` | Brand — hardcoded in `brand.ts` |
-| `APP_URL` | Derived from `ALLOWED_ORIGINS` |
-| `APP_UPGRADE_URL` | Derived `{origin}/pricing` |
-| `DEMO_BASE_URL` | Same as app origin |
-| `SUPPORT_EMAIL` | Uses `ADMIN_EMAIL` |
-| `LOGO_DEV_*` | Free public logos; not injected |
-| Partner keys for `FEATURES.* === false` | Domain unmounted |
-| `DATABASE_URL` | Built at boot from `DB_*` |
-| `DIDIT_*` / `GNOSIS_PAY_*` / `LITHIC_*` | Removed domains; not referenced |
-| Anything above stored as Secret that belongs in Variables | Move, then delete Secret copy |
+## Delete from GitHub (no longer read)
 
-Domains with no partner keys (`exchange`, `notifications`, `wallet`, `treasury`, `waitlist`, `platformInsights`, `admin`): no extra Secrets beyond core + `ADMIN_EMAIL` for admin.
+Every Secret except `GCP_SA_KEY`, and every Variable except the "where to deploy" set above. In particular: `DB_PASSWORD`, `JWT_SECRET`, `ENCRYPTION_KEY`, `PRIVY_*`, partner keys, `ALLOWED_ORIGINS`, `WEBAUTHN_*`, `STRIPE_PRICE_*`, `APP_*`, `DATABASE_URL`, `DIDIT_*`, `GNOSIS_PAY_*`, `LITHIC_*`, `CODEGO_*`, `MAILERSEND_*`.
+
+## Delete from the Cloud Run service (no code reads them)
+
+`ADMIN_SECRET_KEY`, `APP_NAME`, `APP_URL`, `BACKEND_USE_HTTPS`, `PLAID_SECRET`, `WEB3AUTH_AUDIENCE`, `JWT_RS256_*`, `CODEGO_*`, `DIDIT_*`, `GNOSIS_PAY_*`, `LITHIC_*`, `MAILERSEND_*`, and any key that is not a valid identifier (fragments of a split PEM or CSV). `50-secret-manager.sh` removes these.

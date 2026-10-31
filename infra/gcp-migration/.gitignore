@@ -5,3 +5,4 @@ config.env
 *.sql
 *.sql.gz
 *-key.json
+secret-overrides/

@@ -155,6 +155,6 @@ Without whitelist env vars, only demo emails (`DEMO_USER_EMAILS` / demo helpers)
 |----------|-------|
 | `DEBUG_COOKIES` | Set `true` to log cookie debug info |
 
-## GitHub Actions mapping
+## Where values live in production
 
-Production values are injected in [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) from GitHub **Variables** (infra / public config) and **Secrets** (credentials). See **[SECRETS.md](SECRETS.md)** for what belongs where and what you can delete.
+Credentials: Google Secret Manager (bound in [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml)). Runtime config: env vars on the Cloud Run service. GitHub holds only the deploy identity and the deploy target. See **[SECRETS.md](SECRETS.md)**.
