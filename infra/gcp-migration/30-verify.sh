@@ -67,7 +67,7 @@ if [ -n "$inst" ]; then
 fi
 
 step "Project"
-parent="$(gcloud projects describe "$DST_PROJECT_ID" --format='value(parent.type,parent.id)')"
+parent="$(gcloud projects describe "$DST_PROJECT_ID" --format='value(parent.id)')"
 if [ -z "$parent" ]; then ok "No organization parent"; else warn "Parent: $parent"; fi
 gcloud billing projects describe "$DST_PROJECT_ID" --format='value(billingEnabled)' | grep -q True && ok "Billing enabled" || { warn "Billing not enabled"; fail=1; }
 

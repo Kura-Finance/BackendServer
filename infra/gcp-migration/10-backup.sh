@@ -61,8 +61,11 @@ for line in "${SVC_LINES[@]:-}"; do
   echo "$name $region" >> run/service-list.txt
 done
 # Domain mappings live per region; collect for every region we saw.
+# (REST, so the gcloud `beta` component is not required.)
 for region in $(awk '{print $2}' run/service-list.txt | sort -u); do
-  $G beta run domain-mappings list --region "$region" --format=json > "run/domain-mappings.$region.json" 2>/dev/null || echo '[]' > "run/domain-mappings.$region.json"
+  curl -sSf -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+    "https://$region-run.googleapis.com/apis/domains.cloudrun.com/v1/namespaces/$SRC_PROJECT_ID/domainmappings" \
+    > "run/domain-mappings.$region.json" 2>/dev/null || echo '{}' > "run/domain-mappings.$region.json"
 done
 $G run jobs list --format=json > run/jobs.json 2>/dev/null || echo '[]' > run/jobs.json
 ok "run/* ($(wc -l < run/service-list.txt) service(s))"

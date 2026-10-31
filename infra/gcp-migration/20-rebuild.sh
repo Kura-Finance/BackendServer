@@ -53,7 +53,7 @@ if run_step project; then
     # attach the project to that org; create from a consumer account instead.
     gcloud projects create "$DST_PROJECT_ID" --name="${DST_PROJECT_NAME:-$DST_PROJECT_ID}" --quiet
   fi
-  parent="$(gcloud projects describe "$DST_PROJECT_ID" --format='value(parent.type,parent.id)')"
+  parent="$(gcloud projects describe "$DST_PROJECT_ID" --format='value(parent.id)')"
   if [ -n "$parent" ]; then
     warn "Project parent is '$parent' — this is NOT a 'No organization' project."
     warn "Projects cannot be moved out of an organization to 'No organization'. Use a consumer (gmail.com) account to create it."
@@ -200,6 +200,13 @@ copy_image() {
     info "crane copy $src → $dst"
     crane copy "$src" "$dst" && return 0
     warn "crane copy failed, trying docker"
+  fi
+  # Same registry host (gcr.io): gcloud can retag across projects without a
+  # local pull — blobs are mounted server-side.
+  if [ "${src%%/*}" = "${dst%%/*}" ]; then
+    info "gcloud container images add-tag $src → $dst"
+    gcloud container images add-tag "$src" "$dst" --quiet && return 0
+    warn "add-tag failed, trying docker"
   fi
   if have_cmd docker; then
     gcloud auth configure-docker gcr.io --quiet >/dev/null 2>&1 || true

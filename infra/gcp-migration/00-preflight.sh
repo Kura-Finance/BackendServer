@@ -17,7 +17,7 @@ require_gcloud_auth
 step "Source project: ${SRC_PROJECT_ID:-<unset>}"
 require_var SRC_PROJECT_ID
 project_exists "$SRC_PROJECT_ID" || die "Cannot read project $SRC_PROJECT_ID (missing permission or wrong id)"
-parent="$(gcloud projects describe "$SRC_PROJECT_ID" --format='value(parent.type,parent.id)')"
+parent="$(gcloud projects describe "$SRC_PROJECT_ID" --format='value(parent.id)')"
 ok "Project readable. Parent: ${parent:-none}"
 
 info "Cloud Run services:"
@@ -35,7 +35,7 @@ gcloud artifacts repositories list --project "$SRC_PROJECT_ID" --format='table(n
 step "Destination project: ${DST_PROJECT_ID:-<unset>}"
 if [ -n "${DST_PROJECT_ID:-}" ]; then
   if project_exists "$DST_PROJECT_ID"; then
-    dparent="$(gcloud projects describe "$DST_PROJECT_ID" --format='value(parent.type,parent.id)')"
+    dparent="$(gcloud projects describe "$DST_PROJECT_ID" --format='value(parent.id)')"
     if [ -n "$dparent" ]; then
       warn "$DST_PROJECT_ID already exists and has a parent ($dparent) — it is NOT a 'No organization' project."
     else
